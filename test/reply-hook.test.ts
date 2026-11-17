@@ -272,8 +272,9 @@ describe("failing open", () => {
   });
 
   it("lets the reply through on a timeout", async () => {
+    sandbox.withRules((rules) => rules.updateSettings({ timeLimitMs: 10 }));
     await letsThrough(
-      { env: sandbox.env, timeLimitMs: 10, matcher: standInMatcher({}, { answer: () => new Promise(() => {}) }) },
+      { env: sandbox.env, matcher: standInMatcher({}, { answer: () => new Promise(() => {}) }) },
       "timeout after 10 ms",
     );
   });

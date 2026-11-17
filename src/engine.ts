@@ -1,9 +1,7 @@
 import { MalformedAnswerError, type Matcher, type MatcherCondition } from "./matcher.ts";
 import type { CheckType, LiveRule, RulesService } from "./rules.ts";
 import { type Store, transaction } from "./store.ts";
-
-export const DEFAULT_CUTOFF = 0.6;
-export const DEFAULT_TIME_LIMIT_MS = 3000;
+import { maskEmails, messageText } from "./text.ts";
 
 export type Outcome = "nothing" | "attached" | "sent_back" | "skipped" | "failed";
 
@@ -34,8 +32,6 @@ export interface EngineOptions {
   rules: RulesService;
   /** Undefined when no API key is available: every check then fails open. */
   matcher: Matcher | undefined;
-  cutoff?: number;
-  timeLimitMs?: number;
 }
 
 export interface Engine {
@@ -56,6 +52,20 @@ interface ScoreRow {
   score: number;
 }
 
+interface FiringRow extends ScoreRow {
+  dropped: boolean;
+}
+
+/** What one check records about itself, besides its scores and firings. */
+interface CheckRecord {
+  input: CheckInput;
+  /** The text the check judged: the message after any slash command. */
+  text: string;
+  startedAt: number;
+  cutoff: number;
+  cap: number;
+}
+
 /**
  * Runs checks: scores the live conditions of the check type against the
  * text, decides which rules fire, and records everything. Any failure
@@ -63,32 +73,31 @@ interface ScoreRow {
  */
 export function createEngine(options: EngineOptions): Engine {
   const { store, rules, matcher } = options;
-  const cutoff = options.cutoff ?? DEFAULT_CUTOFF;
-  const timeLimitMs = options.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS;
 
   function record(
-    input: CheckInput,
-    startedAt: number,
+    check: CheckRecord,
     outcome: Outcome,
-    extra: { error?: string; inputTokens?: number | null; scores?: ScoreRow[]; firings?: ScoreRow[] } = {},
+    extra: { error?: string; inputTokens?: number | null; scores?: ScoreRow[]; firings?: FiringRow[] } = {},
   ): number {
-    const durationMs = Math.round(performance.now() - startedAt);
+    const { input } = check;
+    const durationMs = Math.round(performance.now() - check.startedAt);
     return transaction(store, () => {
       const { lastInsertRowid: checkId } = store
         .prepare(
           `INSERT INTO checks (created_at, session_id, cwd, check_type, text, duration_ms,
-                               input_tokens, cutoff, outcome, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                               input_tokens, cutoff, cap, outcome, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           new Date().toISOString(),
           input.sessionId ?? null,
           input.cwd ?? null,
           input.checkType,
-          input.text,
+          check.text,
           durationMs,
           extra.inputTokens ?? null,
-          cutoff,
+          check.cutoff,
+          check.cap,
           outcome,
           extra.error ?? null,
         );
@@ -99,16 +108,17 @@ export function createEngine(options: EngineOptions): Engine {
         addScore.run(checkId, s.rule.ruleId, s.rule.versionId, s.conditionId, s.score);
       }
       const addFiring = store.prepare(
-        "INSERT INTO firings (check_id, rule_id, version_id, condition_id, score) VALUES (?, ?, ?, ?, ?)",
+        `INSERT INTO firings (check_id, rule_id, version_id, condition_id, score, dropped)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       );
       for (const f of extra.firings ?? []) {
-        addFiring.run(checkId, f.rule.ruleId, f.rule.versionId, f.conditionId, f.score);
+        addFiring.run(checkId, f.rule.ruleId, f.rule.versionId, f.conditionId, f.score, f.dropped ? 1 : 0);
       }
       return Number(checkId);
     });
   }
 
-  async function score(text: string, conditions: MatcherCondition[]) {
+  async function score(text: string, conditions: MatcherCondition[], timeLimitMs: number) {
     if (!matcher) throw new Error("missing API key");
     const controller = new AbortController();
     let timer: NodeJS.Timeout | undefined;
@@ -127,13 +137,23 @@ export function createEngine(options: EngineOptions): Engine {
 
   return {
     skip(input) {
-      return record(input, performance.now(), "skipped");
+      const { cutoff, cap } = rules.settings();
+      return record({ input, text: input.text, startedAt: performance.now(), cutoff, cap }, "skipped");
     },
 
     async check(input) {
       const startedAt = performance.now();
+      const { cutoff, cap, timeLimitMs } = rules.settings();
+
+      // A message that starts with a slash command is judged only on what follows the command name.
+      const judged = input.checkType === "message" ? messageText(input.text) : { kind: "check" as const, text: input.text };
+      if (judged.kind === "skip") {
+        const checkId = record({ input, text: input.text, startedAt, cutoff, cap }, "skipped");
+        return { outcome: "skipped", checkId, firings: [] };
+      }
+      const check: CheckRecord = { input, text: judged.text, startedAt, cutoff, cap };
       const failed = (error: string, inputTokens?: number | null): CheckResult => {
-        const checkId = record(input, startedAt, "failed", { error, inputTokens });
+        const checkId = record(check, "failed", { error, inputTokens });
         return { outcome: "failed", checkId, firings: [] };
       };
 
@@ -144,11 +164,14 @@ export function createEngine(options: EngineOptions): Engine {
       for (const rule of live) {
         for (const condition of rule.conditions) sent.set(`c${condition.id}`, { rule, conditionId: condition.id });
       }
-      const conditions = live.flatMap((rule) => rule.conditions.map((c) => ({ id: `c${c.id}`, text: c.text })));
+      // Email addresses never leave the machine: they are masked in the text and in the conditions.
+      const conditions = live.flatMap((rule) =>
+        rule.conditions.map((c) => ({ id: `c${c.id}`, text: maskEmails(c.text) })),
+      );
 
       let result;
       try {
-        result = await score(input.text, conditions);
+        result = await score(maskEmails(check.text), conditions, timeLimitMs);
       } catch (error) {
         return failed(error instanceof Error ? error.message : String(error));
       }
@@ -169,14 +192,19 @@ export function createEngine(options: EngineOptions): Engine {
         const current = best.get(row.rule.ruleId);
         if (!current || row.score > current.score) best.set(row.rule.ruleId, row);
       }
-      const fired = [...best.values()].filter((row) => row.score >= cutoff).sort((a, b) => b.score - a.score);
+      // Strongest first; the cap keeps the strongest and the rest are recorded as dropped.
+      const fired: FiringRow[] = [...best.values()]
+        .filter((row) => row.score >= cutoff)
+        .sort((a, b) => b.score - a.score || a.rule.ruleId - b.rule.ruleId)
+        .map((row, index) => ({ ...row, dropped: index >= cap }));
+      const kept = fired.filter((row) => !row.dropped);
 
-      const outcome: Outcome = fired.length === 0 ? "nothing" : input.checkType === "message" ? "attached" : "sent_back";
-      const checkId = record(input, startedAt, outcome, { inputTokens: result.inputTokens, scores, firings: fired });
+      const outcome: Outcome = kept.length === 0 ? "nothing" : input.checkType === "message" ? "attached" : "sent_back";
+      const checkId = record(check, outcome, { inputTokens: result.inputTokens, scores, firings: fired });
       return {
         outcome,
         checkId,
-        firings: fired.map((row) => ({
+        firings: kept.map((row) => ({
           ruleId: row.rule.ruleId,
           name: row.rule.name,
           instruction: row.rule.instruction,
