@@ -59,8 +59,17 @@ async function main(args: string[]): Promise<number> {
       stderr: (text) => process.stderr.write(text),
     });
   }
+  if (group === "evaluate") {
+    // Loaded only here: the evaluation calls the real Jev and runs only on request.
+    const { runEvaluation } = await import("./evaluate.ts");
+    return runEvaluation(args.slice(1), {
+      env: process.env,
+      stdout: (text) => process.stdout.write(text),
+      stderr: (text) => process.stderr.write(text),
+    });
+  }
   process.stderr.write(
-    'Usage: sally hook message|reply\n       sally install\n       sally uninstall\n       sally rules list|show|create|edit\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n',
+    'Usage: sally hook message|reply\n       sally install\n       sally uninstall\n       sally rules list|show|create|edit\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n       sally evaluate FILE [--scale]\n',
   );
   return 1;
 }

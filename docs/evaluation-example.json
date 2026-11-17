@@ -1,0 +1,57 @@
+{
+  "rules": [
+    {
+      "name": "Local link for visual changes",
+      "check": "reply",
+      "conditions": [
+        "This reply reports a finished visual change and gives no local link to the page."
+      ],
+      "instruction": "Give the localhost link to the changed page."
+    },
+    {
+      "name": "Brief replies",
+      "check": "message",
+      "conditions": [
+        "The user's message asks for a short answer.",
+        "The user's message complains that a previous reply was too long."
+      ]
+    },
+    {
+      "name": "Never force push",
+      "check": "message",
+      "conditions": ["The user's message asks to rewrite history on a shared git branch."]
+    }
+  ],
+  "cases": [
+    {
+      "label": "short answer",
+      "check": "message",
+      "text": "Just tell me in one line: does the build pass?",
+      "expected": ["Brief replies"]
+    },
+    {
+      "label": "rebase main",
+      "check": "message",
+      "text": "Rebase main onto the release branch and push it with --force.",
+      "expected": ["Never force push"]
+    },
+    {
+      "label": "unrelated question",
+      "check": "message",
+      "text": "What does the retry option in the fetch helper do?",
+      "expected": []
+    },
+    {
+      "label": "button colour done",
+      "check": "reply",
+      "text": "Done: the button is now blue and the spacing under the header is fixed.",
+      "expected": ["Local link for visual changes"]
+    },
+    {
+      "label": "button colour with link",
+      "check": "reply",
+      "text": "Done: the button is now blue. Check it at http://localhost:3000/pricing.",
+      "expected": []
+    }
+  ]
+}

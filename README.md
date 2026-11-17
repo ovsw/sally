@@ -92,6 +92,20 @@ on. You can then publish anyway or go back to the draft. If Jev cannot be
 reached, the app says so and you can still publish. A rule with no saved
 cases publishes straight away.
 
+## Evaluation
+
+```sh
+sally evaluate FILE [--scale]
+```
+
+Runs a file of saved messages and replies, each with the rules expected to
+fire, through the engine with the real Jev, and reports right matches, wrong
+matches and misses, with timing and tokens. `--scale` pads the rule set to
+several hundred conditions and leads with the wrong-match rate. It needs an
+API key and costs a little, so it runs only on request, never in CI. The file
+format is in [docs/evaluation.md](docs/evaluation.md); a file built from real
+messages stays outside the repository.
+
 ## Development
 
 Requires Node 24 or later and pnpm. The command line runs its TypeScript
