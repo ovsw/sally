@@ -20,12 +20,26 @@ async function main(args: string[]): Promise<number> {
     }
     return 0;
   }
-  process.stderr.write("Usage: sally hook message\n");
+  if (group === "app") {
+    // Loaded only here, so the hooks never load web app code.
+    const { runApp } = await import("./app/command.ts");
+    await runApp(args.slice(1), process.env);
+    return -1;
+  }
+  process.stderr.write("Usage: sally hook message | sally app [--port N]\n");
   return 1;
 }
 
-main(process.argv.slice(2)).then((code) => {
-  process.exitCode = code;
-  // Do not wait for a request abandoned after the time limit.
-  process.stdout.write("", () => process.exit(code));
-});
+main(process.argv.slice(2)).then(
+  (code) => {
+    // -1: a server is running and keeps the process alive.
+    if (code < 0) return;
+    process.exitCode = code;
+    // Do not wait for a request abandoned after the time limit.
+    process.stdout.write("", () => process.exit(code));
+  },
+  (error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  },
+);

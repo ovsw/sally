@@ -75,6 +75,13 @@ const migrations: string[] = [
   CREATE INDEX firings_by_check ON firings (check_id);
   CREATE INDEX firings_by_rule ON firings (rule_id);
   `,
+  `
+  -- The name is part of a version, so renaming a rule in its draft changes
+  -- nothing until it is published. rules.name stays the name in force: the
+  -- live version's, or the draft's while the rule has never been published.
+  ALTER TABLE versions ADD COLUMN name TEXT NOT NULL DEFAULT '';
+  UPDATE versions SET name = (SELECT name FROM rules WHERE rules.id = versions.rule_id);
+  `,
 ];
 
 /**

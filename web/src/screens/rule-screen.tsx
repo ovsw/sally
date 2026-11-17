@@ -1,0 +1,374 @@
+// The Rule screen: the live version beside the draft. The draft form follows
+// the shadcnblocks block form-layouts-1 (vertical field layout).
+import { ArrowLeft, Check, Loader2, Plus, Upload, X } from "lucide-react";
+import * as React from "react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  getRule,
+  publish,
+  type RuleDetail,
+  saveDraft,
+  type VersionView,
+} from "@/lib/api";
+import { followLink } from "@/lib/router";
+
+const SAVE_DELAY_MS = 500;
+
+type SaveState =
+  | { kind: "idle" }
+  | { kind: "pending" }
+  | { kind: "saving" }
+  | { kind: "saved" }
+  | { kind: "error"; message: string };
+
+function SaveStatus({ state, hasDraft }: { state: SaveState; hasDraft: boolean }) {
+  const text =
+    state.kind === "pending" || state.kind === "saving"
+      ? "Saving..."
+      : state.kind === "saved"
+        ? "Draft saved"
+        : state.kind === "error"
+          ? "Not saved"
+          : hasDraft
+            ? "Draft saved"
+            : "No draft";
+  return (
+    <span
+      className="flex items-center gap-1.5 text-sm text-muted-foreground"
+      aria-live="polite"
+    >
+      {state.kind === "pending" || state.kind === "saving" ? (
+        <Loader2 className="size-4 animate-spin" />
+      ) : state.kind === "error" ? (
+        <X className="size-4 text-destructive" />
+      ) : hasDraft ? (
+        <Check className="size-4" />
+      ) : null}
+      {text}
+    </span>
+  );
+}
+
+function LiveVersion({ rule }: { rule: RuleDetail }) {
+  const live = rule.live;
+  return (
+    <section className="rounded-md border">
+      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+        <h2 className="font-medium">Live version</h2>
+        {live && <Badge variant="secondary">Version {live.number}</Badge>}
+      </div>
+      {live ? (
+        <dl className="space-y-5 px-4 py-4 text-sm">
+          <div className="space-y-1.5">
+            <dt className="font-medium">Name</dt>
+            <dd>{live.name}</dd>
+          </div>
+          <div className="space-y-1.5">
+            <dt className="font-medium">
+              {live.conditions.length === 1 ? "Condition" : "Conditions"}
+            </dt>
+            <dd>
+              <ul className="space-y-1.5">
+                {live.conditions.map((condition, i) => (
+                  <li key={i} className="rounded-md bg-muted/50 px-3 py-2">
+                    {condition}
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+          <div className="space-y-1.5">
+            <dt className="font-medium">Instruction</dt>
+            <dd className="rounded-md bg-muted/50 px-3 py-2 whitespace-pre-wrap">
+              {live.instruction}
+            </dd>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Published {new Date(live.publishedAt).toLocaleString()}
+          </p>
+        </dl>
+      ) : (
+        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+          Not published yet. The engine does not use this rule until you
+          publish its draft.
+        </p>
+      )}
+    </section>
+  );
+}
+
+interface DraftFormProps {
+  value: VersionView;
+  onChange: (next: VersionView) => void;
+  error: string | null;
+  checkType: RuleDetail["checkType"];
+}
+
+function DraftForm({ value, onChange, error, checkType }: DraftFormProps) {
+  const setCondition = (index: number, text: string) =>
+    onChange({
+      ...value,
+      conditions: value.conditions.map((c, i) => (i === index ? text : c)),
+    });
+  const removeCondition = (index: number) =>
+    onChange({
+      ...value,
+      conditions: value.conditions.filter((_, i) => i !== index),
+    });
+  const addCondition = () =>
+    onChange({ ...value, conditions: [...value.conditions, ""] });
+
+  return (
+    <FieldGroup>
+      <Field>
+        <FieldLabel htmlFor="draft-name">Name</FieldLabel>
+        <Input
+          id="draft-name"
+          className="bg-background"
+          value={value.name}
+          onChange={(e) => onChange({ ...value, name: e.target.value })}
+        />
+      </Field>
+      <Field>
+        <FieldLabel>Conditions</FieldLabel>
+        <div className="space-y-2">
+          {value.conditions.map((condition, index) => (
+            <div key={index} className="flex items-start gap-2">
+              <Input
+                className="bg-background"
+                aria-label={`Condition ${index + 1}`}
+                value={condition}
+                onChange={(e) => setCondition(index, e.target.value)}
+                placeholder={
+                  checkType === "message"
+                    ? "The message asks for..."
+                    : "The reply reports..."
+                }
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="shrink-0"
+                aria-label={`Remove condition ${index + 1}`}
+                onClick={() => removeCondition(index)}
+              >
+                <X />
+              </Button>
+            </div>
+          ))}
+          <Button type="button" variant="outline" size="sm" onClick={addCondition}>
+            <Plus />
+            Add condition
+          </Button>
+        </div>
+        <FieldDescription>
+          The rule fires when any one condition holds. Write each as a short,
+          concrete statement about the{" "}
+          {checkType === "message" ? "user's message" : "final reply"}.
+        </FieldDescription>
+      </Field>
+      <Field>
+        <FieldLabel htmlFor="draft-instruction">Instruction</FieldLabel>
+        <Textarea
+          id="draft-instruction"
+          className="min-h-[140px] bg-background"
+          value={value.instruction}
+          onChange={(e) => onChange({ ...value, instruction: e.target.value })}
+        />
+        <FieldDescription>
+          Claude receives this word for word. Worth having only when it is not
+          already implied by the text that triggers it.
+        </FieldDescription>
+      </Field>
+      {error && <FieldError>{error}</FieldError>}
+    </FieldGroup>
+  );
+}
+
+const contentOf = (rule: RuleDetail): VersionView => {
+  const source = rule.draft ?? rule.live;
+  return {
+    name: source?.name ?? rule.name,
+    instruction: source?.instruction ?? "",
+    conditions: source?.conditions.length ? [...source.conditions] : [""],
+  };
+};
+
+export function RuleScreen({ id }: { id: number }) {
+  const [rule, setRule] = React.useState<RuleDetail | null>(null);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [draft, setDraft] = React.useState<VersionView | null>(null);
+  const [save, setSave] = React.useState<SaveState>({ kind: "idle" });
+  const [publishing, setPublishing] = React.useState(false);
+  const [publishError, setPublishError] = React.useState<string | null>(null);
+  const timer = React.useRef<number | undefined>(undefined);
+  const latest = React.useRef<VersionView | null>(null);
+  const inFlight = React.useRef<Promise<void>>(Promise.resolve());
+
+  React.useEffect(() => {
+    let stale = false;
+    getRule(id)
+      .then((loaded) => {
+        if (stale) return;
+        setRule(loaded);
+        setDraft(contentOf(loaded));
+      })
+      .catch((e: unknown) => !stale && setLoadError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      stale = true;
+    };
+  }, [id]);
+
+  /** Saves the latest edits now; saves run one after another. */
+  const flush = React.useCallback((): Promise<void> => {
+    window.clearTimeout(timer.current);
+    timer.current = undefined;
+    const content = latest.current;
+    if (!content) return inFlight.current;
+    latest.current = null;
+    inFlight.current = inFlight.current.then(async () => {
+      setSave({ kind: "saving" });
+      try {
+        const saved = await saveDraft(id, content);
+        setRule(saved);
+        setSave(latest.current ? { kind: "pending" } : { kind: "saved" });
+      } catch (e) {
+        setSave({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+      }
+    });
+    return inFlight.current;
+  }, [id]);
+
+  // Edits still waiting when the screen closes are saved straight away.
+  React.useEffect(() => {
+    const onLeave = () => {
+      if (latest.current) void flush();
+    };
+    window.addEventListener("beforeunload", onLeave);
+    return () => {
+      window.removeEventListener("beforeunload", onLeave);
+      onLeave();
+    };
+  }, [flush]);
+
+  const edit = (next: VersionView) => {
+    setDraft(next);
+    setPublishError(null);
+    latest.current = next;
+    setSave({ kind: "pending" });
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => void flush(), SAVE_DELAY_MS);
+  };
+
+  const doPublish = async () => {
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      await flush();
+      const result = await publish(id);
+      setRule(result.rule);
+      setDraft(contentOf(result.rule));
+      setSave({ kind: "idle" });
+    } catch (e) {
+      setPublishError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  if (loadError) {
+    return (
+      <div className="space-y-4">
+        <BackLink />
+        <p role="alert" className="text-sm text-destructive">
+          {loadError}
+        </p>
+      </div>
+    );
+  }
+  if (!rule || !draft) {
+    return <p className="text-sm text-muted-foreground">Loading...</p>;
+  }
+
+  const busy = save.kind === "pending" || save.kind === "saving";
+  const canPublish = (rule.hasDraft || busy) && save.kind !== "error" && !publishing;
+
+  return (
+    <div className="w-full space-y-6">
+      <BackLink />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-bold tracking-tight">{rule.name}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">
+              {rule.checkType === "message" ? "Message check" : "Reply check"}
+            </Badge>
+            {rule.state === "live" ? (
+              <Badge>Live</Badge>
+            ) : (
+              <Badge variant="outline">Draft only</Badge>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <SaveStatus state={save} hasDraft={rule.hasDraft} />
+          <Button onClick={doPublish} disabled={!canPublish}>
+            {publishing ? <Loader2 className="animate-spin" /> : <Upload />}
+            Publish
+          </Button>
+        </div>
+      </div>
+      {publishError && (
+        <p role="alert" className="text-sm text-destructive">
+          {publishError}
+        </p>
+      )}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <LiveVersion rule={rule} />
+        <section className="rounded-md border">
+          <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+            <h2 className="font-medium">Draft</h2>
+            <span className="text-xs text-muted-foreground">
+              {rule.hasDraft
+                ? "Edits save automatically"
+                : "Editing starts a draft"}
+            </span>
+          </div>
+          <div className="px-4 py-4">
+            <DraftForm
+              value={draft}
+              onChange={edit}
+              checkType={rule.checkType}
+              error={save.kind === "error" ? save.message : null}
+            />
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function BackLink() {
+  return (
+    <a
+      href="/rules"
+      onClick={followLink}
+      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+    >
+      <ArrowLeft className="size-4" />
+      Rules
+    </a>
+  );
+}
