@@ -16,6 +16,11 @@ describe("where Sally keeps its files", () => {
     expect(databasePath({ HOME: home, XDG_DATA_HOME: join(home, "data") })).toBe(join(home, "data", "sally", "sally.db"));
   });
 
+  it("ignores relative XDG folders", () => {
+    expect(databasePath({ HOME: home, XDG_DATA_HOME: ".data" })).toBe(join(home, ".local", "share", "sally", "sally.db"));
+    expect(configDir({ HOME: home, XDG_CONFIG_HOME: "conf" })).toBe(join(home, ".config", "sally"));
+  });
+
   it("reads the API key from the environment first", () => {
     mkdirSync(configDir({ HOME: home }), { recursive: true });
     writeFileSync(join(configDir({ HOME: home }), "api_key"), "from-file\n", { mode: 0o600 });

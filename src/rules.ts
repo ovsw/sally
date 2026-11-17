@@ -43,11 +43,10 @@ export interface RulesService {
 const now = () => new Date().toISOString();
 
 function clean(content: RuleContent): RuleContent {
-  const instruction = content.instruction.trim();
   const conditions = content.conditions.map((c) => c.trim()).filter((c) => c.length > 0);
-  if (!instruction) throw new RuleError("A rule needs an instruction.");
+  if (!content.instruction.trim()) throw new RuleError("A rule needs an instruction.");
   if (conditions.length === 0) throw new RuleError("A rule needs at least one condition.");
-  return { instruction, conditions };
+  return { instruction: content.instruction, conditions };
 }
 
 export function createRulesService(db: Store): RulesService {

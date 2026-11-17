@@ -27,9 +27,20 @@ describe("rules service", () => {
       const { ruleId } = rules.createRule(rule);
       rules.publish(ruleId);
       rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: ["Condition B."] });
+      expect(rules.liveRules("message")).toMatchObject([
+        { versionNumber: 1, instruction: "Do X.", conditions: [{ text: "Condition A." }] },
+      ]);
       expect(rules.publish(ruleId)).toEqual({ versionNumber: 2 });
       expect(rules.liveRules("message")[0]).toMatchObject({ versionNumber: 2, instruction: "Do Y." });
       expect(() => rules.publish(ruleId)).toThrow(RuleError);
+    });
+  });
+
+  it("keeps the instruction exactly as written", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule({ ...rule, instruction: "  Do X.\n" });
+      rules.publish(ruleId);
+      expect(rules.liveRules("message")[0]).toMatchObject({ instruction: "  Do X.\n" });
     });
   });
 

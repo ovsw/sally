@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 export type Env = Record<string, string | undefined>;
 
@@ -8,17 +8,22 @@ function home(env: Env): string {
   return env.HOME || homedir();
 }
 
+/** An XDG base directory variable, used only when absolute, as the spec requires. */
+function xdgBase(value: string | undefined): string | undefined {
+  return value && isAbsolute(value) ? value : undefined;
+}
+
 /** The user's data folder for Sally, which holds the database. */
 export function dataDir(env: Env): string {
   if (env.SALLY_DATA_DIR) return env.SALLY_DATA_DIR;
-  const base = env.XDG_DATA_HOME || join(home(env), ".local", "share");
+  const base = xdgBase(env.XDG_DATA_HOME) ?? join(home(env), ".local", "share");
   return join(base, "sally");
 }
 
 /** The user's config folder for Sally, which may hold the API key file. */
 export function configDir(env: Env): string {
   if (env.SALLY_CONFIG_DIR) return env.SALLY_CONFIG_DIR;
-  const base = env.XDG_CONFIG_HOME || join(home(env), ".config");
+  const base = xdgBase(env.XDG_CONFIG_HOME) ?? join(home(env), ".config");
   return join(base, "sally");
 }
 
