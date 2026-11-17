@@ -37,16 +37,22 @@ export function NewRuleDialog({ onCreated }: NewRuleDialogProps) {
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
+  // Each opening of the dialog is a session; a request finishing after its
+  // session ended must not close or clear a later one.
+  const session = React.useRef(0);
+
   const reset = () => {
     setName("");
     setCheckType("message");
     setCondition("");
     setInstruction("");
     setError(null);
+    setBusy(false);
   };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    const mine = session.current;
     setBusy(true);
     setError(null);
     try {
@@ -56,13 +62,16 @@ export function NewRuleDialog({ onCreated }: NewRuleDialogProps) {
         instruction,
         conditions: [condition],
       });
-      setOpen(false);
-      reset();
+      if (session.current === mine) {
+        session.current += 1;
+        setOpen(false);
+        reset();
+      }
       onCreated(rule);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (session.current === mine) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (session.current === mine) setBusy(false);
     }
   };
 
@@ -71,7 +80,10 @@ export function NewRuleDialog({ onCreated }: NewRuleDialogProps) {
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) reset();
+        if (!next) {
+          session.current += 1;
+          reset();
+        }
       }}
     >
       <DialogTrigger asChild>
@@ -80,7 +92,7 @@ export function NewRuleDialog({ onCreated }: NewRuleDialogProps) {
           New rule
         </Button>
       </DialogTrigger>
-      <DialogContent className="p-0 sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-0 sm:max-w-2xl">
         <form onSubmit={submit}>
           <DialogHeader className="px-6 pt-6 pb-0">
             <DialogTitle>New rule</DialogTitle>

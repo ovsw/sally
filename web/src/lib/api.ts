@@ -33,9 +33,15 @@ export interface RuleFilter {
 
 export class ApiError extends Error {}
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function call<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  keepalive = false,
+): Promise<T> {
   const response = await fetch(path, {
     method,
+    keepalive,
     headers: body === undefined ? undefined : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -74,8 +80,9 @@ export function createRule(rule: VersionView & { checkType: CheckType }): Promis
   return call("POST", "/api/rules", rule);
 }
 
-export function saveDraft(id: number, draft: VersionView): Promise<RuleDetail> {
-  return call("PUT", `/api/rules/${id}/draft`, draft);
+/** `keepalive` lets the save finish after the page has gone. */
+export function saveDraft(id: number, draft: VersionView, keepalive = false): Promise<RuleDetail> {
+  return call("PUT", `/api/rules/${id}/draft`, draft, keepalive);
 }
 
 export function publish(id: number): Promise<{ versionNumber: number; rule: RuleDetail }> {

@@ -215,7 +215,7 @@ export function RuleScreen({ id }: { id: number }) {
   const [publishError, setPublishError] = React.useState<string | null>(null);
   const timer = React.useRef<number | undefined>(undefined);
   const latest = React.useRef<VersionView | null>(null);
-  const inFlight = React.useRef<Promise<void>>(Promise.resolve());
+  const inFlight = React.useRef<Promise<boolean>>(Promise.resolve(true));
 
   React.useEffect(() => {
     let stale = false;
@@ -231,8 +231,11 @@ export function RuleScreen({ id }: { id: number }) {
     };
   }, [id]);
 
-  /** Saves the latest edits now; saves run one after another. */
-  const flush = React.useCallback((): Promise<void> => {
+  /**
+   * Saves the latest edits now; saves run one after another. Resolves to
+   * whether the last save succeeded.
+   */
+  const flush = React.useCallback((): Promise<boolean> => {
     window.clearTimeout(timer.current);
     timer.current = undefined;
     const content = latest.current;
@@ -244,24 +247,33 @@ export function RuleScreen({ id }: { id: number }) {
         const saved = await saveDraft(id, content);
         setRule(saved);
         setSave(latest.current ? { kind: "pending" } : { kind: "saved" });
+        return true;
       } catch (e) {
         setSave({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+        return false;
       }
     });
     return inFlight.current;
   }, [id]);
 
-  // Edits still waiting when the screen closes are saved straight away.
+  // Edits still waiting when the screen closes are saved straight away. When
+  // the page itself goes (tab closed, reload), the save is sent at once with
+  // keepalive so the browser lets it finish.
   React.useEffect(() => {
-    const onLeave = () => {
+    const onPageHide = () => {
+      const content = latest.current;
+      if (!content) return;
+      window.clearTimeout(timer.current);
+      timer.current = undefined;
+      latest.current = null;
+      saveDraft(id, content, true).catch(() => undefined);
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
       if (latest.current) void flush();
     };
-    window.addEventListener("beforeunload", onLeave);
-    return () => {
-      window.removeEventListener("beforeunload", onLeave);
-      onLeave();
-    };
-  }, [flush]);
+  }, [id, flush]);
 
   const edit = (next: VersionView) => {
     setDraft(next);
@@ -276,11 +288,16 @@ export function RuleScreen({ id }: { id: number }) {
     setPublishing(true);
     setPublishError(null);
     try {
-      await flush();
+      // A draft the server refused must not be published as the old draft.
+      if (!(await flush())) return;
       const result = await publish(id);
       setRule(result.rule);
-      setDraft(contentOf(result.rule));
-      setSave({ kind: "idle" });
+      // Edits typed while publishing stay in the form and are saved as the
+      // next draft.
+      if (!latest.current) {
+        setDraft(contentOf(result.rule));
+        setSave({ kind: "idle" });
+      }
     } catch (e) {
       setPublishError(e instanceof Error ? e.message : String(e));
     } finally {
