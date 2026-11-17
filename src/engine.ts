@@ -21,6 +21,8 @@ export interface Firing {
 
 export interface CheckResult {
   outcome: Outcome;
+  /** The recorded check's id. */
+  checkId: number;
   /** Fired rules, strongest first. Empty unless the outcome is attached or sent back. */
   firings: Firing[];
 }
@@ -34,6 +36,8 @@ export interface EngineOptions {
 
 export interface Engine {
   check(input: CheckInput): Promise<CheckResult>;
+  /** Records a check that was skipped without asking the matcher, and returns its id. */
+  skip(input: CheckInput): number;
 }
 
 class TimeoutError extends Error {
@@ -74,10 +78,10 @@ export function createEngine(options: EngineOptions): Engine {
     check: CheckRecord,
     outcome: Outcome,
     extra: { error?: string; inputTokens?: number | null; scores?: ScoreRow[]; firings?: FiringRow[] } = {},
-  ): void {
+  ): number {
     const { input } = check;
     const durationMs = Math.round(performance.now() - check.startedAt);
-    transaction(store, () => {
+    return transaction(store, () => {
       const { lastInsertRowid: checkId } = store
         .prepare(
           `INSERT INTO checks (created_at, session_id, cwd, check_type, text, duration_ms,
@@ -110,6 +114,7 @@ export function createEngine(options: EngineOptions): Engine {
       for (const f of extra.firings ?? []) {
         addFiring.run(checkId, f.rule.ruleId, f.rule.versionId, f.conditionId, f.score, f.dropped ? 1 : 0);
       }
+      return Number(checkId);
     });
   }
 
@@ -131,6 +136,11 @@ export function createEngine(options: EngineOptions): Engine {
   }
 
   return {
+    skip(input) {
+      const { cutoff, cap } = rules.settings();
+      return record({ input, text: input.text, startedAt: performance.now(), cutoff, cap }, "skipped");
+    },
+
     async check(input) {
       const startedAt = performance.now();
       const { cutoff, cap, timeLimitMs } = rules.settings();
@@ -138,13 +148,13 @@ export function createEngine(options: EngineOptions): Engine {
       // A message that starts with a slash command is judged only on what follows the command name.
       const judged = input.checkType === "message" ? messageText(input.text) : { kind: "check" as const, text: input.text };
       if (judged.kind === "skip") {
-        record({ input, text: input.text, startedAt, cutoff, cap }, "skipped");
-        return { outcome: "skipped", firings: [] };
+        const checkId = record({ input, text: input.text, startedAt, cutoff, cap }, "skipped");
+        return { outcome: "skipped", checkId, firings: [] };
       }
       const check: CheckRecord = { input, text: judged.text, startedAt, cutoff, cap };
       const failed = (error: string, inputTokens?: number | null): CheckResult => {
-        record(check, "failed", { error, inputTokens });
-        return { outcome: "failed", firings: [] };
+        const checkId = record(check, "failed", { error, inputTokens });
+        return { outcome: "failed", checkId, firings: [] };
       };
 
       const live = rules.liveRules(input.checkType);
@@ -190,9 +200,10 @@ export function createEngine(options: EngineOptions): Engine {
       const kept = fired.filter((row) => !row.dropped);
 
       const outcome: Outcome = kept.length === 0 ? "nothing" : input.checkType === "message" ? "attached" : "sent_back";
-      record(check, outcome, { inputTokens: result.inputTokens, scores, firings: fired });
+      const checkId = record(check, outcome, { inputTokens: result.inputTokens, scores, firings: fired });
       return {
         outcome,
+        checkId,
         firings: kept.map((row) => ({
           ruleId: row.rule.ruleId,
           name: row.rule.name,

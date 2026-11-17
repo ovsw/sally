@@ -76,6 +76,21 @@ const migrations: string[] = [
   CREATE INDEX firings_by_rule ON firings (rule_id);
   `,
   `
+  -- One row per turn that ended with a reply: Claude's final reply, tied to the
+  -- turn's message check, and the revised reply after a send-back.
+  CREATE TABLE turns (
+    id                INTEGER PRIMARY KEY,
+    created_at        TEXT NOT NULL,
+    session_id        TEXT,
+    message_check_id  INTEGER REFERENCES checks (id) ON DELETE SET NULL,
+    reply_check_id    INTEGER REFERENCES checks (id) ON DELETE SET NULL,
+    reply             TEXT NOT NULL,
+    revised_reply     TEXT,
+    revised_at        TEXT
+  );
+  CREATE INDEX turns_by_session ON turns (session_id);
+  `,
+  `
   -- Engine settings by key; a key with no row takes its default.
   CREATE TABLE settings (
     key    TEXT PRIMARY KEY,
