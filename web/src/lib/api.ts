@@ -126,3 +126,68 @@ export function deleteRule(id: number): Promise<{ deleted: true }> {
 export function listProjects(): Promise<Project[]> {
   return call<{ projects: Project[] }>("GET", "/api/projects").then((r) => r.projects);
 }
+
+export type Outcome = "nothing" | "attached" | "sent_back" | "skipped" | "failed";
+
+/** A rule that fired in a check. `name` is null when the rule has since been deleted. */
+export interface ActivityFiring {
+  ruleId: number;
+  name: string | null;
+  score: number;
+  /** The cap dropped it, so it was not attached or sent back. */
+  dropped: boolean;
+}
+
+export interface ActivityCheck {
+  id: number;
+  createdAt: string;
+  project: string | null;
+  sessionId: string | null;
+  checkType: CheckType;
+  text: string;
+  outcome: Outcome;
+  error: string | null;
+  durationMs: number;
+  inputTokens: number | null;
+  firings: ActivityFiring[];
+}
+
+export interface ActivityFilter {
+  outcomes?: Outcome[];
+  checkType?: CheckType[];
+}
+
+/** The most recent checks, newest first. */
+export function listActivity(filter: ActivityFilter): Promise<ActivityCheck[]> {
+  const params = new URLSearchParams();
+  for (const outcome of filter.outcomes ?? []) params.append("outcome", outcome);
+  const checkType = single(filter.checkType);
+  if (checkType) params.set("checkType", checkType);
+  const query = params.toString();
+  return call<{ checks: ActivityCheck[] }>("GET", `/api/activity${query ? `?${query}` : ""}`).then((r) => r.checks);
+}
+
+export interface RuleCheckView {
+  checkId: number;
+  createdAt: string;
+  project: string | null;
+  text: string;
+  score: number;
+  cutoff: number;
+  versionNumber: number | null;
+  condition: string | null;
+}
+
+export interface RuleAnalytics {
+  checks: number;
+  firings: number;
+  dropped: number;
+  recentFirings: (RuleCheckView & { dropped: boolean })[];
+  nearMisses: RuleCheckView[];
+  nearMissMargin: number;
+  versions: { number: number; publishedAt: string; checks: number; firings: number }[];
+}
+
+export function getRuleAnalytics(id: number): Promise<RuleAnalytics> {
+  return call("GET", `/api/rules/${id}/analytics`);
+}

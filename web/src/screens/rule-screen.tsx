@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 
+import { RuleAnalyticsPanel } from "@/components/rule-analytics";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -844,6 +845,8 @@ export function RuleScreen({ id }: { id: number }) {
         </section>
       </div>
       <VersionHistory rule={rule} busy={acting} onStartDraft={(v) => void startFrom(v)} />
+      {/* Reloads after a publish, so the new version shows. */}
+      <RuleAnalyticsPanel key={rule.live?.number ?? 0} id={id} />
     </div>
   );
 }

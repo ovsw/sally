@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { type ActivityFilter, OUTCOMES } from "../analytics.ts";
+import type { Outcome } from "../engine.ts";
 import {
   type CheckType,
   type RuleFilter,
@@ -93,6 +95,24 @@ function filterFrom(params: URLSearchParams): RuleFilter {
   return filter;
 }
 
+function activityFilterFrom(params: URLSearchParams): ActivityFilter {
+  const filter: ActivityFilter = {};
+  const outcomes = params.getAll("outcome");
+  if (!outcomes.every((o) => OUTCOMES.includes(o as Outcome))) {
+    throw new HttpError(400, `outcome is one of ${OUTCOMES.join(", ")}.`);
+  }
+  if (outcomes.length > 0) filter.outcomes = outcomes as Outcome[];
+  const checkType = params.get("checkType");
+  if (checkType === "message" || checkType === "reply") filter.checkType = checkType;
+  else if (checkType) throw new HttpError(400, "checkType is message or reply.");
+  const limit = params.get("limit");
+  if (limit !== null) {
+    if (!/^\d+$/.test(limit)) throw new HttpError(400, "limit is a whole number.");
+    filter.limit = Number(limit);
+  }
+  return filter;
+}
+
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
   res.end(JSON.stringify(body));
@@ -110,7 +130,9 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * - POST /api/rules/:id/versions/:number/draft           start a draft from a published version
  * - POST /api/rules/:id/off, POST /api/rules/:id/on      switch the rule off or on
  * - DELETE /api/rules/:id                                delete the rule
+ * - GET  /api/rules/:id/analytics                        how the rule has behaved
  * - GET  /api/projects                                   the projects Sally has seen
+ * - GET  /api/activity?outcome=&checkType=&limit=        the most recent checks
  *
  * Every change answers with the rule as it now is, except a delete, which
  * answers { deleted: true }. Refusals answer with { error } and a 4xx status.
@@ -126,6 +148,9 @@ export async function handleApi(
     const method = req.method ?? "GET";
     if (parts.length === 1 && parts[0] === "projects" && method === "GET") {
       return send(res, 200, { projects: rules.projects() });
+    }
+    if (parts.length === 1 && parts[0] === "activity" && method === "GET") {
+      return send(res, 200, { checks: rules.activity(activityFilterFrom(url.searchParams)) });
     }
     if (parts[0] !== "rules") throw new HttpError(404, "Not found.");
     const id = parts[1] === undefined ? undefined : Number(parts[1]);
@@ -147,6 +172,9 @@ export async function handleApi(
     }
     if (id !== undefined && parts.length === 2 && method === "GET") {
       return send(res, 200, rules.getRule(id));
+    }
+    if (id !== undefined && parts.length === 3 && parts[2] === "analytics" && method === "GET") {
+      return send(res, 200, rules.ruleAnalytics(id));
     }
     if (id !== undefined && parts.length === 3 && parts[2] === "draft" && method === "PUT") {
       const body = await readJson(req);

@@ -1,3 +1,4 @@
+import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
 import { type Store, transaction } from "./store.ts";
 
 export type CheckType = "message" | "reply";
@@ -134,7 +135,8 @@ function validSetting(key: keyof Settings, value: number): boolean {
   return Number.isInteger(value) && value >= 1;
 }
 
-export interface RulesService {
+/** The rules service also answers the analytics queries (see analytics.ts). */
+export interface RulesService extends AnalyticsQueries {
   /** Creates a rule whose only version is a draft. It is not live until published. */
   createRule(rule: NewRule): { ruleId: number };
   /**
@@ -354,6 +356,8 @@ export function createRulesService(db: Store): RulesService {
   }
 
   return {
+    ...createAnalyticsQueries(db, requireRule),
+
     createRule(rule) {
       const name = cleanName(rule.name);
       requireCheckType(rule.checkType);
