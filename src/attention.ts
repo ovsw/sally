@@ -1,26 +1,26 @@
 import type { CheckType, Settings } from "./rules.ts";
 import type { Store } from "./store.ts";
 
-/** Slack for float rounding, so a score exactly the margin above the cutoff still counts as close. */
+/** Slack for float rounding, so a score exactly the margin above the cutoff still counts as a weak match. */
 const EPSILON = 1e-9;
 
 /**
  * Why a rule needs attention, worst first:
  *
- * - wrong_matches: firings of its live version were flagged as wrong matches.
- * - fires_often: it fired on a large share of its recent checks.
- * - close_to_cutoff: some of its recent firings scored only just above the cutoff.
- * - never_fires: it has not fired over a long stretch of checks.
+ * - wrong_matches: matches of its live version were flagged as wrong matches.
+ * - matches_often: it matched on a large share of its recent checks.
+ * - weak_matches: some of its recent matches scored only just above the cutoff.
+ * - never_matches: it has not matched over a long stretch of checks.
  */
-export type AttentionKind = "wrong_matches" | "fires_often" | "close_to_cutoff" | "never_fires";
+export type AttentionKind = "wrong_matches" | "matches_often" | "weak_matches" | "never_matches";
 
-const KIND_ORDER: readonly AttentionKind[] = ["wrong_matches", "fires_often", "close_to_cutoff", "never_fires"];
+const KIND_ORDER: readonly AttentionKind[] = ["wrong_matches", "matches_often", "weak_matches", "never_matches"];
 
 export type AttentionReason = { summary: string } & (
   | { kind: "wrong_matches"; flags: number }
-  | { kind: "fires_often"; firings: number; checks: number; share: number; threshold: number }
-  | { kind: "close_to_cutoff"; closeFirings: number; firings: number; margin: number }
-  | { kind: "never_fires"; checks: number }
+  | { kind: "matches_often"; matches: number; checks: number; share: number; threshold: number }
+  | { kind: "weak_matches"; weakMatches: number; matches: number; margin: number }
+  | { kind: "never_matches"; checks: number }
 );
 
 /** A rule on the Needs attention list, with every reason it is there. */
@@ -68,14 +68,14 @@ function readAttention(db: Store, t: Thresholds): AttentionEntry[] {
     )
     .all() as { id: number; name: string; check_type: CheckType; version_id: number; number: number }[];
 
-  // The latest checks a version was scored in, and its firings in them.
+  // The latest checks a version was scored in, and its matches in them.
   const latest = `SELECT DISTINCT check_id FROM scores WHERE version_id = :version ORDER BY check_id DESC LIMIT :limit`;
   const window = db.prepare(
     `WITH latest AS (${latest})
      SELECT (SELECT COUNT(*) FROM latest) AS checks,
-            COUNT(f.id) AS firings,
-            COALESCE(SUM(f.score < c.cutoff + :margin + :epsilon), 0) AS close
-       FROM firings f JOIN checks c ON c.id = f.check_id
+            COUNT(f.id) AS matches,
+            COALESCE(SUM(f.score < c.cutoff + :margin + :epsilon), 0) AS weak
+       FROM matches f JOIN checks c ON c.id = f.check_id
       WHERE f.version_id = :version AND f.check_id IN (SELECT check_id FROM latest)`,
   );
 
@@ -83,7 +83,7 @@ function readAttention(db: Store, t: Thresholds): AttentionEntry[] {
   const hasFlags = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'flags'").get() !== undefined;
   const wrongFlags = hasFlags
     ? db.prepare(
-        `SELECT COUNT(*) AS flags FROM flags fl JOIN firings f ON f.id = fl.firing_id
+        `SELECT COUNT(*) AS flags FROM flags fl JOIN matches f ON f.id = fl.match_id
           WHERE f.version_id = ? AND fl.verdict = 'wrong'`,
       )
     : undefined;
@@ -97,7 +97,7 @@ function readAttention(db: Store, t: Thresholds): AttentionEntry[] {
       reasons.push({
         kind: "wrong_matches",
         flags,
-        summary: `${plural(flags, "firing")} of version ${rule.number} flagged as a wrong match.`,
+        summary: `${flags} ${flags === 1 ? "match" : "matches"} of version ${rule.number} flagged as a wrong match.`,
       });
     }
 
@@ -106,25 +106,25 @@ function readAttention(db: Store, t: Thresholds): AttentionEntry[] {
       limit: t.recentChecks,
       margin: t.closeMargin,
       epsilon: EPSILON,
-    }) as { checks: number; firings: number; close: number };
-    if (recent.checks > 0 && recent.firings / recent.checks >= t.busyShare - EPSILON) {
-      const share = recent.firings / recent.checks;
+    }) as { checks: number; matches: number; weak: number };
+    if (recent.checks > 0 && recent.matches / recent.checks >= t.busyShare - EPSILON) {
+      const share = recent.matches / recent.checks;
       reasons.push({
-        kind: "fires_often",
-        firings: recent.firings,
+        kind: "matches_often",
+        matches: recent.matches,
         checks: recent.checks,
         share,
         threshold: t.busyShare,
-        summary: `Fired on ${recent.firings} of its last ${plural(recent.checks, "check")} (${percent(share)}); the threshold is ${percent(t.busyShare)}.`,
+        summary: `Matched on ${recent.matches} of its last ${plural(recent.checks, "check")} (${percent(share)}); the threshold is ${percent(t.busyShare)}.`,
       });
     }
-    if (recent.close > 0) {
+    if (recent.weak > 0) {
       reasons.push({
-        kind: "close_to_cutoff",
-        closeFirings: recent.close,
-        firings: recent.firings,
+        kind: "weak_matches",
+        weakMatches: recent.weak,
+        matches: recent.matches,
         margin: t.closeMargin,
-        summary: `${recent.firings === 1 ? "Its only recent firing" : `${recent.close} of its ${recent.firings} recent firings`} scored no more than ${t.closeMargin} above the cutoff.`,
+        summary: `${recent.matches === 1 ? "Its only recent match" : `${recent.weak} of its ${recent.matches} recent matches`} scored no more than ${t.closeMargin} above the cutoff.`,
       });
     }
 
@@ -133,12 +133,12 @@ function readAttention(db: Store, t: Thresholds): AttentionEntry[] {
       limit: t.quietChecks,
       margin: 0,
       epsilon: 0,
-    }) as { checks: number; firings: number };
-    if (stretch.checks >= t.quietChecks && stretch.firings === 0) {
+    }) as { checks: number; matches: number };
+    if (stretch.checks >= t.quietChecks && stretch.matches === 0) {
       reasons.push({
-        kind: "never_fires",
+        kind: "never_matches",
         checks: stretch.checks,
-        summary: `No firings in its last ${plural(stretch.checks, "check")}.`,
+        summary: `No matches in its last ${plural(stretch.checks, "check")}.`,
       });
     }
 

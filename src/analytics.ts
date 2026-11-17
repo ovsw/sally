@@ -25,14 +25,12 @@ export interface ActivityFilter {
   limit?: number;
 }
 
-/** A rule that fired in a check. */
-export interface ActivityFiring {
+/** A rule that matched in a check. */
+export interface ActivityMatch {
   ruleId: number;
-  /** The rule's name in the version that fired; null when the rule has since been deleted. */
+  /** The rule's name in the version that matched; null when the rule has since been deleted. */
   name: string | null;
   score: number;
-  /** True when the cap dropped it, so it was not attached or sent back. */
-  dropped: boolean;
 }
 
 /** One check, as the Activity screen shows it. */
@@ -50,8 +48,8 @@ export interface ActivityCheck {
   error: string | null;
   durationMs: number;
   inputTokens: number | null;
-  /** The rules that fired, strongest first, including those the cap dropped. */
-  firings: ActivityFiring[];
+  /** The rules that matched, strongest first. */
+  matches: ActivityMatch[];
 }
 
 /** A check a rule was scored in, with the rule's best condition and score there. */
@@ -70,11 +68,9 @@ export interface RuleCheckView {
   condition: string | null;
 }
 
-export interface RuleFiringView extends RuleCheckView {
-  firingId: number;
-  /** True when the cap dropped it, so it was not attached or sent back. */
-  dropped: boolean;
-  /** The firing's flag, wrong or correct, and who raised it; null when unflagged. */
+export interface RuleMatchView extends RuleCheckView {
+  matchId: number;
+  /** The match's flag, wrong or right, and who raised it; null when unflagged. */
   flag: FlagView | null;
 }
 
@@ -84,9 +80,9 @@ export interface VersionPerformance {
   publishedAt: string;
   /** Checks this version was scored in. */
   checks: number;
-  /** Times this version fired and was attached or sent back. */
-  firings: number;
-  /** This version's firings flagged as wrong matches. */
+  /** Times this version matched and was attached or sent back. */
+  matches: number;
+  /** This version's matches flagged as wrong matches. */
   wrongMatches: number;
 }
 
@@ -94,14 +90,12 @@ export interface VersionPerformance {
 export interface RuleAnalytics {
   /** Checks the rule was scored in. */
   checks: number;
-  /** Times the rule fired and was attached or sent back. */
-  firings: number;
-  /** Times the rule fired but the cap dropped it. */
-  dropped: number;
-  /** Firings flagged as wrong matches. */
+  /** Times the rule matched and was attached or sent back. */
+  matches: number;
+  /** Matches flagged as wrong matches. */
   wrongMatches: number;
-  /** The most recent firings, newest first, including those the cap dropped. */
-  recentFirings: RuleFiringView[];
+  /** The most recent matches, newest first. */
+  recentMatches: RuleMatchView[];
   /** The most recent checks where the rule's best score sat just under the cutoff, newest first. */
   nearMisses: RuleCheckView[];
   /** How far under the cutoff a near miss may be. */
@@ -113,7 +107,7 @@ export interface RuleAnalytics {
 export interface AnalyticsQueries {
   /** The most recent checks, newest first, with what each attached or sent back. */
   activity(filter?: ActivityFilter): ActivityCheck[];
-  /** How often the rule fired, on what and with what flags, its near misses, and each version's firing and wrong-match counts. */
+  /** How often the rule matched, on what and with what flags, its near misses, and each version's match and wrong-match counts. */
   ruleAnalytics(ruleId: number, options?: { limit?: number }): RuleAnalytics;
 }
 
@@ -183,9 +177,9 @@ export function createAnalyticsQueries(db: Store, requireRule: (ruleId: number) 
         input_tokens: number | null;
       }[];
 
-      const firingsOf = db.prepare(
-        `SELECT f.rule_id, v.name, f.score, f.dropped
-           FROM firings f LEFT JOIN versions v ON v.id = f.version_id
+      const matchesOf = db.prepare(
+        `SELECT f.rule_id, v.name, f.score
+           FROM matches f LEFT JOIN versions v ON v.id = f.version_id
           WHERE f.check_id = ? ORDER BY f.score DESC, f.rule_id`,
       );
       return rows.map((row) => ({
@@ -199,9 +193,11 @@ export function createAnalyticsQueries(db: Store, requireRule: (ruleId: number) 
         error: row.error,
         durationMs: row.duration_ms,
         inputTokens: row.input_tokens,
-        firings: (
-          firingsOf.all(row.id) as { rule_id: number; name: string | null; score: number; dropped: number }[]
-        ).map((f) => ({ ruleId: f.rule_id, name: f.name, score: f.score, dropped: f.dropped === 1 })),
+        matches: (matchesOf.all(row.id) as { rule_id: number; name: string | null; score: number }[]).map((f) => ({
+          ruleId: f.rule_id,
+          name: f.name,
+          score: f.score,
+        })),
       }));
     },
 
@@ -225,46 +221,41 @@ function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalyt
   const { checks } = db
     .prepare(`SELECT COUNT(DISTINCT check_id) AS checks FROM scores WHERE version_id IN (${versionsOfRule})`)
     .get(ruleId) as { checks: number };
-  const counts = db
-    .prepare(
-      `SELECT COALESCE(SUM(dropped = 0), 0) AS firings, COALESCE(SUM(dropped = 1), 0) AS dropped
-         FROM firings WHERE rule_id = ?`,
-    )
-    .get(ruleId) as { firings: number; dropped: number };
+  const { matches } = db.prepare("SELECT COUNT(*) AS matches FROM matches WHERE rule_id = ?").get(ruleId) as {
+    matches: number;
+  };
 
   const { wrongMatches } = db
     .prepare(
-      `SELECT COUNT(*) AS wrongMatches FROM flags fl JOIN firings f ON f.id = fl.firing_id
+      `SELECT COUNT(*) AS wrongMatches FROM flags fl JOIN matches f ON f.id = fl.match_id
         WHERE f.rule_id = ? AND fl.verdict = 'wrong'`,
     )
     .get(ruleId) as { wrongMatches: number };
 
-  const recentFirings = (
+  const recentMatches = (
     db
       .prepare(
-        `SELECT f.id AS firing_id, f.check_id, c.created_at, p.name AS project, c.text, f.score, c.cutoff,
-                v.number AS version_number, cond.text AS condition, f.dropped,
+        `SELECT f.id AS match_id, f.check_id, c.created_at, p.name AS project, c.text, f.score, c.cutoff,
+                v.number AS version_number, cond.text AS condition,
                 fl.verdict, fl.raised_by, fl.created_at AS flagged_at
-           FROM firings f
+           FROM matches f
            JOIN checks c ON c.id = f.check_id
            LEFT JOIN projects p ON p.id = c.project_id
            LEFT JOIN versions v ON v.id = f.version_id
            LEFT JOIN conditions cond ON cond.id = f.condition_id
-           LEFT JOIN flags fl ON fl.firing_id = f.id
+           LEFT JOIN flags fl ON fl.match_id = f.id
           WHERE f.rule_id = ?
           ORDER BY f.check_id DESC LIMIT ?`,
       )
       .all(ruleId, limit) as (CheckViewRow & {
-      firing_id: number;
-      dropped: number;
+      match_id: number;
       verdict: FlagView["verdict"] | null;
       raised_by: FlagView["raisedBy"] | null;
       flagged_at: string | null;
     })[]
   ).map((row) => ({
     ...checkView(row),
-    firingId: row.firing_id,
-    dropped: row.dropped === 1,
+    matchId: row.match_id,
     flag:
       row.verdict && row.raised_by && row.flagged_at
         ? { verdict: row.verdict, raisedBy: row.raised_by, createdAt: row.flagged_at }
@@ -297,29 +288,28 @@ function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalyt
       .prepare(
         `SELECT v.number, v.published_at,
                 (SELECT COUNT(DISTINCT s.check_id) FROM scores s WHERE s.version_id = v.id) AS checks,
-                (SELECT COUNT(*) FROM firings f
-                  WHERE f.rule_id = v.rule_id AND f.version_id = v.id AND f.dropped = 0) AS firings,
-                (SELECT COUNT(*) FROM flags fl JOIN firings f ON f.id = fl.firing_id
+                (SELECT COUNT(*) FROM matches f
+                  WHERE f.rule_id = v.rule_id AND f.version_id = v.id) AS matches,
+                (SELECT COUNT(*) FROM flags fl JOIN matches f ON f.id = fl.match_id
                   WHERE f.rule_id = v.rule_id AND f.version_id = v.id AND fl.verdict = 'wrong') AS wrong_matches
            FROM versions v
           WHERE v.rule_id = ? AND v.number IS NOT NULL
           ORDER BY v.number DESC`,
       )
-      .all(ruleId) as { number: number; published_at: string; checks: number; firings: number; wrong_matches: number }[]
+      .all(ruleId) as { number: number; published_at: string; checks: number; matches: number; wrong_matches: number }[]
   ).map((row) => ({
     number: row.number,
     publishedAt: row.published_at,
     checks: row.checks,
-    firings: row.firings,
+    matches: row.matches,
     wrongMatches: row.wrong_matches,
   }));
 
   return {
     checks,
-    firings: counts.firings,
-    dropped: counts.dropped,
+    matches,
     wrongMatches,
-    recentFirings,
+    recentMatches,
     nearMisses,
     nearMissMargin: NEAR_MISS_MARGIN,
     versions,

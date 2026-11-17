@@ -98,12 +98,12 @@ describe("an evaluation run", () => {
       inputTokens: { total: 600, largestCheck: 120 },
     });
     expect(result.summary.durationMs.median).toEqual(expect.any(Number));
-    expect(result.settings).toEqual({ cutoff: 0.6, cap: 3, timeLimitMs: 3000 });
+    expect(result.settings).toEqual({ cutoff: 0.6, timeLimitMs: 10_000 });
 
     const byLabel = Object.fromEntries(result.cases.map((c) => [c.label, c]));
     expect(byLabel["short answer"]!.right).toEqual([{ name: "Brief replies", score: 0.82, padding: false }]);
     expect(byLabel["rebase main"]!.missed).toEqual([{ name: "Never force push", score: 0.41, padding: false }]);
-    expect(byLabel["unrelated question"]!.fired).toEqual([]);
+    expect(byLabel["unrelated question"]!.matched).toEqual([]);
     expect(byLabel["button colour with link"]!.wrong).toEqual([
       { name: "Local link for visual changes", score: 0.9, padding: false },
     ]);
@@ -131,9 +131,9 @@ describe("an evaluation run", () => {
 
   it("uses the settings it is given", async () => {
     const matcher = exampleMatcher();
-    const result = await report([example, "--cutoff", "0.85", "--cap", "2", "--time-limit", "5000"], matcher);
-    expect(result.settings).toEqual({ cutoff: 0.85, cap: 2, timeLimitMs: 5000 });
-    // At 0.85 only the reply rule's 0.9 still fires.
+    const result = await report([example, "--cutoff", "0.85", "--time-limit", "5000"], matcher);
+    expect(result.settings).toEqual({ cutoff: 0.85, timeLimitMs: 5000 });
+    // At 0.85 only the reply rule's 0.9 still matches.
     expect(result.summary).toMatchObject({ right: 1, wrong: 1, missed: 2 });
   });
 

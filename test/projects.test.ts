@@ -158,7 +158,7 @@ describe("rule scope", () => {
     ]);
   });
 
-  it("never fires an out-of-scope rule, and records no score for it", async () => {
+  it("never matches an out-of-scope rule, and records no score for it", async () => {
     const { elsewhere } = await setUp();
     const matcher = standInMatcher({ "Repo condition.": 0.99 });
 

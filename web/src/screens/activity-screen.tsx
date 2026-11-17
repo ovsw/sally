@@ -22,7 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   type ActivityCheck,
-  type ActivityFiring,
+  type ActivityMatch,
   type CheckType,
   listActivity,
   type Outcome,
@@ -62,27 +62,23 @@ function OutcomeBadge({ outcome }: { outcome: Outcome }) {
   );
 }
 
-function FiringLink({ firing }: { firing: ActivityFiring }) {
-  const label = firing.name ?? "Deleted rule";
+function MatchLink({ match }: { match: ActivityMatch }) {
+  const label = match.name ?? "Deleted rule";
   return (
     <span className="flex items-center gap-1.5">
-      {firing.name === null ? (
+      {match.name === null ? (
         <span className="text-muted-foreground italic">{label}</span>
       ) : (
         <a
-          href={`/rules/${firing.ruleId}`}
+          href={`/rules/${match.ruleId}`}
           onClick={followLink}
-          className={
-            firing.dropped
-              ? "text-muted-foreground hover:underline"
-              : "font-medium hover:underline"
-          }
+          className="font-medium hover:underline"
         >
           {label}
         </a>
       )}
       <span className="text-xs text-muted-foreground tabular-nums">
-        {formatScore(firing.score)}
+        {formatScore(match.score)}
       </span>
     </span>
   );
@@ -159,24 +155,14 @@ const columns: ColumnDef<ActivityCheck>[] = [
     id: "attached",
     header: "Attached",
     cell: ({ row }) => {
-      const kept = row.original.firings.filter((f) => !f.dropped);
-      const dropped = row.original.firings.filter((f) => f.dropped);
-      if (row.original.firings.length === 0) {
+      if (row.original.matches.length === 0) {
         return <span className="text-muted-foreground">None</span>;
       }
       return (
         <div className="space-y-1">
-          {kept.map((firing) => (
-            <FiringLink key={firing.ruleId} firing={firing} />
+          {row.original.matches.map((match) => (
+            <MatchLink key={match.ruleId} match={match} />
           ))}
-          {dropped.length > 0 && (
-            <div className="space-y-1 text-xs text-muted-foreground">
-              <span>Cut by the cap:</span>
-              {dropped.map((firing) => (
-                <FiringLink key={firing.ruleId} firing={firing} />
-              ))}
-            </div>
-          )}
         </div>
       );
     },

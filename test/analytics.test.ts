@@ -53,22 +53,21 @@ describe("activity", () => {
         outcome: "sent_back",
         error: null,
         inputTokens: 42,
-        firings: [{ name: "Handover link", score: 0.9, dropped: false }],
+        matches: [{ name: "Handover link", score: 0.9 }],
       },
       {
         project: "acme/widgets",
         checkType: "message",
         text: "Make the header smaller",
         outcome: "attached",
-        firings: [{ name: "Local link", score: 0.8, dropped: false }],
+        matches: [{ name: "Local link", score: 0.8 }],
       },
     ]);
     expect(new Date(checks[0]!.createdAt).getTime()).not.toBeNaN();
     expect(checks[0]!.id).toBeGreaterThan(checks[1]!.id);
   });
 
-  it("shows rules the cap dropped apart from those attached, strongest first", async () => {
-    sandbox.withRules((rules) => rules.updateSettings({ cap: 1 }));
+  it("shows every rule that matched in a check, strongest first", async () => {
     sandbox.liveRule({ name: "Weaker", conditions: ["Condition A."] });
     sandbox.liveRule({ name: "Stronger", conditions: ["Condition B."] });
     const matcher = standInMatcher({ "Condition A.": 0.7, "Condition B.": 0.95 });
@@ -76,9 +75,9 @@ describe("activity", () => {
     await message("hello there", matcher);
 
     const [check] = sandbox.withRules((rules) => rules.activity());
-    expect(check!.firings).toMatchObject([
-      { name: "Stronger", score: 0.95, dropped: false },
-      { name: "Weaker", score: 0.7, dropped: true },
+    expect(check!.matches).toMatchObject([
+      { name: "Stronger", score: 0.95 },
+      { name: "Weaker", score: 0.7 },
     ]);
   });
 
@@ -91,8 +90,8 @@ describe("activity", () => {
 
     const checks = sandbox.withRules((rules) => rules.activity());
     expect(checks).toMatchObject([
-      { outcome: "skipped", firings: [] },
-      { outcome: "nothing", firings: [] },
+      { outcome: "skipped", matches: [] },
+      { outcome: "nothing", matches: [] },
     ]);
   });
 
@@ -110,13 +109,13 @@ describe("activity", () => {
 
     await message("first", failing);
     const pending = message("second", hanging);
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(10_000);
     await pending;
 
     const checks = sandbox.withRules((rules) => rules.activity());
     expect(checks).toMatchObject([
-      { text: "second", outcome: "failed", error: "timeout after 3000 ms", firings: [] },
-      { text: "first", outcome: "failed", error: "Jev answered 500", firings: [] },
+      { text: "second", outcome: "failed", error: "timeout after 10000 ms", matches: [] },
+      { text: "first", outcome: "failed", error: "Jev answered 500", matches: [] },
     ]);
   });
 
@@ -141,15 +140,15 @@ describe("activity", () => {
 });
 
 describe("rule analytics", () => {
-  it("counts how often the rule fired and lists its firings with scores and the highest condition", async () => {
+  it("counts how often the rule matched and lists its matches with scores and the highest condition", async () => {
     const ruleId = sandbox.liveRule({ name: "Local link", conditions: ["Condition A.", "Condition B."] });
     await message("first message", standInMatcher({ "Condition A.": 0.7, "Condition B.": 0.9 }));
     await message("second message", standInMatcher({ "Condition A.": 0.1 }));
     await message("third message", standInMatcher({ "Condition A.": 0.8, "Condition B.": 0.3 }));
 
     const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(ruleId));
-    expect(analytics).toMatchObject({ checks: 3, firings: 2, dropped: 0 });
-    expect(analytics.recentFirings).toMatchObject([
+    expect(analytics).toMatchObject({ checks: 3, matches: 2 });
+    expect(analytics.recentMatches).toMatchObject([
       {
         text: "third message",
         score: 0.8,
@@ -157,30 +156,18 @@ describe("rule analytics", () => {
         versionNumber: 1,
         project: "acme/widgets",
         cutoff: 0.6,
-        dropped: false,
       },
-      { text: "first message", score: 0.9, condition: "Condition B.", versionNumber: 1, dropped: false },
+      { text: "first message", score: 0.9, condition: "Condition B.", versionNumber: 1 },
     ]);
   });
 
-  it("lists the replies a reply-check rule fired on", async () => {
+  it("lists the replies a reply-check rule matched on", async () => {
     const ruleId = sandbox.liveRule({ name: "Handover", checkType: "reply", conditions: ["No link."] });
     await reply("Done, see the page.", standInMatcher({ "No link.": 0.75 }));
 
     const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(ruleId));
-    expect(analytics).toMatchObject({ checks: 1, firings: 1 });
-    expect(analytics.recentFirings).toMatchObject([{ text: "Done, see the page.", score: 0.75, condition: "No link." }]);
-  });
-
-  it("counts firings the cap dropped apart and marks them", async () => {
-    sandbox.withRules((rules) => rules.updateSettings({ cap: 1 }));
-    const weaker = sandbox.liveRule({ name: "Weaker", conditions: ["Condition A."] });
-    sandbox.liveRule({ name: "Stronger", conditions: ["Condition B."] });
-    await message("hello there", standInMatcher({ "Condition A.": 0.7, "Condition B.": 0.95 }));
-
-    const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(weaker));
-    expect(analytics).toMatchObject({ checks: 1, firings: 0, dropped: 1 });
-    expect(analytics.recentFirings).toMatchObject([{ score: 0.7, dropped: true }]);
+    expect(analytics).toMatchObject({ checks: 1, matches: 1 });
+    expect(analytics.recentMatches).toMatchObject([{ text: "Done, see the page.", score: 0.75, condition: "No link." }]);
   });
 
   it("lists near misses: checks where the rule's best score sat just under the cutoff", async () => {
@@ -217,7 +204,7 @@ describe("rule analytics", () => {
     expect(analytics.nearMisses).toMatchObject([{ text: "at the margin", score: 0.7, cutoff: 0.8 }]);
   });
 
-  it("gives each published version its own firing count, newest first", async () => {
+  it("gives each published version its own match count, newest first", async () => {
     const ruleId = sandbox.liveRule({ name: "Rule", conditions: ["Old wording."] });
     await message("one", standInMatcher({ "Old wording.": 0.9 }));
     await message("two", standInMatcher({ "Old wording.": 0.2 }));
@@ -233,11 +220,11 @@ describe("rule analytics", () => {
 
     const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(ruleId));
     expect(analytics.versions).toMatchObject([
-      { number: 2, checks: 3, firings: 3 },
-      { number: 1, checks: 2, firings: 1 },
+      { number: 2, checks: 3, matches: 3 },
+      { number: 1, checks: 2, matches: 1 },
     ]);
-    expect(analytics).toMatchObject({ checks: 5, firings: 4 });
-    expect(analytics.recentFirings.map((f) => f.versionNumber)).toEqual([2, 2, 2, 1]);
+    expect(analytics).toMatchObject({ checks: 5, matches: 4 });
+    expect(analytics.recentMatches.map((f) => f.versionNumber)).toEqual([2, 2, 2, 1]);
   });
 
   it("is empty for a rule that has never been checked", () => {
@@ -247,10 +234,9 @@ describe("rule analytics", () => {
 
     expect(sandbox.withRules((rules) => rules.ruleAnalytics(ruleId))).toEqual({
       checks: 0,
-      firings: 0,
-      dropped: 0,
+      matches: 0,
       wrongMatches: 0,
-      recentFirings: [],
+      recentMatches: [],
       nearMisses: [],
       nearMissMargin: 0.1,
       versions: [],
@@ -261,11 +247,11 @@ describe("rule analytics", () => {
     sandbox.withRules((rules) => expect(() => rules.ruleAnalytics(999)).toThrow(RuleNotFoundError));
   });
 
-  it("does not count other rules' checks or firings", async () => {
+  it("does not count other rules' checks or matches", async () => {
     const mine = sandbox.liveRule({ name: "Mine", conditions: ["Condition A."] });
     sandbox.liveRule({ name: "Other", checkType: "reply", conditions: ["Condition B."] });
     await reply("A reply.", standInMatcher({ "Condition B.": 0.9 }));
 
-    expect(sandbox.withRules((rules) => rules.ruleAnalytics(mine))).toMatchObject({ checks: 0, firings: 0 });
+    expect(sandbox.withRules((rules) => rules.ruleAnalytics(mine))).toMatchObject({ checks: 0, matches: 0 });
   });
 });

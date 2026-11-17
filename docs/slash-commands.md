@@ -24,7 +24,7 @@ and "UserPromptExpansion"), 2026-11-17:
   itself. Sally does not use it: the message check needs only the typed text.
 - Pasted text that collapsed to a `[Pasted text #N]` placeholder arrives
   expanded in place in `prompt`.
-- `UserPromptSubmit` also fires on turns Claude Code starts on its own (a
+- `UserPromptSubmit` also runs on turns Claude Code starts on its own (a
   scheduled task or `/loop` iteration, a background subagent reporting back,
   a message from another session). These arrive as ordinary prompts.
 

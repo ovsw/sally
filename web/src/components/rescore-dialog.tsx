@@ -19,7 +19,7 @@ import { formatScore } from "@/lib/format";
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
 function CaseRow({ result, cutoff }: { result: CaseResult; cutoff: number }) {
-  const shouldFire = result.case.expected === "should_fire";
+  const shouldMatch = result.case.expected === "should_match";
   return (
     <li className="space-y-1.5 py-3 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-2">
@@ -35,8 +35,8 @@ function CaseRow({ result, cutoff }: { result: CaseResult; cutoff: number }) {
           </Badge>
         )}
         <span className="text-xs text-muted-foreground">
-          {shouldFire ? "Should fire" : "Should not fire"} ·{" "}
-          {result.fired ? "fires" : "does not fire"} at {formatScore(result.best)} (cutoff{" "}
+          {shouldMatch ? "Should match" : "Should not match"} ·{" "}
+          {result.matched ? "matches" : "does not match"} at {formatScore(result.best)} (cutoff{" "}
           {formatScore(cutoff)})
         </span>
       </div>
@@ -73,7 +73,7 @@ export function RescoreDialog({
             </AlertDialogTitle>
             <AlertDialogDescription>
               Jev scored the draft's conditions against each case this rule has kept. A case passes
-              when the draft fires on it as expected.
+              when the draft matches it as expected.
             </AlertDialogDescription>
           </AlertDialogHeader>
         )}

@@ -56,18 +56,18 @@ const byText = (scores: Record<string, Record<string, number>>) =>
   });
 
 /**
- * A live message rule whose old condition fired on two messages, one flagged
- * a wrong match and one correct, and a draft with new conditions.
+ * A live message rule whose old condition matched on two messages, one flagged
+ * a wrong match and one a right match, and a draft with new conditions.
  */
 async function ruleWithCases(running: RunningApp, draftConditions: string[]): Promise<number> {
   const ruleId = sandbox.liveRule({ name: "Local link", conditions: ["Old condition."] });
   const old = standInMatcher({ "Old condition.": 0.8 });
   await message("talks about links in general", old);
   await message("please fix the button colour", old);
-  const { recentFirings } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
-  const firingOn = (text: string) => recentFirings.find((f) => f.text === text)!.firingId;
-  await running.json("POST", `/api/firings/${firingOn("talks about links in general")}/flag`, { verdict: "wrong" });
-  await running.json("POST", `/api/firings/${firingOn("please fix the button colour")}/flag`, { verdict: "correct" });
+  const { recentMatches } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
+  const matchOn = (text: string) => recentMatches.find((f) => f.text === text)!.matchId;
+  await running.json("POST", `/api/matches/${matchOn("talks about links in general")}/flag`, { verdict: "wrong" });
+  await running.json("POST", `/api/matches/${matchOn("please fix the button colour")}/flag`, { verdict: "right" });
   await running.json("PUT", `/api/rules/${ruleId}/draft`, {
     instruction: "Give a local link.",
     conditions: draftConditions,
@@ -98,23 +98,23 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
       failed: 0,
       cases: expect.arrayContaining([
         {
-          case: expect.objectContaining({ text: "talks about links in general", expected: "should_not_fire" }),
+          case: expect.objectContaining({ text: "talks about links in general", expected: "should_not_match" }),
           scores: [
             { condition: "Asks for a visual change.", score: 0.2 },
             { condition: "Mentions a page.", score: 0.3 },
           ],
           best: 0.3,
-          fired: false,
+          matched: false,
           passed: true,
         },
         {
-          case: expect.objectContaining({ text: "please fix the button colour", expected: "should_fire" }),
+          case: expect.objectContaining({ text: "please fix the button colour", expected: "should_match" }),
           scores: [
             { condition: "Asks for a visual change.", score: 0.9 },
             { condition: "Mentions a page.", score: 0.1 },
           ],
           best: 0.9,
-          fired: true,
+          matched: true,
           passed: true,
         },
       ]),
@@ -140,7 +140,7 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
     expect(result.status).toBe("scored");
     if (result.status !== "scored") return;
     expect(result).toMatchObject({ passed: 0, failed: 2 });
-    expect(result.cases.map((c) => [c.case.text, c.fired, c.passed]).sort()).toEqual([
+    expect(result.cases.map((c) => [c.case.text, c.matched, c.passed]).sort()).toEqual([
       ["please fix the button colour", false, false],
       ["talks about links in general", true, false],
     ]);
@@ -177,8 +177,8 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
     const running = await appWith(byText({ "Done, the page is updated.": { "Reports a visual change with no link.": 0.95 } }));
     const ruleId = sandbox.liveRule({ name: "Link on handover", checkType: "reply", conditions: ["Old condition."] });
     await reply("Done, the page is updated.", standInMatcher({ "Old condition.": 0.8 }));
-    const { recentFirings } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
-    await running.json("POST", `/api/firings/${recentFirings[0]!.firingId}/flag`, { verdict: "correct" });
+    const { recentMatches } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
+    await running.json("POST", `/api/matches/${recentMatches[0]!.matchId}/flag`, { verdict: "right" });
     await running.json("PUT", `/api/rules/${ruleId}/draft`, {
       instruction: "Give a local link.",
       conditions: ["Reports a visual change with no link."],
@@ -189,7 +189,7 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
     expect(result).toMatchObject({
       status: "scored",
       passed: 1,
-      cases: [{ case: { checkType: "reply", expected: "should_fire" }, fired: true, passed: true }],
+      cases: [{ case: { checkType: "reply", expected: "should_match" }, matched: true, passed: true }],
     });
   });
 
@@ -198,8 +198,8 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
     const running = await appWith(jev);
     const ruleId = sandbox.liveRule({ name: "Rule", conditions: ["Old condition."] });
     await message("write to someone@example.com about it", standInMatcher({ "Old condition.": 0.8 }));
-    const { recentFirings } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
-    await running.json("POST", `/api/firings/${recentFirings[0]!.firingId}/flag`, { verdict: "wrong" });
+    const { recentMatches } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
+    await running.json("POST", `/api/matches/${recentMatches[0]!.matchId}/flag`, { verdict: "wrong" });
     await running.json("PUT", `/api/rules/${ruleId}/draft`, {
       instruction: "Do it.",
       conditions: ["Mentions other@example.com."],

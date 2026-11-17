@@ -97,7 +97,9 @@ const migrations: string[] = [
     value  REAL NOT NULL
   );
 
-  -- The cap in force for each check, and whether the cap dropped a firing.
+  -- Retired: checks.cap and firings.dropped belonged to a limit on the rules
+  -- attached in one check. Nothing reads or writes them; a later migration
+  -- drops them.
   ALTER TABLE checks ADD COLUMN cap INTEGER;
   ALTER TABLE firings ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0 CHECK (dropped IN (0, 1));
   `,
@@ -173,6 +175,58 @@ const migrations: string[] = [
   -- (input_tokens is the total when the conditions were split across requests).
   ALTER TABLE checks ADD COLUMN cut INTEGER NOT NULL DEFAULT 0 CHECK (cut IN (0, 1));
   ALTER TABLE checks ADD COLUMN request_tokens INTEGER;
+  `,
+  `
+  -- The vocabulary pass. A rule that reaches the cutoff in a check is a match,
+  -- a flag's verdict is wrong or right, a flag is raised by Claude or the user,
+  -- and a saved case should match or should not match. The retired columns
+  -- checks.cap and dropped (on the matches table) go too.
+  ALTER TABLE firings RENAME TO matches;
+  DROP INDEX firings_by_check;
+  DROP INDEX firings_by_rule;
+  ALTER TABLE matches DROP COLUMN dropped;
+  ALTER TABLE checks DROP COLUMN cap;
+  CREATE INDEX matches_by_check ON matches (check_id);
+  CREATE INDEX matches_by_rule ON matches (rule_id);
+
+  -- The CHECK constraints change, so flags and saved_cases are rebuilt. The
+  -- old saved_cases goes before the old flags, so that dropping flags does not
+  -- cascade into the saved cases. Nothing ever raised an automatic flag; any
+  -- there is becomes Claude's, which the user's own flag can still replace.
+  CREATE TABLE new_flags (
+    id          INTEGER PRIMARY KEY,
+    match_id    INTEGER NOT NULL UNIQUE REFERENCES matches (id) ON DELETE CASCADE,
+    verdict     TEXT NOT NULL CHECK (verdict IN ('wrong', 'right')),
+    raised_by   TEXT NOT NULL CHECK (raised_by IN ('claude', 'user')),
+    created_at  TEXT NOT NULL
+  );
+  INSERT INTO new_flags (id, match_id, verdict, raised_by, created_at)
+    SELECT id, firing_id,
+           CASE verdict WHEN 'correct' THEN 'right' ELSE verdict END,
+           CASE raised_by WHEN 'automatic' THEN 'claude' ELSE raised_by END,
+           created_at
+      FROM flags;
+
+  CREATE TABLE new_saved_cases (
+    id          INTEGER PRIMARY KEY,
+    rule_id     INTEGER NOT NULL REFERENCES rules (id) ON DELETE CASCADE,
+    check_type  TEXT NOT NULL CHECK (check_type IN ('message', 'reply')),
+    text        TEXT NOT NULL,
+    expected    TEXT NOT NULL CHECK (expected IN ('should_match', 'should_not_match')),
+    flag_id     INTEGER REFERENCES new_flags (id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL
+  );
+  INSERT INTO new_saved_cases (id, rule_id, check_type, text, expected, flag_id, created_at)
+    SELECT id, rule_id, check_type, text,
+           CASE expected WHEN 'should_fire' THEN 'should_match' ELSE 'should_not_match' END,
+           flag_id, created_at
+      FROM saved_cases;
+
+  DROP TABLE saved_cases;
+  DROP TABLE flags;
+  ALTER TABLE new_flags RENAME TO flags;
+  ALTER TABLE new_saved_cases RENAME TO saved_cases;
+  CREATE INDEX saved_cases_by_rule ON saved_cases (rule_id);
   `,
 ];
 

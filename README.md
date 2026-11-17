@@ -19,7 +19,7 @@ node src/cli.ts uninstall   # backs it out
 
 Install registers the message hook (`UserPromptSubmit`) and the reply hook
 (`Stop`) in `~/.claude/settings.json`, pointing at this checkout, and adds one
-line to `~/.claude/CLAUDE.md` saying that Sally's reminders are your rules and
+line to `~/.claude/CLAUDE.md` saying that the rules Sally attaches are yours and
 carry the same authority as that file. Running it again changes nothing.
 Uninstall removes exactly those entries. Both leave everything else in the two
 files as it was, and both follow `CLAUDE_CONFIG_DIR` when it is set.
@@ -70,25 +70,25 @@ sally rules edit RULE [--name NAME] [--check-type message|reply] \
 
 ## Wrong matches
 
-Each reminder ends with a line telling Claude how to report a rule that does
+Sally's output ends with a line telling Claude how to report a rule that does
 not apply:
 
 ```sh
 sally wrong-match "<rule name>"
 ```
 
-It flags the session's most recent firing of that rule as a wrong match raised
+It flags the session's most recent match of that rule as a wrong match raised
 by Claude. The session is the one Claude Code runs the command in
 (`CLAUDE_CODE_SESSION_ID`); `--session <id>` names another. On a rule's page
-in the app, one click marks a firing wrong and one marks it correct. Every
+in the app, one click marks a match wrong and one marks it right. Every
 flag records who raised it and keeps the text as a saved case for the rule:
-a wrong match should not fire, a correct one should. A firing holds one flag;
+a wrong match should not match, a right one should. A match holds one flag;
 a new one replaces it, but never your own.
 
 When you publish a rule that has saved cases, the app first asks Jev to score
 the draft's conditions against each case and shows which pass: a wrong match
-the draft no longer fires on passes, and so does a correct one it still fires
-on. You can then publish anyway or go back to the draft. If Jev cannot be
+the draft no longer matches passes, and so does a right match it still
+matches. You can then publish anyway or go back to the draft. If Jev cannot be
 reached, the app says so and you can still publish. A rule with no saved
 cases publishes straight away.
 
@@ -99,7 +99,7 @@ sally evaluate FILE [--scale]
 ```
 
 Runs a file of saved messages and replies, each with the rules expected to
-fire, through the engine with the real Jev, and reports right matches, wrong
+match, through the engine with the real Jev, and reports right matches, wrong
 matches and misses, with timing and tokens. `--scale` pads the rule set to
 several hundred conditions and leads with the wrong-match rate. It needs an
 API key and costs a little, so it runs only on request, never in CI. The file

@@ -1,4 +1,4 @@
-import { createEngine, type Firing } from "./engine.ts";
+import { createEngine, type Match } from "./engine.ts";
 import { createJevMatcher } from "./jev.ts";
 import type { Matcher } from "./matcher.ts";
 import { databasePath, type Env, readApiKey } from "./paths.ts";
@@ -22,15 +22,15 @@ export interface MessageHookOptions {
  * The text attached to the user's message: the fixed header, then each
  * rule's name and instruction, then how to report a rule that does not apply.
  */
-export function formatAttached(firings: Firing[]): string {
-  const rules = firings.map((f) => `Rule: ${f.name}\n${f.instruction}`);
+export function formatAttached(matches: Match[]): string {
+  const rules = matches.map((f) => `Rule: ${f.name}\n${f.instruction}`);
   return [ATTACHED_HEADER, ...rules, REPORT_LINE].join("\n\n");
 }
 
 /**
  * The user-prompt-submit hook. Takes the hook input Claude Code sends on
  * stdin and returns what to print on stdout: additional context for the
- * turn when a rule fires, otherwise nothing. It never throws.
+ * turn when a rule matches, otherwise nothing. It never throws.
  */
 export async function runMessageHook(stdin: string, options: MessageHookOptions): Promise<string> {
   try {
@@ -55,7 +55,7 @@ export async function runMessageHook(stdin: string, options: MessageHookOptions)
       return JSON.stringify({
         hookSpecificOutput: {
           hookEventName: "UserPromptSubmit",
-          additionalContext: formatAttached(result.firings),
+          additionalContext: formatAttached(result.matches),
         },
       });
     } finally {

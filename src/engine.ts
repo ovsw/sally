@@ -14,7 +14,7 @@ export interface CheckInput {
   cwd?: string;
 }
 
-export interface Firing {
+export interface Match {
   ruleId: number;
   name: string;
   instruction: string;
@@ -25,8 +25,8 @@ export interface CheckResult {
   outcome: Outcome;
   /** The recorded check's id. */
   checkId: number;
-  /** Fired rules, strongest first. Empty unless the outcome is attached or sent back. */
-  firings: Firing[];
+  /** Matched rules, strongest first. Empty unless the outcome is attached or sent back. */
+  matches: Match[];
 }
 
 export interface EngineOptions {
@@ -54,10 +54,6 @@ interface ScoreRow {
   score: number;
 }
 
-interface FiringRow extends ScoreRow {
-  dropped: boolean;
-}
-
 /** The input tokens Jev reported for a check: in all, and in its largest request. */
 interface Tokens {
   input: number | null;
@@ -72,7 +68,7 @@ function combineTokens(results: MatchResult[]): Tokens {
   return { input: known.reduce((a, b) => a + b, 0), largestRequest: Math.max(...known) };
 }
 
-/** What one check records about itself, besides its scores and firings. */
+/** What one check records about itself, besides its scores and matches. */
 interface CheckRecord {
   input: CheckInput;
   /** The text the check judged: the message after any slash command, cut to its last part if too long. */
@@ -83,12 +79,11 @@ interface CheckRecord {
   project: string | undefined;
   startedAt: number;
   cutoff: number;
-  cap: number;
 }
 
 /**
  * Runs checks: scores the live conditions of the check type against the
- * text, decides which rules fire, and records everything. Any failure
+ * text, decides which rules match, and records everything. Any failure
  * leaves the turn untouched.
  */
 export function createEngine(options: EngineOptions): Engine {
@@ -97,7 +92,7 @@ export function createEngine(options: EngineOptions): Engine {
   function record(
     check: CheckRecord,
     outcome: Outcome,
-    extra: { error?: string; tokens?: Tokens; scores?: ScoreRow[]; firings?: FiringRow[] } = {},
+    extra: { error?: string; tokens?: Tokens; scores?: ScoreRow[]; matches?: ScoreRow[] } = {},
   ): number {
     const { input } = check;
     const durationMs = Math.round(performance.now() - check.startedAt);
@@ -114,8 +109,8 @@ export function createEngine(options: EngineOptions): Engine {
       const { lastInsertRowid: checkId } = store
         .prepare(
           `INSERT INTO checks (created_at, session_id, cwd, project_id, check_type, text, duration_ms,
-                               input_tokens, request_tokens, cut, cutoff, cap, outcome, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                               input_tokens, request_tokens, cut, cutoff, outcome, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           createdAt,
@@ -129,7 +124,6 @@ export function createEngine(options: EngineOptions): Engine {
           extra.tokens?.largestRequest ?? null,
           check.cut ? 1 : 0,
           check.cutoff,
-          check.cap,
           outcome,
           extra.error ?? null,
         );
@@ -139,12 +133,11 @@ export function createEngine(options: EngineOptions): Engine {
       for (const s of extra.scores ?? []) {
         addScore.run(checkId, s.rule.ruleId, s.rule.versionId, s.conditionId, s.score);
       }
-      const addFiring = store.prepare(
-        `INSERT INTO firings (check_id, rule_id, version_id, condition_id, score, dropped)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+      const addMatch = store.prepare(
+        "INSERT INTO matches (check_id, rule_id, version_id, condition_id, score) VALUES (?, ?, ?, ?, ?)",
       );
-      for (const f of extra.firings ?? []) {
-        addFiring.run(checkId, f.rule.ruleId, f.rule.versionId, f.conditionId, f.score, f.dropped ? 1 : 0);
+      for (const f of extra.matches ?? []) {
+        addMatch.run(checkId, f.rule.ruleId, f.rule.versionId, f.conditionId, f.score);
       }
       return Number(checkId);
     });
@@ -194,23 +187,23 @@ export function createEngine(options: EngineOptions): Engine {
   return {
     skip(input) {
       const startedAt = performance.now();
-      const { cutoff, cap } = rules.settings();
+      const { cutoff } = rules.settings();
       return record(
-        { input, text: input.text, cut: false, project: projectOf(input), startedAt, cutoff, cap },
+        { input, text: input.text, cut: false, project: projectOf(input), startedAt, cutoff },
         "skipped",
       );
     },
 
     async check(input) {
       const startedAt = performance.now();
-      const { cutoff, cap, timeLimitMs } = rules.settings();
+      const { cutoff, timeLimitMs } = rules.settings();
       const project = projectOf(input);
 
       // A message that starts with a slash command is judged only on what follows the command name.
       const judged = input.checkType === "message" ? messageText(input.text) : { kind: "check" as const, text: input.text };
       if (judged.kind === "skip") {
-        const checkId = record({ input, text: input.text, cut: false, project, startedAt, cutoff, cap }, "skipped");
-        return { outcome: "skipped", checkId, firings: [] };
+        const checkId = record({ input, text: input.text, cut: false, project, startedAt, cutoff }, "skipped");
+        return { outcome: "skipped", checkId, matches: [] };
       }
       // Only the rules in scope for this project reach the matcher.
       const live = rules.liveRules(input.checkType, project);
@@ -226,10 +219,10 @@ export function createEngine(options: EngineOptions): Engine {
 
       // A text too long for Jev's per-question limit is cut to its last part, and the cut is recorded.
       const { text, cut } = cutToLastPart(judged.text, textTokenBudget(conditions));
-      const check: CheckRecord = { input, text, cut, project, startedAt, cutoff, cap };
+      const check: CheckRecord = { input, text, cut, project, startedAt, cutoff };
       const failed = (error: string, tokens?: Tokens): CheckResult => {
         const checkId = record(check, "failed", { error, tokens });
-        return { outcome: "failed", checkId, firings: [] };
+        return { outcome: "failed", checkId, matches: [] };
       };
       if (live.length === 0) return failed("no live rules");
 
@@ -250,25 +243,23 @@ export function createEngine(options: EngineOptions): Engine {
         scores.push({ rule, conditionId, score: value });
       }
 
-      // A rule fires when any one of its conditions reaches the cutoff; its best condition stands for it.
+      // A rule matches when any one of its conditions reaches the cutoff; its best condition stands for it.
       const best = new Map<number, ScoreRow>();
       for (const row of scores) {
         const current = best.get(row.rule.ruleId);
         if (!current || row.score > current.score) best.set(row.rule.ruleId, row);
       }
-      // Strongest first; the cap keeps the strongest and the rest are recorded as dropped.
-      const fired: FiringRow[] = [...best.values()]
+      // Every rule that matches is attached or sent back, strongest first.
+      const matched = [...best.values()]
         .filter((row) => row.score >= cutoff)
-        .sort((a, b) => b.score - a.score || a.rule.ruleId - b.rule.ruleId)
-        .map((row, index) => ({ ...row, dropped: index >= cap }));
-      const kept = fired.filter((row) => !row.dropped);
+        .sort((a, b) => b.score - a.score || a.rule.ruleId - b.rule.ruleId);
 
-      const outcome: Outcome = kept.length === 0 ? "nothing" : input.checkType === "message" ? "attached" : "sent_back";
-      const checkId = record(check, outcome, { tokens: result.tokens, scores, firings: fired });
+      const outcome: Outcome = matched.length === 0 ? "nothing" : input.checkType === "message" ? "attached" : "sent_back";
+      const checkId = record(check, outcome, { tokens: result.tokens, scores, matches: matched });
       return {
         outcome,
         checkId,
-        firings: kept.map((row) => ({
+        matches: matched.map((row) => ({
           ruleId: row.rule.ruleId,
           name: row.rule.name,
           instruction: row.rule.instruction,

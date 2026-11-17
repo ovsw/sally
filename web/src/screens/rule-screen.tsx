@@ -349,7 +349,7 @@ function DraftForm({
           </Button>
         </div>
         <FieldDescription>
-          The rule fires when any one condition holds. Write each as a short,
+          The rule matches when any one condition holds. Write each as a short,
           concrete statement about the{" "}
           {checkType === "message" ? "user's message" : "final reply"}.
         </FieldDescription>

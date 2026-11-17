@@ -390,7 +390,7 @@ describe("activity and analytics over HTTP", () => {
     expect((await app.call("GET", "/api/activity?limit=lots")).status).toBe(400);
 
     const analytics = await app.json("GET", `/api/rules/${created.id}/analytics`);
-    expect(analytics).toMatchObject({ checks: 1, firings: 1, versions: [{ number: 1, firings: 1 }] });
+    expect(analytics).toMatchObject({ checks: 1, matches: 1, versions: [{ number: 1, matches: 1 }] });
     expect((await app.call("GET", "/api/rules/999/analytics")).status).toBe(404);
   });
 
@@ -402,7 +402,7 @@ describe("activity and analytics over HTTP", () => {
 
     const { rules } = await app.json<{ rules: unknown[] }>("GET", "/api/attention");
     expect(rules).toMatchObject([
-      { ruleId: created.id, name: "Local link first", reasons: [{ kind: "fires_often", firings: 1, checks: 1 }] },
+      { ruleId: created.id, name: "Local link first", reasons: [{ kind: "matches_often", matches: 1, checks: 1 }] },
     ]);
   });
 });

@@ -135,7 +135,6 @@ export function listProjects(): Promise<Project[]> {
 /** The engine's settings: matching, then the attention thresholds. */
 export interface Settings {
   cutoff: number;
-  cap: number;
   timeLimitMs: number;
   recentChecks: number;
   busyShare: number;
@@ -168,13 +167,11 @@ export function updateSettings(changes: Partial<Settings>): Promise<SettingsAnsw
 
 export type Outcome = "nothing" | "attached" | "sent_back" | "skipped" | "failed";
 
-/** A rule that fired in a check. `name` is null when the rule has since been deleted. */
-export interface ActivityFiring {
+/** A rule that matched in a check. `name` is null when the rule has since been deleted. */
+export interface ActivityMatch {
   ruleId: number;
   name: string | null;
   score: number;
-  /** The cap dropped it, so it was not attached or sent back. */
-  dropped: boolean;
 }
 
 export interface ActivityCheck {
@@ -188,7 +185,7 @@ export interface ActivityCheck {
   error: string | null;
   durationMs: number;
   inputTokens: number | null;
-  firings: ActivityFiring[];
+  matches: ActivityMatch[];
 }
 
 export interface ActivityFilter {
@@ -217,32 +214,29 @@ export interface RuleCheckView {
   condition: string | null;
 }
 
-export type Verdict = "wrong" | "correct";
-export type RaisedBy = "claude" | "user" | "automatic";
+export type Verdict = "wrong" | "right";
+export type RaisedBy = "claude" | "user";
 
-/** A verdict on one firing and who raised it. */
+/** A verdict on one match and who raised it. */
 export interface Flag {
   verdict: Verdict;
   raisedBy: RaisedBy;
   createdAt: string;
 }
 
-export interface RuleFiring extends RuleCheckView {
-  firingId: number;
-  /** The cap dropped it, so it was not attached or sent back. */
-  dropped: boolean;
+export interface RuleMatch extends RuleCheckView {
+  matchId: number;
   flag: Flag | null;
 }
 
 export interface RuleAnalytics {
   checks: number;
-  firings: number;
-  dropped: number;
+  matches: number;
   wrongMatches: number;
-  recentFirings: RuleFiring[];
+  recentMatches: RuleMatch[];
   nearMisses: RuleCheckView[];
   nearMissMargin: number;
-  versions: { number: number; publishedAt: string; checks: number; firings: number; wrongMatches: number }[];
+  versions: { number: number; publishedAt: string; checks: number; matches: number; wrongMatches: number }[];
 }
 
 export function getRuleAnalytics(id: number): Promise<RuleAnalytics> {
@@ -250,7 +244,7 @@ export function getRuleAnalytics(id: number): Promise<RuleAnalytics> {
 }
 
 /** Why a rule needs attention, worst first. */
-export type AttentionKind = "wrong_matches" | "fires_often" | "close_to_cutoff" | "never_fires";
+export type AttentionKind = "wrong_matches" | "matches_often" | "weak_matches" | "never_matches";
 
 export interface AttentionReason {
   kind: AttentionKind;
@@ -272,9 +266,9 @@ export function listAttention(): Promise<AttentionEntry[]> {
   return call<{ rules: AttentionEntry[] }>("GET", "/api/attention").then((r) => r.rules);
 }
 
-/** The user marks a firing wrong or correct; it becomes a saved case for its rule. */
-export function flagFiring(firingId: number, verdict: Verdict): Promise<{ flag: Flag; recorded: boolean }> {
-  return call("POST", `/api/firings/${firingId}/flag`, { verdict });
+/** The user marks a match wrong or right; it becomes a saved case for its rule. */
+export function flagMatch(matchId: number, verdict: Verdict): Promise<{ flag: Flag; recorded: boolean }> {
+  return call("POST", `/api/matches/${matchId}/flag`, { verdict });
 }
 
 /** A real message or reply kept with a rule, with the outcome it should have. */
@@ -283,7 +277,7 @@ export interface SavedCase {
   ruleId: number;
   checkType: CheckType;
   text: string;
-  expected: "should_fire" | "should_not_fire";
+  expected: "should_match" | "should_not_match";
   createdAt: string;
   source: { verdict: Verdict; raisedBy: RaisedBy; checkId: number; versionNumber: number | null } | null;
 }
@@ -297,8 +291,8 @@ export interface CaseResult {
   case: SavedCase;
   scores: { condition: string; score: number }[];
   best: number;
-  /** The rule would fire on the case: a condition reaches the cutoff. */
-  fired: boolean;
+  /** The rule would match the case: a condition reaches the cutoff. */
+  matched: boolean;
   /** That is what the case expects. */
   passed: boolean;
 }

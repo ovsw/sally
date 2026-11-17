@@ -123,7 +123,7 @@ export async function seed(root: string): Promise<void> {
     "quick question about vite?",
     "please commit this",
     "add a migration for the users table",
-    "how does the cap work?",
+    "how does the cutoff work?",
     "commit and test and deploy this please, how?",
     "write a commit message for the schema migration",
     "/review commit the fix for the login test now please",
@@ -151,11 +151,11 @@ export async function seed(root: string): Promise<void> {
 
   // Flags: one raised by Claude, two by the user.
   const store = openStore(databasePath(env));
-  const firings = store.prepare("SELECT id FROM firings WHERE rule_id = ? ORDER BY id").all(commits) as { id: number }[];
+  const matches = store.prepare("SELECT id FROM matches WHERE rule_id = ? ORDER BY id").all(commits) as { id: number }[];
   store.close();
   withRules((rules) => {
     rules.reportWrongMatch("session-a", "Answer briefly");
-    if (firings[0]) rules.flagFiring(firings[0].id, "correct", "user");
-    if (firings[1]) rules.flagFiring(firings[1].id, "wrong", "user");
+    if (matches[0]) rules.flagMatch(matches[0].id, "right", "user");
+    if (matches[1]) rules.flagMatch(matches[1].id, "wrong", "user");
   });
 }

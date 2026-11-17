@@ -44,7 +44,7 @@ describe("splitting the conditions across requests", () => {
     const sent = matcher.calls.flatMap((call) => call.conditions.map((c) => c.text));
     expect(sent).toHaveLength(401);
     expect(new Set(sent)).toEqual(new Set([...conditions, "The message asks for the very last thing."]));
-    // The rule whose condition went in a later request still fires.
+    // The rule whose condition went in a later request still matches.
     expect(matcher.calls[0]!.conditions.map((c) => c.text)).not.toContain("The message asks for the very last thing.");
     expect(context(output)).toContain("Late rule");
     expect(sandbox.query("SELECT score FROM scores")).toHaveLength(401);
@@ -99,7 +99,7 @@ describe("splitting the conditions across requests", () => {
 
     expect(output).toBe("");
     expect(checks()).toMatchObject([{ outcome: "failed" }]);
-    expect(sandbox.query("SELECT * FROM firings")).toEqual([]);
+    expect(sandbox.query("SELECT * FROM matches")).toEqual([]);
   });
 });
 
@@ -175,8 +175,7 @@ describe("settings in the app", () => {
     const { settings } = await app.json<SettingsAnswer>("GET", "/api/settings");
     expect(settings).toEqual({
       cutoff: 0.6,
-      cap: 3,
-      timeLimitMs: 3000,
+      timeLimitMs: 10_000,
       recentChecks: 100,
       busyShare: 0.3,
       closeMargin: 0.05,
@@ -184,7 +183,7 @@ describe("settings in the app", () => {
     });
   });
 
-  it("applies a changed cutoff and cap on the next check", async () => {
+  it("applies a changed cutoff on the next check", async () => {
     sandbox.liveRule({ name: "First", conditions: ["Condition A."] });
     sandbox.liveRule({ name: "Second", conditions: ["Condition B."] });
     const matcher = standInMatcher({ "Condition A.": 0.8, "Condition B.": 0.7 });
@@ -193,14 +192,11 @@ describe("settings in the app", () => {
     expect((await put({ cutoff: 0.9 })).settings.cutoff).toBe(0.9);
     expect(await check()).toBe("");
 
-    await put({ cutoff: 0.65, cap: 1 });
+    await put({ cutoff: 0.75 });
     const attached = await check();
     expect(attached).toContain("First");
     expect(attached).not.toContain("Second");
-    expect(sandbox.query("SELECT cutoff, cap FROM checks ORDER BY id")).toEqual([
-      { cutoff: 0.9, cap: 3 },
-      { cutoff: 0.65, cap: 1 },
-    ]);
+    expect(sandbox.query("SELECT cutoff FROM checks ORDER BY id")).toEqual([{ cutoff: 0.9 }, { cutoff: 0.75 }]);
   });
 
   it("stores the attention thresholds", async () => {
@@ -211,7 +207,7 @@ describe("settings in the app", () => {
 
   it.each([
     [{ cutoff: 2 }, "The cutoff is a score from 0 to 1."],
-    [{ cap: "4" }, '"cap" must be a number.'],
+    [{ timeLimitMs: "4" }, '"timeLimitMs" must be a number.'],
     [{ colour: 1 }, '"colour" is not a setting.'],
   ])("refuses %o and changes nothing", async (body, error) => {
     const response = await app.call("PUT", "/api/settings", { quietChecks: 10, ...body });

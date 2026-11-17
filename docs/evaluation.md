@@ -1,7 +1,7 @@
 # Evaluation against the real Jev
 
 `sally evaluate` measures how well the engine matches on real text. It takes a
-file of saved messages and replies, each with the rules expected to fire, runs
+file of saved messages and replies, each with the rules expected to match, runs
 every one through the engine with the real Jev matcher, and reports right
 matches, wrong matches and misses, with timing and tokens.
 
@@ -14,7 +14,7 @@ stand-in matcher.
 sally evaluate ~/sally-eval/evaluation.json             # or: node src/cli.ts evaluate FILE
 sally evaluate ~/sally-eval/evaluation.json --scale     # pad to 400 conditions per check type
 sally evaluate FILE --scale --conditions 800            # pad to 800 (needs your own padding)
-sally evaluate FILE --cutoff 0.7 --cap 2 --time-limit 5000
+sally evaluate FILE --cutoff 0.7 --time-limit 5000
 sally evaluate FILE --json                              # every case, with scores, as JSON
 ```
 
@@ -89,7 +89,7 @@ result. Every rule applies to all projects.
 - `text`: the full text, as Sally would receive it. A message that starts with
   a slash command is judged as the engine judges it: on the text after the
   command name, or skipped when little follows.
-- `expected`: the names of the rules that should fire, `[]` when none should.
+- `expected`: the names of the rules that should match, `[]` when none should.
   Each must be a rule of the same check type in the file.
 - `label`: optional, shown in the report. Cases without one are numbered.
 
@@ -101,11 +101,11 @@ type.
 
 ## What the report says
 
-- **Right match**: an expected rule fired.
-- **Wrong match**: a rule fired that the case did not expect. This is the
-  failure that matters most, since it teaches Claude to discount reminders.
-- **Miss**: an expected rule did not fire, including one the cap dropped. The
-  report gives its best score, so a near miss is easy to spot.
+- **Right match**: an expected rule matched.
+- **Wrong match**: a rule matched that the case did not expect. This is the
+  failure that matters most, since it teaches Claude to discount the rules Sally attaches.
+- **Miss**: an expected rule did not match. The report gives its best score, so
+  a near miss is easy to spot.
 - **Wrong-match rate**: the share of checks that ran (neither failed nor
   skipped) with at least one wrong match.
 - **Failed checks** (timeout, Jev error) are listed with their error and left
@@ -114,13 +114,13 @@ type.
   included. **Input tokens**: what Jev reported, in all and for the largest
   check. Both cover only the checks that ran: a skipped check never asks Jev.
 
-The engine settings are Sally's defaults (cutoff 0.6, cap 3, time limit
-3 seconds) unless `--cutoff`, `--cap` or `--time-limit` say otherwise.
+The engine settings are Sally's defaults (cutoff 0.6, time limit 10 seconds)
+unless `--cutoff` or `--time-limit` say otherwise.
 
 ## The scale run
 
 `--scale` pads the rules of each check type that has cases up to 400
 conditions (`--conditions N` sets another number) with one-condition padding
-rules, then runs every case. Any firing of a padding rule is a wrong match.
+rules, then runs every case. Any match of a padding rule is a wrong match.
 Its headline number, printed first, is the wrong-match rate: how often a large
-rule set makes an unrelated rule fire.
+rule set makes an unrelated rule match.

@@ -36,7 +36,7 @@ function finalReply(input: StopInput): string | undefined {
 /**
  * The stop hook. Takes the hook input Claude Code sends on stdin and returns
  * what to print on stdout: a block with the matched instructions as the
- * reason when a reply-check rule fires, otherwise nothing. When Claude Code
+ * reason when a reply-check rule matches, otherwise nothing. When Claude Code
  * is already continuing because of a stop hook, the revised reply is
  * recorded and let through without a check. It never throws.
  */
@@ -78,7 +78,7 @@ export async function runReplyHook(stdin: string, options: ReplyHookOptions): Pr
         recordReply(store, { sessionId, reply, replyCheckId: result?.checkId });
       }
       if (result.outcome !== "sent_back") return "";
-      return JSON.stringify({ decision: "block", reason: formatAttached(result.firings) });
+      return JSON.stringify({ decision: "block", reason: formatAttached(result.matches) });
     } finally {
       store.close();
     }

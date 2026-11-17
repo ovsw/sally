@@ -1,7 +1,7 @@
 // `sally evaluate FILE`: measures how well the engine matches on real text.
 // It runs every saved message and reply in the evaluation file through the
 // engine with the real Jev matcher, against the file's rules in a throwaway
-// database, and compares what fired with what was expected. It needs an API
+// database, and compares what matched with what was expected. It needs an API
 // key and costs a little, so it runs only on request and never in CI.
 // The evaluation file's format is described in docs/evaluation.md.
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -20,7 +20,7 @@ import { openStore } from "./store.ts";
 export const DEFAULT_SCALE_CONDITIONS = 400;
 
 export const EVALUATE_USAGE = `Usage:
-  sally evaluate FILE [--scale] [--conditions N] [--cutoff X] [--cap N]
+  sally evaluate FILE [--scale] [--conditions N] [--cutoff X]
                       [--time-limit MS] [--json]
 
 Runs every case in the evaluation file through the engine with the real Jev
@@ -28,12 +28,12 @@ matcher and reports right matches, wrong matches and misses, with timing and
 tokens. It needs an API key and costs a little.
 
 --scale          pads the rules of each check type to several hundred
-                 conditions with made-up ones that should never fire, and
+                 conditions with made-up ones that should never match, and
                  reports the wrong-match rate as the headline number
 --conditions N   how many conditions the scale run pads to (default ${DEFAULT_SCALE_CONDITIONS});
                  implies --scale
---cutoff, --cap, --time-limit
-                 the engine settings to run with (defaults ${DEFAULT_SETTINGS.cutoff}, ${DEFAULT_SETTINGS.cap}, ${DEFAULT_SETTINGS.timeLimitMs})
+--cutoff, --time-limit
+                 the engine settings to run with (defaults ${DEFAULT_SETTINGS.cutoff}, ${DEFAULT_SETTINGS.timeLimitMs})
 --json           prints the full results as JSON
 
 The file's format is described in docs/evaluation.md. It holds private
@@ -85,7 +85,7 @@ export interface CaseResult {
   outcome: Outcome;
   error: string | null;
   /** Rules attached or sent back, strongest first. */
-  fired: ScoredRule[];
+  matched: ScoredRule[];
   right: ScoredRule[];
   wrong: ScoredRule[];
   missed: ScoredRule[];
@@ -95,7 +95,7 @@ export interface CaseResult {
 
 export interface EvaluationReport {
   scale: boolean;
-  settings: { cutoff: number; cap: number; timeLimitMs: number };
+  settings: { cutoff: number; timeLimitMs: number };
   /** Conditions in the rule set per check type, and how many of them are padding. */
   conditions: Record<CheckType, { total: number; padding: number }>;
   summary: {
@@ -178,7 +178,7 @@ export function parseEvaluationFile(source: string): EvalFile {
     const named = item.label ? `Case "${label}"` : where;
     const check = checkType(item.check, named);
     if (typeof item.text !== "string" || !item.text.trim()) throw new UsageError(`${named} needs a "text".`);
-    if (!isStringArray(item.expected)) throw new UsageError(`${named} needs an "expected" list of rule names (empty when none should fire).`);
+    if (!isStringArray(item.expected)) throw new UsageError(`${named} needs an "expected" list of rule names (empty when none should match).`);
     for (const name of item.expected) {
       const rule = byName.get(name);
       if (!rule) throw new UsageError(`${named} expects a rule the file does not have: "${name}".`);
@@ -227,7 +227,6 @@ function parseOptions(args: string[]): Options {
         scale: { type: "boolean" },
         conditions: { type: "string" },
         cutoff: { type: "string" },
-        cap: { type: "string" },
         "time-limit": { type: "string" },
         json: { type: "boolean" },
       },
@@ -241,10 +240,8 @@ function parseOptions(args: string[]): Options {
   if (conditions !== undefined && conditions < 1) throw new UsageError("--conditions takes a whole number of at least 1.");
   const settings: Partial<Settings> = {};
   const cutoff = number(values.cutoff, "--cutoff", false);
-  const cap = number(values.cap, "--cap", true);
   const timeLimitMs = number(values["time-limit"], "--time-limit", true);
   if (cutoff !== undefined) settings.cutoff = cutoff;
-  if (cap !== undefined) settings.cap = cap;
   if (timeLimitMs !== undefined) settings.timeLimitMs = timeLimitMs;
   return {
     file: positionals[0]!,
@@ -344,19 +341,19 @@ export async function evaluate(
         best.set(names.get(s.rule_id)!.name, s.score);
       }
       const scored = (name: string, isPadding: boolean): ScoredRule => ({ name, score: best.get(name) ?? null, padding: isPadding });
-      const fired = result.firings.map((f) => scored(f.name, names.get(f.ruleId)!.padding));
+      const matched = result.matches.map((f) => scored(f.name, names.get(f.ruleId)!.padding));
       const failed = result.outcome === "failed";
       const expected = new Set(item.expected);
-      const firedNames = new Set(fired.map((f) => f.name));
+      const matchedNames = new Set(matched.map((f) => f.name));
       cases.push({
         label: item.label,
         check: item.check,
         outcome: result.outcome,
         error: row.error,
-        fired,
-        right: failed ? [] : fired.filter((f) => expected.has(f.name)),
-        wrong: failed ? [] : fired.filter((f) => !expected.has(f.name)),
-        missed: failed ? [] : item.expected.filter((name) => !firedNames.has(name)).map((name) => scored(name, false)),
+        matched,
+        right: failed ? [] : matched.filter((f) => expected.has(f.name)),
+        wrong: failed ? [] : matched.filter((f) => !expected.has(f.name)),
+        missed: failed ? [] : item.expected.filter((name) => !matchedNames.has(name)).map((name) => scored(name, false)),
         durationMs: row.duration_ms,
         inputTokens: row.input_tokens,
       });
@@ -373,7 +370,7 @@ export async function evaluate(
     const checksWithWrongMatch = ran.filter((c) => c.wrong.length > 0).length;
     return {
       scale: options.scaleConditions !== null,
-      settings: { cutoff: settings.cutoff, cap: settings.cap, timeLimitMs: settings.timeLimitMs },
+      settings: { cutoff: settings.cutoff, timeLimitMs: settings.timeLimitMs },
       conditions,
       summary: {
         cases: cases.length,
@@ -426,7 +423,7 @@ export function formatReport(report: EvaluationReport): string {
     `Conditions: ${conditions.message.total} message, ${conditions.reply.total} reply` +
       (report.scale ? ` (padding: ${conditions.message.padding} message, ${conditions.reply.padding} reply)` : ""),
   );
-  lines.push(`Cutoff ${settings.cutoff}, cap ${settings.cap}, time limit ${settings.timeLimitMs} ms`, "");
+  lines.push(`Cutoff ${settings.cutoff}, time limit ${settings.timeLimitMs} ms`, "");
   // The scale run exists to measure wrong matches, so its headline comes first.
   if (report.scale) lines.push(rate, counts);
   else lines.push(counts, rate);

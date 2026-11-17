@@ -38,21 +38,21 @@ const thresholds = (changes: Partial<Settings>) => sandbox.withRules((rules) => 
 const attention = () => sandbox.withRules((rules) => rules.attention());
 
 /**
- * Flags a firing as the flags feature records it. Until that feature has
+ * Flags a match as the flags feature records it. Until that feature has
  * landed the table may not exist yet, so it is created here when missing.
  */
-function flag(firingId: number, verdict: "wrong" | "correct"): void {
+function flag(matchId: number, verdict: "wrong" | "right"): void {
   const db = new DatabaseSync(databasePath(sandbox.env));
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS flags (
       id          INTEGER PRIMARY KEY,
-      firing_id   INTEGER NOT NULL UNIQUE REFERENCES firings (id) ON DELETE CASCADE,
-      verdict     TEXT NOT NULL CHECK (verdict IN ('wrong', 'correct')),
-      raised_by   TEXT NOT NULL CHECK (raised_by IN ('claude', 'user', 'automatic')),
+      match_id    INTEGER NOT NULL UNIQUE REFERENCES matches (id) ON DELETE CASCADE,
+      verdict     TEXT NOT NULL CHECK (verdict IN ('wrong', 'right')),
+      raised_by   TEXT NOT NULL CHECK (raised_by IN ('claude', 'user')),
       created_at  TEXT NOT NULL
     )`);
-    db.prepare("INSERT INTO flags (firing_id, verdict, raised_by, created_at) VALUES (?, ?, 'user', ?)").run(
-      firingId,
+    db.prepare("INSERT INTO flags (match_id, verdict, raised_by, created_at) VALUES (?, ?, 'user', ?)").run(
+      matchId,
       verdict,
       new Date().toISOString(),
     );
@@ -61,8 +61,8 @@ function flag(firingId: number, verdict: "wrong" | "correct"): void {
   }
 }
 
-const firingsOf = (ruleId: number) =>
-  sandbox.query<{ id: number }>("SELECT id FROM firings WHERE rule_id = ? ORDER BY id", ruleId).map((row) => row.id);
+const matchesOf = (ruleId: number) =>
+  sandbox.query<{ id: number }>("SELECT id FROM matches WHERE rule_id = ? ORDER BY id", ruleId).map((row) => row.id);
 
 describe("needs attention", () => {
   it("lists nothing while every rule behaves", async () => {
@@ -73,11 +73,11 @@ describe("needs attention", () => {
     expect(attention()).toEqual([]);
   });
 
-  it("lists a rule that fires on a large share of its recent checks, and says why", async () => {
+  it("lists a rule that matches on a large share of its recent checks, and says why", async () => {
     thresholds({ recentChecks: 4, busyShare: 0.5 });
     const eager = sandbox.liveRule({ name: "Eager", conditions: ["Condition A."] });
     sandbox.liveRule({ name: "Calm", conditions: ["Condition B."] });
-    // Eager fires on checks 1, 3 and 4; only the latest four count, so 2 of 4.
+    // Eager matches on checks 1, 3 and 4; only the latest four count, so 2 of 4.
     await message({ "Condition A.": 0.9, "Condition B.": 0.9 });
     await message({ "Condition A.": 0.1 });
     await message({ "Condition A.": 0.9 });
@@ -92,19 +92,19 @@ describe("needs attention", () => {
         versionNumber: 1,
         reasons: [
           {
-            kind: "fires_often",
-            firings: 2,
+            kind: "matches_often",
+            matches: 2,
             checks: 4,
             share: 0.5,
             threshold: 0.5,
-            summary: "Fired on 2 of its last 4 checks (50%); the threshold is 50%.",
+            summary: "Matched on 2 of its last 4 checks (50%); the threshold is 50%.",
           },
         ],
       },
     ]);
   });
 
-  it("does not list a rule firing on less than the share", async () => {
+  it("does not list a rule match on less than the share", async () => {
     thresholds({ recentChecks: 4, busyShare: 0.5 });
     sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
     await message({ "Condition A.": 0.9 });
@@ -113,7 +113,7 @@ describe("needs attention", () => {
     expect(attention()).toEqual([]);
   });
 
-  it("lists a rule whose firings score close above the cutoff, judged against the cutoff in force", async () => {
+  it("lists a rule whose matches score close above the cutoff, judged against the cutoff in force", async () => {
     thresholds({ busyShare: 1, closeMargin: 0.05 });
     const weak = sandbox.liveRule({ name: "Weak", conditions: ["Weak condition."] });
     sandbox.liveRule({ name: "Strong", conditions: ["Strong condition."] });
@@ -131,28 +131,18 @@ describe("needs attention", () => {
         name: "Weak",
         reasons: [
           {
-            kind: "close_to_cutoff",
-            closeFirings: 2,
-            firings: 3,
+            kind: "weak_matches",
+            weakMatches: 2,
+            matches: 3,
             margin: 0.05,
-            summary: "2 of its 3 recent firings scored no more than 0.05 above the cutoff.",
+            summary: "2 of its 3 recent matches scored no more than 0.05 above the cutoff.",
           },
         ],
       },
     ]);
   });
 
-  it("counts firings the cap dropped, since they fired all the same", async () => {
-    thresholds({ cap: 1, busyShare: 1 });
-    const dropped = sandbox.liveRule({ name: "Dropped", conditions: ["Condition A."] });
-    sandbox.liveRule({ name: "Kept", conditions: ["Condition B."] });
-    await message({ "Condition A.": 0.62, "Condition B.": 0.95 });
-    await message({});
-
-    expect(attention()).toMatchObject([{ ruleId: dropped, reasons: [{ kind: "close_to_cutoff", closeFirings: 1 }] }]);
-  });
-
-  it("lists a rule with no firings over a long stretch of checks, once it has had that many", async () => {
+  it("lists a rule with no matches over a long stretch of checks, once it has had that many", async () => {
     thresholds({ quietChecks: 3 });
     const dead = sandbox.liveRule({ name: "Dead", conditions: ["Condition A."] });
     sandbox.liveRule({ name: "Alive", conditions: ["Condition B."] });
@@ -168,7 +158,7 @@ describe("needs attention", () => {
         name: "Dead",
         checkType: "message",
         versionNumber: 1,
-        reasons: [{ kind: "never_fires", checks: 3, summary: "No firings in its last 3 checks." }],
+        reasons: [{ kind: "never_matches", checks: 3, summary: "No matches in its last 3 checks." }],
       },
     ]);
   });
@@ -184,7 +174,7 @@ describe("needs attention", () => {
     await reply({});
 
     expect(attention()).toMatchObject([
-      { ruleId: handover, checkType: "reply", reasons: [{ kind: "never_fires", checks: 2 }] },
+      { ruleId: handover, checkType: "reply", reasons: [{ kind: "never_matches", checks: 2 }] },
     ]);
   });
 
@@ -219,29 +209,29 @@ describe("needs attention", () => {
     expect(attention()).toEqual([]);
   });
 
-  it("lists a rule whose live version has firings flagged as wrong matches", async () => {
+  it("lists a rule whose live version has matches flagged as wrong matches", async () => {
     thresholds({ busyShare: 1 });
-    const wrong = sandbox.liveRule({ name: "Misfires", conditions: ["Condition A."] });
+    const wrong = sandbox.liveRule({ name: "Wrong matches", conditions: ["Condition A."] });
     const right = sandbox.liveRule({ name: "Fine", conditions: ["Condition B."] });
     await message({ "Condition A.": 0.9, "Condition B.": 0.9 });
     await message({ "Condition A.": 0.9 });
     await message({});
-    const [first, second] = firingsOf(wrong);
+    const [first, second] = matchesOf(wrong);
     flag(first!, "wrong");
     flag(second!, "wrong");
-    flag(firingsOf(right)[0]!, "correct");
+    flag(matchesOf(right)[0]!, "right");
 
     expect(attention()).toEqual([
       {
         ruleId: wrong,
-        name: "Misfires",
+        name: "Wrong matches",
         checkType: "message",
         versionNumber: 1,
-        reasons: [{ kind: "wrong_matches", flags: 2, summary: "2 firings of version 1 flagged as a wrong match." }],
+        reasons: [{ kind: "wrong_matches", flags: 2, summary: "2 matches of version 1 flagged as a wrong match." }],
       },
     ]);
 
-    // A new version has not misfired yet.
+    // A new version has no wrong matches yet.
     sandbox.withRules((rules) => {
       rules.saveDraft(wrong, { instruction: "Do it.", conditions: ["Sharper condition."] });
       rules.publish(wrong);
@@ -251,18 +241,18 @@ describe("needs attention", () => {
 
   it("lists every reason for a rule, and the worst cases first", async () => {
     thresholds({ recentChecks: 2, busyShare: 0.5, quietChecks: 2 });
-    const misfires = sandbox.liveRule({ name: "Misfires", conditions: ["Condition A."] });
+    const flaggedWrong = sandbox.liveRule({ name: "Wrong matches", conditions: ["Condition A."] });
     const quiet = sandbox.liveRule({ name: "A quiet rule", conditions: ["Condition B."] });
     const weak = sandbox.liveRule({ name: "B weak and eager", conditions: ["Condition C."] });
     await message({ "Condition A.": 0.9, "Condition C.": 0.61 });
     await message({ "Condition C.": 0.9 });
-    flag(firingsOf(misfires)[0]!, "wrong");
+    flag(matchesOf(flaggedWrong)[0]!, "wrong");
 
     const entries = attention();
     expect(entries.map((entry) => [entry.ruleId, entry.reasons.map((reason) => reason.kind)])).toEqual([
-      [misfires, ["wrong_matches", "fires_often"]],
-      [weak, ["fires_often", "close_to_cutoff"]],
-      [quiet, ["never_fires"]],
+      [flaggedWrong, ["wrong_matches", "matches_often"]],
+      [weak, ["matches_often", "weak_matches"]],
+      [quiet, ["never_matches"]],
     ]);
   });
 });

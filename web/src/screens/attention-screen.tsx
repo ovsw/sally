@@ -23,9 +23,9 @@ const kinds: {
   icon: React.ComponentType<{ className?: string }>;
 }[] = [
   { value: "wrong_matches", label: "Wrong matches", icon: Flag },
-  { value: "fires_often", label: "Fires often", icon: Activity },
-  { value: "close_to_cutoff", label: "Close to the cutoff", icon: Gauge },
-  { value: "never_fires", label: "Never fires", icon: CircleSlash },
+  { value: "matches_often", label: "Matches often", icon: Activity },
+  { value: "weak_matches", label: "Weak matches", icon: Gauge },
+  { value: "never_matches", label: "Never matches", icon: CircleSlash },
 ];
 
 function ReasonBadge({ kind }: { kind: AttentionKind }) {
@@ -137,9 +137,9 @@ export function AttentionScreen() {
       <div className="mb-4 text-left">
         <h1 className="text-2xl font-bold tracking-tight">Needs attention</h1>
         <p className="mt-2 text-muted-foreground">
-          Rules worth a look, worst first: wrong matches, rules that fire on
+          Rules worth a look, worst first: wrong matches, rules that match
           much of what they see, rules that only just clear the cutoff, and
-          rules that never fire.
+          rules that never match.
         </p>
       </div>
       <DataTableToolbar table={table}>
@@ -180,7 +180,7 @@ export function AttentionScreen() {
               ? "Could not load the list."
               : filtered
               ? "No rules match."
-              : "Nothing needs attention. Rules appear here when they misfire, fire often, only just clear the cutoff or never fire."
+              : "Nothing needs attention. Rules appear here when they match wrongly, match often, only just clear the cutoff or never match."
         }
       />
       <DataTablePagination table={table} />

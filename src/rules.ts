@@ -116,27 +116,24 @@ export { RuleError, RuleNotFoundError };
 
 /** The engine's settings. */
 export interface Settings {
-  /** The score a condition must reach for its rule to fire, 0 to 1. */
+  /** The score a condition must reach for its rule to match, 0 to 1. */
   cutoff: number;
-  /** The most rules attached in one check. */
-  cap: number;
   /** How long a check may wait for the matcher before giving up. */
   timeLimitMs: number;
   // The attention thresholds: when a rule is listed as needing attention.
   /** How many of the latest checks count as recent. */
   recentChecks: number;
-  /** A rule firing on at least this share of recent checks, 0 to 1, is listed as firing often. */
+  /** A rule that matches on at least this share of recent checks, 0 to 1, is listed as matching often. */
   busyShare: number;
-  /** A firing scoring no more than this above the cutoff, 0 to 1, sits close to it. */
+  /** A match scoring no more than this above the cutoff, 0 to 1, is a weak match. */
   closeMargin: number;
-  /** A rule with no firings over this many checks of its type is listed as never firing. */
+  /** A rule with no matches over this many checks of its type is listed as never matching. */
   quietChecks: number;
 }
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   cutoff: 0.6,
-  cap: 3,
-  timeLimitMs: 3000,
+  timeLimitMs: 10_000,
   recentChecks: 100,
   busyShare: 0.3,
   closeMargin: 0.05,
@@ -146,7 +143,6 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
 /** Each setting's key in the settings table. */
 const SETTING_KEYS: Record<keyof Settings, string> = {
   cutoff: "cutoff",
-  cap: "cap",
   timeLimitMs: "time_limit_ms",
   recentChecks: "recent_checks",
   busyShare: "busy_share",
@@ -156,12 +152,11 @@ const SETTING_KEYS: Record<keyof Settings, string> = {
 const SETTINGS = Object.keys(SETTING_KEYS) as (keyof Settings)[];
 const SETTING_RANGES: Record<keyof Settings, string> = {
   cutoff: "The cutoff is a score from 0 to 1.",
-  cap: "The cap is a whole number of at least 1.",
   timeLimitMs: "The time limit is a whole number of milliseconds, at least 1.",
   recentChecks: "The number of recent checks is a whole number of at least 1.",
   busyShare: "The share of recent checks is a number above 0, up to 1.",
   closeMargin: "The margin above the cutoff is a number from 0 to 1.",
-  quietChecks: "The number of checks without a firing is a whole number of at least 1.",
+  quietChecks: "The number of checks without a match is a whole number of at least 1.",
 };
 
 function validSetting(key: keyof Settings, value: number): boolean {
@@ -447,12 +442,12 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       requireCompleteScope(scope);
       return transaction(db, () => {
         requireFreeName(name);
-        // A deleted rule's firings and scores stay, so a new rule never takes an
+        // A deleted rule's matches and scores stay, so a new rule never takes an
         // id they still name; otherwise SQLite reuses the highest free id.
         const { next } = db
           .prepare(
             `SELECT MAX(COALESCE((SELECT MAX(id) FROM rules), 0),
-                        COALESCE((SELECT MAX(rule_id) FROM firings), 0),
+                        COALESCE((SELECT MAX(rule_id) FROM matches), 0),
                         COALESCE((SELECT MAX(rule_id) FROM scores), 0)) + 1 AS next`,
           )
           .get() as { next: number };

@@ -14,7 +14,6 @@ interface CheckRow {
   duration_ms: number;
   input_tokens: number | null;
   cutoff: number;
-  cap: number | null;
   outcome: string;
   error: string | null;
 }
@@ -48,7 +47,7 @@ describe("message check", () => {
     expect(checks()[0]!.outcome).toBe("attached");
   });
 
-  it("attaches above the cutoff and lists fired rules strongest first", async () => {
+  it("attaches above the cutoff and lists matched rules strongest first", async () => {
     sandbox.liveRule({ name: "Weaker", conditions: ["Condition A."] });
     sandbox.liveRule({ name: "Stronger", conditions: ["Condition B."] });
     const matcher = standInMatcher({ "Condition A.": 0.7, "Condition B.": 0.95 });
@@ -66,7 +65,7 @@ describe("message check", () => {
 
     expect(output).toBe("");
     expect(checks()).toMatchObject([{ outcome: "nothing", error: null }]);
-    expect(sandbox.query("SELECT * FROM firings")).toEqual([]);
+    expect(sandbox.query("SELECT * FROM matches")).toEqual([]);
   });
 
   it("prints nothing with no live rules and records it as a failure without calling the matcher", async () => {
@@ -79,7 +78,7 @@ describe("message check", () => {
     expect(checks()).toMatchObject([{ outcome: "failed", error: "no live rules" }]);
   });
 
-  it("fires a rule when any one of its conditions clears the cutoff and records each score", async () => {
+  it("matches a rule when any one of its conditions clears the cutoff and records each score", async () => {
     const ruleId = sandbox.liveRule({
       name: "Several",
       conditions: ["First condition.", "Second condition.", "Third condition."],
@@ -97,10 +96,10 @@ describe("message check", () => {
       { text: "Second condition.", score: 0.8, rule_id: ruleId },
       { text: "Third condition.", score: 0.3, rule_id: ruleId },
     ]);
-    const firings = sandbox.query<{ text: string; score: number }>(
-      "SELECT c.text, f.score FROM firings f JOIN conditions c ON c.id = f.condition_id",
+    const matches = sandbox.query<{ text: string; score: number }>(
+      "SELECT c.text, f.score FROM matches f JOIN conditions c ON c.id = f.condition_id",
     );
-    expect(firings).toEqual([{ text: "Second condition.", score: 0.8 }]);
+    expect(matches).toEqual([{ text: "Second condition.", score: 0.8 }]);
   });
 
   it("sends the matcher only the message and the conditions, one question per condition", async () => {
@@ -191,8 +190,8 @@ describe("drafts and publishing", () => {
 });
 
 describe("what is recorded", () => {
-  it("records the check, every condition's score with its rule version, and each firing", async () => {
-    const fired = sandbox.liveRule({ name: "Fires", conditions: ["Condition A.", "Condition B."] });
+  it("records the check, every condition's score with its rule version, and each match", async () => {
+    const matched = sandbox.liveRule({ name: "Matches", conditions: ["Condition A.", "Condition B."] });
     const quiet = sandbox.liveRule({ name: "Quiet", conditions: ["Condition C."] });
     const matcher = standInMatcher({ "Condition A.": 0.65, "Condition B.": 0.2, "Condition C.": 0.4 }, { inputTokens: 321 });
     const before = Date.now();
@@ -210,7 +209,6 @@ describe("what is recorded", () => {
       text: "The full text of the message",
       input_tokens: 321,
       cutoff: 0.6,
-      cap: 3,
       outcome: "attached",
       error: null,
     });
@@ -224,17 +222,17 @@ describe("what is recorded", () => {
       check!.id,
     );
     expect(scores).toEqual([
-      { rule_id: fired, version: 1, text: "Condition A.", score: 0.65 },
-      { rule_id: fired, version: 1, text: "Condition B.", score: 0.2 },
+      { rule_id: matched, version: 1, text: "Condition A.", score: 0.65 },
+      { rule_id: matched, version: 1, text: "Condition B.", score: 0.2 },
       { rule_id: quiet, version: 1, text: "Condition C.", score: 0.4 },
     ]);
-    const firings = sandbox.query<{ rule_id: number; version: number; text: string; score: number }>(
+    const matches = sandbox.query<{ rule_id: number; version: number; text: string; score: number }>(
       `SELECT f.rule_id, v.number AS version, c.text, f.score
-         FROM firings f JOIN versions v ON v.id = f.version_id JOIN conditions c ON c.id = f.condition_id
+         FROM matches f JOIN versions v ON v.id = f.version_id JOIN conditions c ON c.id = f.condition_id
         WHERE f.check_id = ?`,
       check!.id,
     );
-    expect(firings).toEqual([{ rule_id: fired, version: 1, text: "Condition A.", score: 0.65 }]);
+    expect(matches).toEqual([{ rule_id: matched, version: 1, text: "Condition A.", score: 0.65 }]);
   });
 });
 
@@ -246,10 +244,10 @@ describe("failing open", () => {
     const [check] = checks();
     expect(check!.outcome).toBe("failed");
     expect(check!.error).toMatch(error);
-    expect(sandbox.query("SELECT * FROM firings")).toEqual([]);
+    expect(sandbox.query("SELECT * FROM matches")).toEqual([]);
   };
 
-  it("gives up after 3 seconds by default", async () => {
+  it("gives up after 10 seconds by default", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
     let aborted = false;
@@ -269,13 +267,13 @@ describe("failing open", () => {
     const pending = runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher });
     let settled = false;
     void pending.then(() => (settled = true));
-    await vi.advanceTimersByTimeAsync(2999);
+    await vi.advanceTimersByTimeAsync(9999);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
 
     expect(await pending).toBe("");
     expect(aborted).toBe(true);
-    expect(checks()).toMatchObject([{ outcome: "failed", error: "timeout after 3000 ms" }]);
+    expect(checks()).toMatchObject([{ outcome: "failed", error: "timeout after 10000 ms" }]);
   });
 
   it("fails open when the matcher errors", async () => {
@@ -325,64 +323,62 @@ describe("failing open", () => {
   });
 });
 
-describe("the cap", () => {
-  const firings = () =>
-    sandbox.query<{ name: string; score: number; dropped: number }>(
-      "SELECT r.name, f.score, f.dropped FROM firings f JOIN rules r ON r.id = f.rule_id ORDER BY f.score DESC",
+describe("several rules match", () => {
+  const matches = () =>
+    sandbox.query<{ name: string; score: number }>(
+      "SELECT r.name, f.score FROM matches f JOIN rules r ON r.id = f.rule_id ORDER BY f.score DESC",
     );
 
-  it("attaches the 3 strongest rules by default, strongest first, and records the rest as dropped", async () => {
-    const scores: Record<string, number> = { A: 0.7, B: 0.95, C: 0.62, D: 0.8, E: 0.9 };
+  it("attaches every rule that matches, strongest first", async () => {
+    const scores: Record<string, number> = { A: 0.7, B: 0.95, C: 0.62, D: 0.8, E: 0.9, F: 0.3 };
     for (const name of Object.keys(scores)) sandbox.liveRule({ name: `Rule ${name}`, conditions: [`Condition ${name}.`] });
     const matcher = standInMatcher(Object.fromEntries(Object.entries(scores).map(([k, v]) => [`Condition ${k}.`, v])));
 
     const text = context(await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher }));
 
-    const attached = ["Rule B", "Rule E", "Rule D"].map((name) => text.indexOf(name));
+    const attached = ["Rule B", "Rule E", "Rule D", "Rule A", "Rule C"].map((name) => text.indexOf(name));
     expect(attached.every((i) => i >= 0)).toBe(true);
     expect(attached).toEqual([...attached].sort((a, b) => a - b));
-    expect(text).not.toContain("Rule A");
-    expect(text).not.toContain("Rule C");
-    expect(firings()).toEqual([
-      { name: "Rule B", score: 0.95, dropped: 0 },
-      { name: "Rule E", score: 0.9, dropped: 0 },
-      { name: "Rule D", score: 0.8, dropped: 0 },
-      { name: "Rule A", score: 0.7, dropped: 1 },
-      { name: "Rule C", score: 0.62, dropped: 1 },
+    expect(text).not.toContain("Rule F");
+    expect(matches()).toEqual([
+      { name: "Rule B", score: 0.95 },
+      { name: "Rule E", score: 0.9 },
+      { name: "Rule D", score: 0.8 },
+      { name: "Rule A", score: 0.7 },
+      { name: "Rule C", score: 0.62 },
     ]);
-    expect(checks()).toMatchObject([{ outcome: "attached", cap: 3 }]);
+    expect(checks()).toMatchObject([{ outcome: "attached" }]);
   });
 
   it("orders a rule by its best condition", async () => {
     sandbox.liveRule({ name: "Two conditions", conditions: ["Weak.", "Strong."] });
     sandbox.liveRule({ name: "One condition", conditions: ["Middle."] });
-    sandbox.withRules((rules) => rules.updateSettings({ cap: 1 }));
     const matcher = standInMatcher({ "Weak.": 0.61, "Strong.": 0.99, "Middle.": 0.9 });
 
     const text = context(await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher }));
 
-    expect(text).toContain("Two conditions");
-    expect(text).not.toContain("One condition");
-    expect(firings()).toEqual([
-      { name: "Two conditions", score: 0.99, dropped: 0 },
-      { name: "One condition", score: 0.9, dropped: 1 },
+    expect(text.indexOf("Two conditions")).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf("Two conditions")).toBeLessThan(text.indexOf("One condition"));
+    expect(matches()).toEqual([
+      { name: "Two conditions", score: 0.99 },
+      { name: "One condition", score: 0.9 },
     ]);
   });
 });
 
 describe("stored settings", () => {
-  it("reads the cutoff and cap from the stored settings and records them on the check", async () => {
+  it("reads the cutoff from the stored settings and records it on the check", async () => {
     sandbox.liveRule({ name: "Rule A", conditions: ["Condition A."] });
     sandbox.liveRule({ name: "Rule B", conditions: ["Condition B."] });
     sandbox.liveRule({ name: "Rule C", conditions: ["Condition C."] });
-    sandbox.withRules((rules) => rules.updateSettings({ cutoff: 0.4, cap: 2 }));
+    sandbox.withRules((rules) => rules.updateSettings({ cutoff: 0.4 }));
     const matcher = standInMatcher({ "Condition A.": 0.45, "Condition B.": 0.5, "Condition C.": 0.39 });
 
     const text = context(await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher }));
 
     expect(text.indexOf("Rule B")).toBeLessThan(text.indexOf("Rule A"));
     expect(text).not.toContain("Rule C");
-    expect(checks()).toMatchObject([{ cutoff: 0.4, cap: 2, outcome: "attached" }]);
+    expect(checks()).toMatchObject([{ cutoff: 0.4, outcome: "attached" }]);
   });
 
   it("reads the time limit from the stored settings", async () => {
@@ -504,7 +500,7 @@ describe("slash commands", () => {
     expect(matcher.calls[0]!.text).toBe("/home/me/notes.md is out of date");
   });
 
-  it("attaches rules that fire on the text after the command", async () => {
+  it("attaches rules that match on the text after the command", async () => {
     sandbox.liveRule({ name: "Visual", conditions: ["The message asks for a visual change."] });
     const matcher = standInMatcher({ "The message asks for a visual change.": 0.8 });
 

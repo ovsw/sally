@@ -81,7 +81,6 @@ function optionalScope(body: Record<string, unknown>, key: string): Scope | unde
 
 const SETTING_NAMES: (keyof Settings)[] = [
   "cutoff",
-  "cap",
   "timeLimitMs",
   "recentChecks",
   "busyShare",
@@ -156,7 +155,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * - DELETE /api/rules/:id                                delete the rule
  * - GET  /api/rules/:id/analytics                        how the rule has behaved
  * - GET  /api/rules/:id/cases                            the rule's saved cases
- * - POST /api/firings/:id/flag                           the user marks a firing { verdict: wrong|correct }
+ * - POST /api/matches/:id/flag                           the user marks a match { verdict: wrong|right }
  * - GET  /api/projects                                   the projects Sally has seen
  * - GET  /api/settings                                   { settings, limitUse }: the settings, and how
  *                                                        much of Jev's request limit recent checks used
@@ -165,7 +164,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * - GET  /api/attention                                  the rules that need attention, and why
  *
  * Every change answers with the rule as it now is, except a delete, which
- * answers { deleted: true }, a flag, which answers with the firing's flag,
+ * answers { deleted: true }, a flag, which answers with the match's flag,
  * and a re-score, which changes nothing and answers with which saved cases
  * pass (a Jev failure is part of that answer, not a refusal). Refusals answer
  * with { error } and a 4xx status.
@@ -195,12 +194,12 @@ export async function handleApi(
     if (parts.length === 1 && parts[0] === "attention" && method === "GET") {
       return send(res, 200, { rules: rules.attention() });
     }
-    if (parts.length === 3 && parts[0] === "firings" && parts[2] === "flag" && method === "POST") {
-      const firingId = Number(parts[1]);
-      if (!Number.isSafeInteger(firingId)) throw new HttpError(404, "Not found.");
+    if (parts.length === 3 && parts[0] === "matches" && parts[2] === "flag" && method === "POST") {
+      const matchId = Number(parts[1]);
+      if (!Number.isSafeInteger(matchId)) throw new HttpError(404, "Not found.");
       const verdict = (await readJson(req)).verdict;
-      if (!VERDICTS.includes(verdict as Verdict)) throw new HttpError(400, '"verdict" is wrong or correct.');
-      return send(res, 200, rules.flagFiring(firingId, verdict as Verdict, "user"));
+      if (!VERDICTS.includes(verdict as Verdict)) throw new HttpError(400, '"verdict" is wrong or right.');
+      return send(res, 200, rules.flagMatch(matchId, verdict as Verdict, "user"));
     }
     if (parts[0] !== "rules") throw new HttpError(404, "Not found.");
     const id = parts[1] === undefined ? undefined : Number(parts[1]);

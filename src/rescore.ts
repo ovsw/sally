@@ -15,8 +15,8 @@ export interface CaseResult {
   scores: { condition: string; score: number }[];
   /** The best of those scores. */
   best: number;
-  /** Whether the rule would fire on the case: a condition reaches the cutoff. */
-  fired: boolean;
+  /** Whether the rule would match the case: a condition reaches the cutoff. */
+  matched: boolean;
   /** Whether that is what the case expects. */
   passed: boolean;
 }
@@ -79,8 +79,8 @@ export async function rescoreCases(options: {
       return { condition: written, score: value };
     });
     const best = Math.max(...scores.map((s) => s.score));
-    const fired = best >= cutoff;
-    return { case: savedCase, scores, best, fired, passed: fired === (savedCase.expected === "should_fire") };
+    const matched = best >= cutoff;
+    return { case: savedCase, scores, best, matched, passed: matched === (savedCase.expected === "should_match") };
   }
 
   async function scoreAll(): Promise<CaseResult[]> {

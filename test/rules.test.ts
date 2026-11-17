@@ -359,8 +359,7 @@ describe("rules service", () => {
 
   const defaults = {
     cutoff: 0.6,
-    cap: 3,
-    timeLimitMs: 3000,
+    timeLimitMs: 10_000,
     recentChecks: 100,
     busyShare: 0.3,
     closeMargin: 0.05,
@@ -370,23 +369,21 @@ describe("rules service", () => {
   it("gives the default settings until they are changed, then the stored ones", () => {
     sandbox.withRules((rules) => {
       expect(rules.settings()).toEqual(defaults);
-      expect(rules.updateSettings({ cap: 5, busyShare: 0.5, quietChecks: 50 })).toEqual({
+      expect(rules.updateSettings({ timeLimitMs: 5000, busyShare: 0.5, quietChecks: 50 })).toEqual({
         ...defaults,
-        cap: 5,
+        timeLimitMs: 5000,
         busyShare: 0.5,
         quietChecks: 50,
       });
     });
     sandbox.withRules((rules) => {
-      expect(rules.settings()).toEqual({ ...defaults, cap: 5, busyShare: 0.5, quietChecks: 50 });
+      expect(rules.settings()).toEqual({ ...defaults, timeLimitMs: 5000, busyShare: 0.5, quietChecks: 50 });
     });
   });
 
   it.each([
     [{ cutoff: 1.2 }],
     [{ cutoff: -0.1 }],
-    [{ cap: 0 }],
-    [{ cap: 2.5 }],
     [{ timeLimitMs: 0 }],
     [{ timeLimitMs: Number.NaN }],
     [{ recentChecks: 0 }],
@@ -399,7 +396,7 @@ describe("rules service", () => {
     [{ quietChecks: Number.POSITIVE_INFINITY }],
   ])("refuses the setting %o and stores nothing", (change) => {
     sandbox.withRules((rules) => {
-      expect(() => rules.updateSettings({ cap: 4, ...change })).toThrow(RuleError);
+      expect(() => rules.updateSettings({ timeLimitMs: 4000, ...change })).toThrow(RuleError);
       expect(rules.settings()).toEqual(defaults);
     });
   });

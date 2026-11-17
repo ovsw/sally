@@ -13,7 +13,7 @@ const USAGE = 'Usage: sally wrong-match "<rule name>" [--session <id>]\n';
 
 /**
  * `sally wrong-match "<rule name>"`: Claude's report that a rule it was handed
- * did not apply. Flags the session's most recent firing of the rule as a
+ * did not apply. Flags the session's most recent match of the rule as a
  * wrong match raised by Claude. The session is the one Claude Code runs the
  * command in (CLAUDE_CODE_SESSION_ID), unless --session names another.
  */
@@ -36,7 +36,7 @@ export function runWrongMatch(args: string[], env: Env): CommandResult {
     const result = createRulesService(store).reportWrongMatch(sessionId, name);
     const stdout = result.recorded
       ? `Recorded a wrong match for "${name}".\n`
-      : `The user has already marked that firing of "${name}" as ${result.flag.verdict}; it is kept as it is.\n`;
+      : `The user has already marked that match of "${name}" as ${result.flag.verdict}; it is kept as it is.\n`;
     return { code: 0, stdout, stderr: "" };
   } catch (error) {
     if (error instanceof RuleError) return { code: 1, stdout: "", stderr: error.message + "\n" };

@@ -42,18 +42,10 @@ const matching: FieldSpec[] = [
     key: "cutoff",
     label: "Cutoff",
     description:
-      "The score, from 0 to 1, a condition must reach for its rule to fire.",
+      "The score, from 0 to 1, a condition must reach for its rule to match.",
     step: "0.01",
     min: "0",
     max: "1",
-  },
-  {
-    key: "cap",
-    label: "Cap",
-    description:
-      "The most rules attached in one check. The weakest matches are dropped first.",
-    step: "1",
-    min: "1",
   },
   {
     key: "timeLimitMs",
@@ -71,16 +63,16 @@ const attention: FieldSpec[] = [
     key: "recentChecks",
     label: "Recent checks",
     description:
-      "How many of the latest checks count as recent, for the firing share and for the request size below.",
+      "How many of the latest checks count as recent, for the match share and for the request size below.",
     step: "1",
     min: "1",
     unit: "checks",
   },
   {
     key: "busyShare",
-    label: "Fires often",
+    label: "Matches often",
     description:
-      "A rule firing on at least this share of recent checks needs attention.",
+      "A rule that matches on at least this share of recent checks needs attention.",
     step: "1",
     min: "1",
     max: "100",
@@ -89,18 +81,18 @@ const attention: FieldSpec[] = [
   },
   {
     key: "closeMargin",
-    label: "Close to the cutoff",
+    label: "Weak matches",
     description:
-      "Firing scores no more than this above the cutoff count as weak matches.",
+      "A match that scores no more than this above the cutoff is a weak match.",
     step: "0.01",
     min: "0",
     max: "1",
   },
   {
     key: "quietChecks",
-    label: "Never fires",
+    label: "Never matches",
     description:
-      "A rule with no firings over this many checks of its type needs attention.",
+      "A rule with no matches over this many checks of its type needs attention.",
     step: "1",
     min: "1",
     unit: "checks",
@@ -317,7 +309,7 @@ export function SettingsScreen() {
               <FieldSet>
                 <FieldLegend>Matching</FieldLegend>
                 <FieldDescription>
-                  When a rule fires, and how long a check may take.
+                  When a rule matches, and how long a check may take.
                 </FieldDescription>
                 <FieldGroup className="gap-6">
                   {matching.map((spec) => (

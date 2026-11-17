@@ -1,6 +1,6 @@
-// A rule's analytics on the Rule screen: how often it fired, on what, its
-// near misses, each version's own firing and wrong-match counts, and the
-// rule's saved cases. Each firing can be marked wrong or correct with one
+// A rule's analytics on the Rule screen: how often it matched, on what, its
+// near misses, each version's own match and wrong-match counts, and the
+// rule's saved cases. Each match can be marked wrong or right with one
 // click. Tables use the shadcn table from the data-table12 block, inside the
 // Rule screen's bordered sections.
 import * as React from "react";
@@ -17,13 +17,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  flagFiring,
+  flagMatch,
   getRuleAnalytics,
   listSavedCases,
   type RaisedBy,
   type RuleAnalytics,
   type RuleCheckView,
-  type RuleFiring,
+  type RuleMatch,
   type SavedCase,
   type Verdict,
 } from "@/lib/api";
@@ -68,23 +68,22 @@ function Empty({ children }: { children: React.ReactNode }) {
 const RAISED_BY: Record<RaisedBy, string> = {
   claude: "Claude",
   user: "you",
-  automatic: "the automatic check",
 };
 
-/** One click marks the firing wrong, one marks it correct; shows who flagged it. */
+/** One click marks the match wrong, one marks it right; shows who flagged it. */
 function FlagButtons({
-  firing,
+  match,
   onFlag,
 }: {
-  firing: RuleFiring;
-  onFlag: (firing: RuleFiring, verdict: Verdict) => Promise<void>;
+  match: RuleMatch;
+  onFlag: (match: RuleMatch, verdict: Verdict) => Promise<void>;
 }) {
   const [pending, setPending] = React.useState(false);
   const mark = (verdict: Verdict) => {
     setPending(true);
-    onFlag(firing, verdict).finally(() => setPending(false));
+    onFlag(match, verdict).finally(() => setPending(false));
   };
-  const verdict = firing.flag?.verdict;
+  const verdict = match.flag?.verdict;
   return (
     <div className="flex flex-col items-start gap-1">
       <div className="flex gap-1">
@@ -100,18 +99,18 @@ function FlagButtons({
         </Button>
         <Button
           size="xs"
-          variant={verdict === "correct" ? "default" : "outline"}
-          aria-pressed={verdict === "correct"}
+          variant={verdict === "right" ? "default" : "outline"}
+          aria-pressed={verdict === "right"}
           disabled={pending}
-          onClick={() => mark("correct")}
+          onClick={() => mark("right")}
         >
           <ThumbsUp />
-          Correct
+          Right
         </Button>
       </div>
-      {firing.flag && (
+      {match.flag && (
         <span className="text-xs whitespace-nowrap text-muted-foreground">
-          Flagged by {RAISED_BY[firing.flag.raisedBy]}
+          Flagged by {RAISED_BY[match.flag.raisedBy]}
         </span>
       )}
     </div>
@@ -125,7 +124,7 @@ function ChecksTable<Row extends RuleCheckView>({
 }: {
   rows: Row[];
   scoreCell: (row: Row) => React.ReactNode;
-  /** An extra last column, such as the verdict buttons on firings. */
+  /** An extra last column, such as the verdict buttons on matches. */
   actions?: { title: string; cell: (row: Row) => React.ReactNode };
 }) {
   return (
@@ -195,10 +194,10 @@ function SavedCasesTable({ cases }: { cases: SavedCase[] }) {
           <TableRow key={savedCase.id}>
             <TableCell className="pl-4 align-top">
               <Badge
-                variant={savedCase.expected === "should_fire" ? "secondary" : "outline"}
+                variant={savedCase.expected === "should_match" ? "secondary" : "outline"}
                 className="whitespace-nowrap"
               >
-                {savedCase.expected === "should_fire" ? "Should fire" : "Should not fire"}
+                {savedCase.expected === "should_match" ? "Should match" : "Should not match"}
               </Badge>
             </TableCell>
             <TableCell className="align-top">
@@ -212,7 +211,7 @@ function SavedCasesTable({ cases }: { cases: SavedCase[] }) {
             <TableCell className="pr-4 align-top whitespace-nowrap text-muted-foreground">
               {savedCase.source ? (
                 <>
-                  {savedCase.source.verdict === "wrong" ? "Wrong match" : "Correct"}, flagged by{" "}
+                  {savedCase.source.verdict === "wrong" ? "Wrong match" : "Right match"}, flagged by{" "}
                   {RAISED_BY[savedCase.source.raisedBy]}
                   <span className="block text-xs">
                     {formatTime(savedCase.createdAt)}
@@ -259,10 +258,10 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
   // Marks can overlap; only the latest reload may replace the panel.
   const latestReload = React.useRef(0);
   const onFlag = React.useCallback(
-    async (firing: RuleFiring, verdict: Verdict) => {
+    async (match: RuleMatch, verdict: Verdict) => {
       setFlagError(null);
       try {
-        await flagFiring(firing.firingId, verdict);
+        await flagMatch(match.matchId, verdict);
         const reload = ++latestReload.current;
         const [loaded, savedCases] = await load();
         if (reload !== latestReload.current) return;
@@ -287,24 +286,19 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
   }
 
   const share =
-    analytics.checks === 0 ? null : Math.round((analytics.firings / analytics.checks) * 100);
+    analytics.checks === 0 ? null : Math.round((analytics.matches / analytics.checks) * 100);
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Stat
-          label="Fired"
-          value={analytics.firings}
+          label="Matched"
+          value={analytics.matches}
           detail={
             share === null
               ? "Not checked yet"
               : `On ${share}% of ${analytics.checks} ${analytics.checks === 1 ? "check" : "checks"}`
           }
-        />
-        <Stat
-          label="Cut by the cap"
-          value={analytics.dropped}
-          detail="Fired, but stronger rules filled the cap"
         />
         <Stat
           label="Near misses"
@@ -314,7 +308,7 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
         <Stat
           label="Wrong matches"
           value={analytics.wrongMatches}
-          detail="Firings flagged as not applying"
+          detail="Matches flagged as not applying"
         />
       </div>
 
@@ -328,7 +322,7 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
                 <TableHead className="pl-4">Version</TableHead>
                 <TableHead>Published</TableHead>
                 <TableHead className="text-right">Checks</TableHead>
-                <TableHead className="text-right">Fired</TableHead>
+                <TableHead className="text-right">Matched</TableHead>
                 <TableHead className="pr-4 text-right">Wrong matches</TableHead>
               </TableRow>
             </TableHeader>
@@ -340,7 +334,7 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
                     {formatTime(version.publishedAt)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{version.checks}</TableCell>
-                  <TableCell className="text-right tabular-nums">{version.firings}</TableCell>
+                  <TableCell className="text-right tabular-nums">{version.matches}</TableCell>
                   <TableCell className="pr-4 text-right tabular-nums">
                     {version.wrongMatches}
                   </TableCell>
@@ -352,10 +346,10 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
       </Section>
 
       <Section
-        title="Firings"
+        title="Matches"
         note={
-          analytics.recentFirings.length > 0
-            ? "Most recent first. Mark each one wrong or correct to keep it as a saved case."
+          analytics.recentMatches.length > 0
+            ? "Most recent first. Mark each one wrong or right to keep it as a saved case."
             : undefined
         }
       >
@@ -364,25 +358,16 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
             {flagError}
           </p>
         )}
-        {analytics.recentFirings.length === 0 ? (
-          <Empty>This rule has not fired yet.</Empty>
+        {analytics.recentMatches.length === 0 ? (
+          <Empty>This rule has not matched yet.</Empty>
         ) : (
           <ChecksTable
-            rows={analytics.recentFirings}
+            rows={analytics.recentMatches}
             actions={{
               title: "Verdict",
-              cell: (row) => <FlagButtons firing={row} onFlag={onFlag} />,
+              cell: (row) => <FlagButtons match={row} onFlag={onFlag} />,
             }}
-            scoreCell={(row) => (
-              <span className="flex flex-col items-end gap-1">
-                {formatScore(row.score)}
-                {row.dropped && (
-                  <Badge variant="outline" className="whitespace-nowrap">
-                    Cut by the cap
-                  </Badge>
-                )}
-              </span>
-            )}
+            scoreCell={(row) => formatScore(row.score)}
           />
         )}
       </Section>
@@ -410,10 +395,10 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
 
       <Section
         title="Saved cases"
-        note="Every flagged firing, kept with the outcome it should have"
+        note="Every flagged match, kept with the outcome it should have"
       >
         {cases.length === 0 ? (
-          <Empty>No saved cases yet. Mark a firing wrong or correct to keep one.</Empty>
+          <Empty>No saved cases yet. Mark a match wrong or right to keep one.</Empty>
         ) : (
           <SavedCasesTable cases={cases} />
         )}
