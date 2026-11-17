@@ -129,6 +129,10 @@ const migrations: string[] = [
     PRIMARY KEY (version_id, project_id)
   );
   `,
+  `
+  -- A rule switched off keeps its versions and draft but is never sent to the matcher.
+  ALTER TABLE rules ADD COLUMN switched_off INTEGER NOT NULL DEFAULT 0 CHECK (switched_off IN (0, 1));
+  `,
 ];
 
 /**
