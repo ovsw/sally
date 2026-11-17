@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MalformedAnswerError } from "../src/matcher.ts";
-import { ATTACHED_HEADER, runMessageHook } from "../src/message-hook.ts";
+import { ATTACHED_HEADER, REPORT_LINE, runMessageHook } from "../src/message-hook.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { standInMatcher } from "./support/stand-in-matcher.ts";
 
@@ -14,6 +14,7 @@ interface CheckRow {
   duration_ms: number;
   input_tokens: number | null;
   cutoff: number;
+  cap: number | null;
   outcome: string;
   error: string | null;
 }
@@ -209,6 +210,7 @@ describe("what is recorded", () => {
       text: "The full text of the message",
       input_tokens: 321,
       cutoff: 0.6,
+      cap: 3,
       outcome: "attached",
       error: null,
     });
@@ -320,5 +322,169 @@ describe("failing open", () => {
   it("prints nothing for input it cannot read", async () => {
     expect(await runMessageHook("not json", { env: sandbox.env, matcher: standInMatcher() })).toBe("");
     expect(await runMessageHook(hookInput("   "), { env: sandbox.env, matcher: standInMatcher() })).toBe("");
+  });
+});
+
+describe("the cap", () => {
+  const firings = () =>
+    sandbox.query<{ name: string; score: number; dropped: number }>(
+      "SELECT r.name, f.score, f.dropped FROM firings f JOIN rules r ON r.id = f.rule_id ORDER BY f.score DESC",
+    );
+
+  it("attaches the 3 strongest rules by default, strongest first, and records the rest as dropped", async () => {
+    const scores: Record<string, number> = { A: 0.7, B: 0.95, C: 0.62, D: 0.8, E: 0.9 };
+    for (const name of Object.keys(scores)) sandbox.liveRule({ name: `Rule ${name}`, conditions: [`Condition ${name}.`] });
+    const matcher = standInMatcher(Object.fromEntries(Object.entries(scores).map(([k, v]) => [`Condition ${k}.`, v])));
+
+    const text = context(await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher }));
+
+    const attached = ["Rule B", "Rule E", "Rule D"].map((name) => text.indexOf(name));
+    expect(attached.every((i) => i >= 0)).toBe(true);
+    expect(attached).toEqual([...attached].sort((a, b) => a - b));
+    expect(text).not.toContain("Rule A");
+    expect(text).not.toContain("Rule C");
+    expect(firings()).toEqual([
+      { name: "Rule B", score: 0.95, dropped: 0 },
+      { name: "Rule E", score: 0.9, dropped: 0 },
+      { name: "Rule D", score: 0.8, dropped: 0 },
+      { name: "Rule A", score: 0.7, dropped: 1 },
+      { name: "Rule C", score: 0.62, dropped: 1 },
+    ]);
+    expect(checks()).toMatchObject([{ outcome: "attached", cap: 3 }]);
+  });
+
+  it("orders a rule by its best condition", async () => {
+    sandbox.liveRule({ name: "Two conditions", conditions: ["Weak.", "Strong."] });
+    sandbox.liveRule({ name: "One condition", conditions: ["Middle."] });
+    sandbox.withRules((rules) => rules.updateSettings({ cap: 1 }));
+    const matcher = standInMatcher({ "Weak.": 0.61, "Strong.": 0.99, "Middle.": 0.9 });
+
+    const text = context(await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher }));
+
+    expect(text).toContain("Two conditions");
+    expect(text).not.toContain("One condition");
+    expect(firings()).toEqual([
+      { name: "Two conditions", score: 0.99, dropped: 0 },
+      { name: "One condition", score: 0.9, dropped: 1 },
+    ]);
+  });
+});
+
+describe("stored settings", () => {
+  it("reads the cutoff and cap from the stored settings and records them on the check", async () => {
+    sandbox.liveRule({ name: "Rule A", conditions: ["Condition A."] });
+    sandbox.liveRule({ name: "Rule B", conditions: ["Condition B."] });
+    sandbox.liveRule({ name: "Rule C", conditions: ["Condition C."] });
+    sandbox.withRules((rules) => rules.updateSettings({ cutoff: 0.4, cap: 2 }));
+    const matcher = standInMatcher({ "Condition A.": 0.45, "Condition B.": 0.5, "Condition C.": 0.39 });
+
+    const text = context(await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher }));
+
+    expect(text.indexOf("Rule B")).toBeLessThan(text.indexOf("Rule A"));
+    expect(text).not.toContain("Rule C");
+    expect(checks()).toMatchObject([{ cutoff: 0.4, cap: 2, outcome: "attached" }]);
+  });
+
+  it("reads the time limit from the stored settings", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    sandbox.withRules((rules) => rules.updateSettings({ timeLimitMs: 500 }));
+    const matcher = standInMatcher({}, { answer: () => new Promise(() => {}) });
+
+    const pending = runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(await pending).toBe("");
+    expect(checks()).toMatchObject([{ outcome: "failed", error: "timeout after 500 ms" }]);
+  });
+});
+
+describe("the attached text", () => {
+  it("ends with one line telling Claude how to report a rule that does not apply", async () => {
+    sandbox.liveRule({ name: "Rule A", conditions: ["Condition A."] });
+    const matcher = standInMatcher({ "Condition A.": 0.9 });
+
+    const text = context(await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher }));
+
+    expect(text.endsWith(`\n\n${REPORT_LINE}`)).toBe(true);
+    expect(REPORT_LINE).not.toContain("\n");
+  });
+});
+
+describe("email masking", () => {
+  it("masks email addresses in the message and in conditions before anything is sent", async () => {
+    sandbox.liveRule({ name: "Mail", conditions: ["The message mentions boss.person@example.co.uk."] });
+    const matcher = standInMatcher();
+
+    await runMessageHook(hookInput("Write to ana.maria+work@mail.example.com and Bob@Example.ORG, please."), {
+      env: sandbox.env,
+      matcher,
+    });
+
+    const sent = JSON.stringify(matcher.calls);
+    expect(sent).not.toMatch(/@/);
+    expect(matcher.calls[0]!.text).toBe("Write to [email] and [email], please.");
+    expect(matcher.calls[0]!.conditions[0]!.text).toBe("The message mentions [email].");
+  });
+
+  it("still records the message as written on the local machine", async () => {
+    sandbox.liveRule({ name: "Mail", conditions: ["Condition A."] });
+
+    await runMessageHook(hookInput("Ping me at me@example.com"), { env: sandbox.env, matcher: standInMatcher() });
+
+    expect(checks()[0]!.text).toBe("Ping me at me@example.com");
+  });
+});
+
+describe("slash commands", () => {
+  it("sends the matcher the text after the command name, never the command", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+
+    await runMessageHook(hookInput("/my-plugin:deploy-site and then make the header smaller"), {
+      env: sandbox.env,
+      matcher,
+    });
+
+    expect(matcher.calls[0]!.text).toBe("and then make the header smaller");
+    expect(JSON.stringify(matcher.calls)).not.toContain("deploy-site");
+    expect(checks()).toMatchObject([{ outcome: "nothing", text: "and then make the header smaller" }]);
+  });
+
+  it.each([
+    ["a bare command", "/review"],
+    ["a command with only short arguments", "/review-pr 123"],
+    ["a command with two short words", "/deploy staging now"],
+    ["a command followed by punctuation only", "/commit -- !!"],
+  ])("skips %s and records the check as skipped", async (_label, prompt) => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher({ "Condition A.": 1 });
+
+    const output = await runMessageHook(hookInput(prompt), { env: sandbox.env, matcher });
+
+    expect(output).toBe("");
+    expect(matcher.calls).toEqual([]);
+    expect(checks()).toMatchObject([{ outcome: "skipped", text: prompt, error: null }]);
+  });
+
+  it("checks a message that starts with a path, not a command, as it is", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+
+    await runMessageHook(hookInput("/home/me/notes.md is out of date"), { env: sandbox.env, matcher });
+
+    expect(matcher.calls[0]!.text).toBe("/home/me/notes.md is out of date");
+  });
+
+  it("attaches rules that fire on the text after the command", async () => {
+    sandbox.liveRule({ name: "Visual", conditions: ["The message asks for a visual change."] });
+    const matcher = standInMatcher({ "The message asks for a visual change.": 0.8 });
+
+    const output = await runMessageHook(hookInput("/plan then make the header smaller on mobile"), {
+      env: sandbox.env,
+      matcher,
+    });
+
+    expect(context(output)).toContain("Visual");
   });
 });

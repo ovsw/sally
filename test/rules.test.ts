@@ -53,4 +53,28 @@ describe("rules service", () => {
       expect(() => rules.createRule(rule)).toThrow(RuleError);
     });
   });
+
+  it("gives the default settings until they are changed, then the stored ones", () => {
+    sandbox.withRules((rules) => {
+      expect(rules.settings()).toEqual({ cutoff: 0.6, cap: 3, timeLimitMs: 3000 });
+      expect(rules.updateSettings({ cap: 5 })).toEqual({ cutoff: 0.6, cap: 5, timeLimitMs: 3000 });
+    });
+    sandbox.withRules((rules) => {
+      expect(rules.settings()).toEqual({ cutoff: 0.6, cap: 5, timeLimitMs: 3000 });
+    });
+  });
+
+  it.each([
+    [{ cutoff: 1.2 }],
+    [{ cutoff: -0.1 }],
+    [{ cap: 0 }],
+    [{ cap: 2.5 }],
+    [{ timeLimitMs: 0 }],
+    [{ timeLimitMs: Number.NaN }],
+  ])("refuses the setting %o and stores nothing", (change) => {
+    sandbox.withRules((rules) => {
+      expect(() => rules.updateSettings({ cap: 4, ...change })).toThrow(RuleError);
+      expect(rules.settings()).toEqual({ cutoff: 0.6, cap: 3, timeLimitMs: 3000 });
+    });
+  });
 });
