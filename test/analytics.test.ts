@@ -208,6 +208,15 @@ describe("rule analytics", () => {
     expect(analytics.nearMisses).toMatchObject([{ text: "under the old cutoff", score: 0.75, cutoff: 0.8 }]);
   });
 
+  it("counts a score exactly the margin under the cutoff as a near miss", async () => {
+    const ruleId = sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    sandbox.withRules((rules) => rules.updateSettings({ cutoff: 0.8 }));
+    await message("at the margin", standInMatcher({ "Condition A.": 0.7 }));
+
+    const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(ruleId));
+    expect(analytics.nearMisses).toMatchObject([{ text: "at the margin", score: 0.7, cutoff: 0.8 }]);
+  });
+
   it("gives each published version its own firing count, newest first", async () => {
     const ruleId = sandbox.liveRule({ name: "Rule", conditions: ["Old wording."] });
     await message("one", standInMatcher({ "Old wording.": 0.9 }));

@@ -8,6 +8,9 @@ import type { Store } from "./store.ts";
  */
 export const NEAR_MISS_MARGIN = 0.1;
 
+/** Slack for float rounding, so a score exactly the margin under the cutoff (0.7 under 0.8) still counts. */
+const EPSILON = 1e-9;
+
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
 
@@ -196,79 +199,89 @@ export function createAnalyticsQueries(db: Store, requireRule: (ruleId: number) 
 
     ruleAnalytics(ruleId, options = {}) {
       requireRule(ruleId);
-      const limit = limitOf(options.limit);
-      const versionsOfRule = "SELECT id FROM versions WHERE rule_id = ? AND number IS NOT NULL";
-
-      const { checks } = db
-        .prepare(`SELECT COUNT(DISTINCT check_id) AS checks FROM scores WHERE version_id IN (${versionsOfRule})`)
-        .get(ruleId) as { checks: number };
-      const counts = db
-        .prepare(
-          `SELECT COALESCE(SUM(dropped = 0), 0) AS firings, COALESCE(SUM(dropped = 1), 0) AS dropped
-             FROM firings WHERE rule_id = ?`,
-        )
-        .get(ruleId) as { firings: number; dropped: number };
-
-      const recentFirings = (
-        db
-          .prepare(
-            `SELECT f.check_id, c.created_at, p.name AS project, c.text, f.score, c.cutoff,
-                    v.number AS version_number, cond.text AS condition, f.dropped
-               FROM firings f
-               JOIN checks c ON c.id = f.check_id
-               LEFT JOIN projects p ON p.id = c.project_id
-               LEFT JOIN versions v ON v.id = f.version_id
-               LEFT JOIN conditions cond ON cond.id = f.condition_id
-              WHERE f.rule_id = ?
-              ORDER BY f.check_id DESC LIMIT ?`,
-          )
-          .all(ruleId, limit) as (CheckViewRow & { dropped: number })[]
-      ).map((row) => ({ ...checkView(row), dropped: row.dropped === 1 }));
-
-      // The rule's best condition in each check it was scored in; a near miss
-      // is a best score under that check's cutoff by no more than the margin.
-      // (SQLite takes the bare columns from the row holding the MAX.)
-      const nearMisses = (
-        db
-          .prepare(
-            `SELECT best.check_id, c.created_at, p.name AS project, c.text, best.score, c.cutoff,
-                    v.number AS version_number, cond.text AS condition
-               FROM (SELECT check_id, version_id, condition_id, MAX(score) AS score
-                       FROM scores WHERE version_id IN (${versionsOfRule})
-                      GROUP BY check_id) best
-               JOIN checks c ON c.id = best.check_id
-               LEFT JOIN projects p ON p.id = c.project_id
-               LEFT JOIN versions v ON v.id = best.version_id
-               LEFT JOIN conditions cond ON cond.id = best.condition_id
-              WHERE best.score < c.cutoff AND best.score >= c.cutoff - ?
-              ORDER BY best.check_id DESC LIMIT ?`,
-          )
-          .all(ruleId, NEAR_MISS_MARGIN, limit) as CheckViewRow[]
-      ).map(checkView);
-
-      const versions = (
-        db
-          .prepare(
-            `SELECT v.number, v.published_at,
-                    (SELECT COUNT(DISTINCT s.check_id) FROM scores s WHERE s.version_id = v.id) AS checks,
-                    (SELECT COUNT(*) FROM firings f
-                      WHERE f.rule_id = v.rule_id AND f.version_id = v.id AND f.dropped = 0) AS firings
-               FROM versions v
-              WHERE v.rule_id = ? AND v.number IS NOT NULL
-              ORDER BY v.number DESC`,
-          )
-          .all(ruleId) as { number: number; published_at: string; checks: number; firings: number }[]
-      ).map((row) => ({ number: row.number, publishedAt: row.published_at, checks: row.checks, firings: row.firings }));
-
-      return {
-        checks,
-        firings: counts.firings,
-        dropped: counts.dropped,
-        recentFirings,
-        nearMisses,
-        nearMissMargin: NEAR_MISS_MARGIN,
-        versions,
-      };
+      // One read transaction, so every count and list comes from the same
+      // snapshot even while a check is being written.
+      db.exec("BEGIN");
+      try {
+        return readRuleAnalytics(db, ruleId, limitOf(options.limit));
+      } finally {
+        db.exec("COMMIT");
+      }
     },
+  };
+}
+
+function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalytics {
+  const versionsOfRule = "SELECT id FROM versions WHERE rule_id = ? AND number IS NOT NULL";
+
+  const { checks } = db
+    .prepare(`SELECT COUNT(DISTINCT check_id) AS checks FROM scores WHERE version_id IN (${versionsOfRule})`)
+    .get(ruleId) as { checks: number };
+  const counts = db
+    .prepare(
+      `SELECT COALESCE(SUM(dropped = 0), 0) AS firings, COALESCE(SUM(dropped = 1), 0) AS dropped
+         FROM firings WHERE rule_id = ?`,
+    )
+    .get(ruleId) as { firings: number; dropped: number };
+
+  const recentFirings = (
+    db
+      .prepare(
+        `SELECT f.check_id, c.created_at, p.name AS project, c.text, f.score, c.cutoff,
+                v.number AS version_number, cond.text AS condition, f.dropped
+           FROM firings f
+           JOIN checks c ON c.id = f.check_id
+           LEFT JOIN projects p ON p.id = c.project_id
+           LEFT JOIN versions v ON v.id = f.version_id
+           LEFT JOIN conditions cond ON cond.id = f.condition_id
+          WHERE f.rule_id = ?
+          ORDER BY f.check_id DESC LIMIT ?`,
+      )
+      .all(ruleId, limit) as (CheckViewRow & { dropped: number })[]
+  ).map((row) => ({ ...checkView(row), dropped: row.dropped === 1 }));
+
+  // The rule's best condition in each check it was scored in; a near miss
+  // is a best score under that check's cutoff by no more than the margin.
+  // (SQLite takes the bare columns from the row holding the MAX.)
+  const nearMisses = (
+    db
+      .prepare(
+        `SELECT best.check_id, c.created_at, p.name AS project, c.text, best.score, c.cutoff,
+                v.number AS version_number, cond.text AS condition
+           FROM (SELECT check_id, version_id, condition_id, MAX(score) AS score
+                   FROM scores WHERE version_id IN (${versionsOfRule})
+                  GROUP BY check_id) best
+           JOIN checks c ON c.id = best.check_id
+           LEFT JOIN projects p ON p.id = c.project_id
+           LEFT JOIN versions v ON v.id = best.version_id
+           LEFT JOIN conditions cond ON cond.id = best.condition_id
+          WHERE best.score < c.cutoff AND best.score >= c.cutoff - ? - ?
+          ORDER BY best.check_id DESC LIMIT ?`,
+      )
+      .all(ruleId, NEAR_MISS_MARGIN, EPSILON, limit) as CheckViewRow[]
+  ).map(checkView);
+
+  const versions = (
+    db
+      .prepare(
+        `SELECT v.number, v.published_at,
+                (SELECT COUNT(DISTINCT s.check_id) FROM scores s WHERE s.version_id = v.id) AS checks,
+                (SELECT COUNT(*) FROM firings f
+                  WHERE f.rule_id = v.rule_id AND f.version_id = v.id AND f.dropped = 0) AS firings
+           FROM versions v
+          WHERE v.rule_id = ? AND v.number IS NOT NULL
+          ORDER BY v.number DESC`,
+      )
+      .all(ruleId) as { number: number; published_at: string; checks: number; firings: number }[]
+  ).map((row) => ({ number: row.number, publishedAt: row.published_at, checks: row.checks, firings: row.firings }));
+
+  return {
+    checks,
+    firings: counts.firings,
+    dropped: counts.dropped,
+    recentFirings,
+    nearMisses,
+    nearMissMargin: NEAR_MISS_MARGIN,
+    versions,
   };
 }
