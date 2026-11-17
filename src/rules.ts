@@ -1,6 +1,8 @@
 import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
 import { RuleError, RuleNotFoundError } from "./errors.ts";
 import { createFlags, type Flags } from "./flags.ts";
+import type { Matcher } from "./matcher.ts";
+import { rescoreCases, type RescoreResult } from "./rescore.ts";
 import { type Store, transaction } from "./store.ts";
 
 export type CheckType = "message" | "reply";
@@ -149,6 +151,15 @@ export interface RulesService extends AnalyticsQueries, Flags {
   saveDraft(ruleId: number, content: DraftContent): void;
   /** Turns the draft into a new live version and returns its number. */
   publish(ruleId: number): { versionNumber: number };
+  /**
+   * Scores the draft's conditions against each of the rule's saved cases with
+   * the matcher and says which cases pass at the cutoff, so the user can see
+   * before publishing whether the draft fixes the wrong matches without
+   * losing the right ones. Changes nothing and records nothing. A matcher
+   * failure is answered as a failed result, never thrown. Refuses a rule with
+   * no draft, or a draft that could not be published.
+   */
+  rescoreDraft(ruleId: number): Promise<RescoreResult>;
   /** Replaces the rule's draft, or starts one, with a copy of the given published version. */
   startDraftFrom(ruleId: number, versionNumber: number): void;
   /** Drops the draft, leaving the live version as it is. A rule never published has only its draft: delete it instead. */
@@ -227,7 +238,12 @@ interface VersionRow {
   published_at: string | null;
 }
 
-export function createRulesService(db: Store): RulesService {
+export interface RulesServiceOptions {
+  /** Scores drafts against saved cases. Undefined without an API key; the hooks never need it. */
+  matcher?: Matcher;
+}
+
+export function createRulesService(db: Store, options: RulesServiceOptions = {}): RulesService {
   /** The ids of these seen projects, without repeats. Refuses a project Sally has not seen. */
   function projectIds(names: string[]): number[] {
     const find = db.prepare("SELECT id FROM projects WHERE name = ?");
@@ -362,9 +378,11 @@ export function createRulesService(db: Store): RulesService {
     return result;
   }
 
+  const flags = createFlags(db, requireRule);
+
   return {
     ...createAnalyticsQueries(db, requireRule),
-    ...createFlags(db, requireRule),
+    ...flags,
 
     createRule(rule) {
       const name = cleanName(rule.name);
@@ -468,6 +486,20 @@ export function createRulesService(db: Store): RulesService {
         db.prepare("UPDATE versions SET number = ?, published_at = ? WHERE id = ?").run(versionNumber, now(), row.id);
         db.prepare("UPDATE rules SET name = ?, check_type = ? WHERE id = ?").run(row.name, row.check_type, ruleId);
         return { versionNumber };
+      });
+    },
+
+    async rescoreDraft(ruleId) {
+      requireRule(ruleId);
+      const row = draft(ruleId);
+      if (!row) throw new RuleError("This rule has no draft to publish.");
+      const conditions = conditionsOf(row.id);
+      requireComplete({ instruction: row.instruction, conditions });
+      return rescoreCases({
+        matcher: options.matcher,
+        conditions,
+        cases: flags.savedCases(ruleId),
+        cutoff: readSettings().cutoff,
       });
     },
 

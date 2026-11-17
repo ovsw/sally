@@ -1,7 +1,8 @@
 import { readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { databasePath, type Env } from "../paths.ts";
+import { createJevMatcher } from "../jev.ts";
+import { databasePath, type Env, readApiKey } from "../paths.ts";
 import { createRulesService } from "../rules.ts";
 import { openStore } from "../store.ts";
 import { createAppServer, listen } from "./server.ts";
@@ -61,7 +62,10 @@ export async function runApp(args: string[], env: Env): Promise<void> {
   const log = (line: string) => process.stdout.write(line + "\n");
   const webDir = env.SALLY_WEB_DIR || (await ensureBuilt(log));
   const store = openStore(databasePath(env));
-  const server = createAppServer({ rules: createRulesService(store), webDir });
+  // Jev re-scores a draft against its saved cases before publishing.
+  const apiKey = readApiKey(env);
+  const matcher = apiKey ? createJevMatcher({ apiKey }) : undefined;
+  const server = createAppServer({ rules: createRulesService(store, { matcher }), webDir });
   const address = await listen(server, port);
   log(`Sally is running at ${address}`);
   const stop = () => {

@@ -1,5 +1,6 @@
 import type { Server } from "node:http";
 import { createAppServer, listen } from "../../src/app/server.ts";
+import type { Matcher } from "../../src/matcher.ts";
 import { databasePath } from "../../src/paths.ts";
 import { createRulesService } from "../../src/rules.ts";
 import { openStore } from "../../src/store.ts";
@@ -14,10 +15,19 @@ export interface RunningApp {
   close(): Promise<void>;
 }
 
-/** Starts the app's server on a free port of this machine, on the sandbox database. */
-export async function startApp(sandbox: Sandbox, webDir?: string): Promise<RunningApp> {
+/**
+ * Starts the app's server on a free port of this machine, on the sandbox
+ * database. Re-scoring uses `matcher`, a stand-in; without one there is no API key.
+ */
+export async function startApp(
+  sandbox: Sandbox,
+  options: { webDir?: string; matcher?: Matcher } = {},
+): Promise<RunningApp> {
   const store = openStore(databasePath(sandbox.env));
-  const server: Server = createAppServer({ rules: createRulesService(store), webDir });
+  const server: Server = createAppServer({
+    rules: createRulesService(store, { matcher: options.matcher }),
+    webDir: options.webDir,
+  });
   const address = await listen(server, 0);
   const call = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
     fetch(address + path, {
