@@ -1,4 +1,5 @@
 import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
+import { type AttentionEntry, attentionList } from "./attention.ts";
 import { RuleError, RuleNotFoundError } from "./errors.ts";
 import { createFlags, type Flags } from "./flags.ts";
 import { conditionFits, REQUEST_TOKEN_LIMIT, REQUEST_WARNING_SHARE } from "./limits.ts";
@@ -222,6 +223,8 @@ export interface RulesService extends AnalyticsQueries, Flags {
   settings(): Settings;
   /** Stores the given settings and returns them all. Refuses a value out of range. */
   updateSettings(changes: Partial<Settings>): Settings;
+  /** The rules that need attention under the stored thresholds, worst first, each with why (see attention.ts). */
+  attention(): AttentionEntry[];
   /** How much of Jev's per-request limit the recent checks have used. */
   limitUse(): LimitUse;
 }
@@ -692,6 +695,10 @@ export function createRulesService(db: Store): RulesService {
         for (const [key, value] of entries) save.run(SETTING_KEYS[key], value);
       });
       return readSettings();
+    },
+
+    attention() {
+      return attentionList(db, readSettings());
     },
   };
 }
