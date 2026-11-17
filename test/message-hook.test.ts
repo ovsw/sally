@@ -427,6 +427,30 @@ describe("email masking", () => {
     expect(matcher.calls[0]!.conditions[0]!.text).toBe("The message mentions [email].");
   });
 
+  it("masks addresses with a quoted local part or an address literal", async () => {
+    sandbox.liveRule({ name: "Mail", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+
+    await runMessageHook(hookInput('Send to "ana maria"@example.com or ops@[192.0.2.1] today.'), {
+      env: sandbox.env,
+      matcher,
+    });
+
+    expect(matcher.calls[0]!.text).toBe("Send to [email] or [email] today.");
+  });
+
+  it("checks a message holding one very long word without stalling", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+    const word = "a".repeat(100_000);
+
+    const started = Date.now();
+    await runMessageHook(hookInput(`look at ${word} please`), { env: sandbox.env, matcher });
+
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(matcher.calls[0]!.text).toBe(`look at ${word} please`);
+  });
+
   it("still records the message as written on the local machine", async () => {
     sandbox.liveRule({ name: "Mail", conditions: ["Condition A."] });
 

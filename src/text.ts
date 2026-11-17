@@ -1,7 +1,14 @@
 /** What an email address becomes before anything is sent to the matcher. */
 export const EMAIL_MASK = "[email]";
 
-const EMAIL = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*\.\p{L}{2,}/gu;
+/**
+ * An email address: an unquoted or quoted local part, then a named domain or
+ * an address literal such as `[192.0.2.1]`. The lookbehind lets an unquoted
+ * local part start only at the beginning of a run of allowed characters, so a
+ * long run without `@` is scanned once instead of once per character.
+ */
+const EMAIL =
+  /(?:"[^"\r\n]*"|(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+)@(?:\[[^\]\s]+\]|[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*\.\p{L}{2,})/gu;
 
 /** Replaces every email address in the text, so contact details never leave the machine. */
 export function maskEmails(text: string): string {
