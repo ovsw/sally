@@ -114,7 +114,7 @@ describe("an evaluation run", () => {
     expect(code).toBe(0);
     expect(stdout).toContain("Evaluation: 5 cases (3 messages, 2 replies)");
     expect(stdout).toContain("Right matches: 2   Wrong matches: 1   Misses: 1");
-    expect(stdout).toContain("Wrong-match rate: 20.0% (1 of 5 checks had a wrong match)");
+    expect(stdout).toContain("Wrong-match rate: 20.0% (1 of 5 checks that ran had a wrong match)");
     expect(stdout).toMatch(/Time per check: median \d+(\.\d+)? ms/);
     expect(stdout).toContain("Input tokens: 600 in all, at most 120 in one check");
     expect(stdout).toContain('button colour with link (reply): "Local link for visual changes" scored 0.90');
@@ -144,6 +144,26 @@ describe("an evaluation run", () => {
     expect(result.cases[0]!.error).toBe("Jev returned HTTP 503");
   });
 
+  it("leaves skipped checks out of the wrong-match rate, timing and tokens", async () => {
+    const file = evaluationFile({
+      rules: [{ name: "Brief replies", check: "message", conditions: [SHORT] }],
+      cases: [
+        { label: "short answer", check: "message", text: "Just tell me in one line: does the build pass?", expected: [] },
+        { label: "bare command", check: "message", text: "/review", expected: [] },
+      ],
+    });
+    const result = await report([file], exampleMatcher());
+    expect(result.summary).toMatchObject({
+      cases: 2,
+      completed: 2,
+      skipped: 1,
+      ran: 1,
+      checksWithWrongMatch: 1,
+      wrongMatchRate: 1,
+      inputTokens: { total: 120, largestCheck: 120 },
+    });
+  });
+
   it("never touches the user's database", async () => {
     await report([example], exampleMatcher());
     expect(existsSync(databasePath(sandbox.env))).toBe(false);
@@ -171,7 +191,7 @@ describe("the scale run", () => {
     const lines = text.stdout.split("\n");
     expect(lines[0]).toBe("Scale run: 5 cases (3 messages, 2 replies)");
     expect(lines.find((line) => line.startsWith("Wrong-match") || line.startsWith("Right"))).toBe(
-      "Wrong-match rate: 80.0% (4 of 5 checks had a wrong match)",
+      "Wrong-match rate: 80.0% (4 of 5 checks that ran had a wrong match)",
     );
     expect(text.stdout).toContain("[padding] scored 0.95");
   });

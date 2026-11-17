@@ -106,12 +106,13 @@ type.
   failure that matters most, since it teaches Claude to discount reminders.
 - **Miss**: an expected rule did not fire, including one the cap dropped. The
   report gives its best score, so a near miss is easy to spot.
-- **Wrong-match rate**: the share of checks with at least one wrong match.
+- **Wrong-match rate**: the share of checks that ran (neither failed nor
+  skipped) with at least one wrong match.
 - **Failed checks** (timeout, Jev error) are listed with their error and left
   out of the counts above, so a slow Jev does not look like a miss.
 - **Time per check**: the engine's own duration per check, Jev's round trip
   included. **Input tokens**: what Jev reported, in all and for the largest
-  check.
+  check. Both cover only the checks that ran: a skipped check never asks Jev.
 
 The engine settings are Sally's defaults (cutoff 0.6, cap 3, time limit
 3 seconds) unless `--cutoff`, `--cap` or `--time-limit` say otherwise.

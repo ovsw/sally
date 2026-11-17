@@ -107,10 +107,13 @@ export interface EvaluationReport {
     right: number;
     wrong: number;
     missed: number;
-    /** Completed checks with at least one wrong match. */
+    /** Completed checks that asked Jev, that is neither failed nor skipped. */
+    ran: number;
+    /** Checks that ran with at least one wrong match. */
     checksWithWrongMatch: number;
-    /** checksWithWrongMatch as a share of completed checks; null when none completed. */
+    /** checksWithWrongMatch as a share of the checks that ran; null when none ran. */
     wrongMatchRate: number | null;
+    /** Timing and tokens cover only the checks that ran. */
     durationMs: { median: number | null; mean: number | null; max: number | null };
     inputTokens: { total: number | null; largestCheck: number | null };
   };
@@ -360,11 +363,14 @@ export async function evaluate(
     }
 
     const completed = cases.filter((c) => c.outcome !== "failed");
+    // A skipped check never asks Jev, so it would drag down the timing, empty the
+    // token total and dilute the wrong-match rate. Those use only the checks that ran.
+    const ran = completed.filter((c) => c.outcome !== "skipped");
     const sum = (pick: (c: CaseResult) => number) => completed.reduce((total, c) => total + pick(c), 0);
-    const durations = completed.map((c) => c.durationMs);
-    const tokens = completed.map((c) => c.inputTokens);
+    const durations = ran.map((c) => c.durationMs);
+    const tokens = ran.map((c) => c.inputTokens);
     const knownTokens = tokens.every((t) => t !== null) && tokens.length > 0 ? (tokens as number[]) : null;
-    const checksWithWrongMatch = completed.filter((c) => c.wrong.length > 0).length;
+    const checksWithWrongMatch = ran.filter((c) => c.wrong.length > 0).length;
     return {
       scale: options.scaleConditions !== null,
       settings: { cutoff: settings.cutoff, cap: settings.cap, timeLimitMs: settings.timeLimitMs },
@@ -377,8 +383,9 @@ export async function evaluate(
         right: sum((c) => c.right.length),
         wrong: sum((c) => c.wrong.length),
         missed: sum((c) => c.missed.length),
+        ran: ran.length,
         checksWithWrongMatch,
-        wrongMatchRate: completed.length > 0 ? checksWithWrongMatch / completed.length : null,
+        wrongMatchRate: ran.length > 0 ? checksWithWrongMatch / ran.length : null,
         durationMs: {
           median: median(durations),
           mean: durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null,
@@ -407,8 +414,8 @@ export function formatReport(report: EvaluationReport): string {
   const lines: string[] = [];
   const rate =
     summary.wrongMatchRate === null
-      ? "Wrong-match rate: no completed checks"
-      : `Wrong-match rate: ${percent(summary.wrongMatchRate)} (${summary.checksWithWrongMatch} of ${summary.completed} checks had a wrong match)`;
+      ? "Wrong-match rate: no checks ran"
+      : `Wrong-match rate: ${percent(summary.wrongMatchRate)} (${summary.checksWithWrongMatch} of ${summary.ran} checks that ran had a wrong match)`;
   const counts = `Right matches: ${summary.right}   Wrong matches: ${summary.wrong}   Misses: ${summary.missed}`;
 
   const messages = report.cases.filter((c) => c.check === "message").length;
@@ -426,7 +433,7 @@ export function formatReport(report: EvaluationReport): string {
   lines.push(`Failed: ${summary.failed}   Skipped: ${summary.skipped}`);
   const d = summary.durationMs;
   lines.push(
-    d.median === null ? "Time per check: no completed checks" : `Time per check: median ${d.median} ms, mean ${d.mean} ms, max ${d.max} ms`,
+    d.median === null ? "Time per check: no checks ran" : `Time per check: median ${d.median} ms, mean ${d.mean} ms, max ${d.max} ms`,
   );
   lines.push(
     `Input tokens: ${count(summary.inputTokens.total)} in all, at most ${count(summary.inputTokens.largestCheck)} in one check`,
