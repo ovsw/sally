@@ -18,7 +18,7 @@ export function standInMatcher(
   scores: Record<string, number> = {},
   options: {
     inputTokens?: number | null;
-    answer?: (conditions: MatcherCondition[], signal: AbortSignal) => Promise<MatchResult>;
+    answer?: (conditions: MatcherCondition[], signal: AbortSignal, text: string) => Promise<MatchResult>;
   } = {},
 ): StandIn {
   const calls: StandInCall[] = [];
@@ -26,7 +26,7 @@ export function standInMatcher(
     calls,
     async match(text, conditions, signal) {
       calls.push({ text, conditions });
-      if (options.answer) return options.answer(conditions, signal);
+      if (options.answer) return options.answer(conditions, signal, text);
       return {
         scores: Object.fromEntries(conditions.map((c) => [c.id, scores[c.text] ?? 0])),
         inputTokens: options.inputTokens === undefined ? 42 : options.inputTokens,

@@ -1,6 +1,6 @@
 // Adapted from the shadcnblocks block application-shell2 (inset sidebar with
 // icon collapse).
-import { Activity, ListChecks, Settings, Sparkle } from "lucide-react";
+import { Activity, BellDot, ListChecks, Settings, Sparkle } from "lucide-react";
 import type * as React from "react";
 import { cn } from "cn";
 
@@ -38,6 +38,7 @@ const navGroups: NavGroup[] = [
   {
     title: "Tend",
     items: [
+      { label: "Needs attention", icon: BellDot, href: "/attention" },
       { label: "Rules", icon: ListChecks, href: "/rules" },
       { label: "Activity", icon: Activity, href: "/activity" },
     ],
@@ -59,7 +60,7 @@ const SidebarLogo = () => {
     <SidebarMenu>
       <SidebarMenuItem>
         <SidebarMenuButton size="lg" tooltip="Sally" asChild>
-          <a href="/rules" onClick={followLink}>
+          <a href="/attention" onClick={followLink}>
             <Logo />
             <div className="flex flex-col gap-0.5 leading-none">
               <span className="font-medium">Sally</span>
@@ -139,7 +140,7 @@ export function AppShell({ path, className, children }: AppShellProps) {
             orientation="vertical"
             className="mr-2 data-[orientation=vertical]:h-4"
           />
-          <a href="/rules" onClick={followLink} className="flex items-center gap-2">
+          <a href="/attention" onClick={followLink} className="flex items-center gap-2">
             <Logo />
             <span className="font-semibold">Sally</span>
           </a>

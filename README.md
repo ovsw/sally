@@ -85,6 +85,13 @@ flag records who raised it and keeps the text as a saved case for the rule:
 a wrong match should not fire, a correct one should. A firing holds one flag;
 a new one replaces it, but never your own.
 
+When you publish a rule that has saved cases, the app first asks Jev to score
+the draft's conditions against each case and shows which pass: a wrong match
+the draft no longer fires on passes, and so does a correct one it still fires
+on. You can then publish anyway or go back to the draft. If Jev cannot be
+reached, the app says so and you can still publish. A rule with no saved
+cases publishes straight away.
+
 ## Evaluation
 
 ```sh

@@ -148,6 +148,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * - POST /api/rules                                      create a rule (a draft only)
  * - GET  /api/rules/:id                                  a rule, live version and draft
  * - PUT  /api/rules/:id/draft                            save the draft
+ * - POST /api/rules/:id/rescore                          score the draft's conditions against the saved cases
  * - POST /api/rules/:id/publish                          publish the draft
  * - DELETE /api/rules/:id/draft                          discard the draft
  * - POST /api/rules/:id/versions/:number/draft           start a draft from a published version
@@ -161,9 +162,13 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  *                                                        much of Jev's request limit recent checks used
  * - PUT  /api/settings                                   change some settings; answers like GET
  * - GET  /api/activity?outcome=&checkType=&limit=        the most recent checks
+ * - GET  /api/attention                                  the rules that need attention, and why
  *
  * Every change answers with the rule as it now is, except a delete, which
- * answers { deleted: true }, and a flag, which answers with the firing's flag. Refusals answer with { error } and a 4xx status.
+ * answers { deleted: true }, a flag, which answers with the firing's flag,
+ * and a re-score, which changes nothing and answers with which saved cases
+ * pass (a Jev failure is part of that answer, not a refusal). Refusals answer
+ * with { error } and a 4xx status.
  */
 export async function handleApi(
   rules: RulesService,
@@ -186,6 +191,9 @@ export async function handleApi(
     }
     if (parts.length === 1 && parts[0] === "activity" && method === "GET") {
       return send(res, 200, { checks: rules.activity(activityFilterFrom(url.searchParams)) });
+    }
+    if (parts.length === 1 && parts[0] === "attention" && method === "GET") {
+      return send(res, 200, { rules: rules.attention() });
     }
     if (parts.length === 3 && parts[0] === "firings" && parts[2] === "flag" && method === "POST") {
       const firingId = Number(parts[1]);
@@ -230,6 +238,10 @@ export async function handleApi(
         scope: optionalScope(body, "scope"),
       });
       return send(res, 200, rules.getRule(id));
+    }
+    if (id !== undefined && parts.length === 3 && parts[2] === "rescore" && method === "POST") {
+      await readJson(req);
+      return send(res, 200, await rules.rescoreDraft(id));
     }
     if (id !== undefined && parts.length === 3 && parts[2] === "publish" && method === "POST") {
       await readJson(req);

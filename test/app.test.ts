@@ -393,4 +393,16 @@ describe("activity and analytics over HTTP", () => {
     expect(analytics).toMatchObject({ checks: 1, firings: 1, versions: [{ number: 1, firings: 1 }] });
     expect((await app.call("GET", "/api/rules/999/analytics")).status).toBe(404);
   });
+
+  it("serves the rules that need attention, each with why", async () => {
+    const created = await create();
+    await app.json("POST", `/api/rules/${created.id}/publish`, {});
+    const matcher = standInMatcher({ "The message asks for a visual change.": 0.9 });
+    await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
+
+    const { rules } = await app.json<{ rules: unknown[] }>("GET", "/api/attention");
+    expect(rules).toMatchObject([
+      { ruleId: created.id, name: "Local link first", reasons: [{ kind: "fires_often", firings: 1, checks: 1 }] },
+    ]);
+  });
 });

@@ -249,6 +249,29 @@ export function getRuleAnalytics(id: number): Promise<RuleAnalytics> {
   return call("GET", `/api/rules/${id}/analytics`);
 }
 
+/** Why a rule needs attention, worst first. */
+export type AttentionKind = "wrong_matches" | "fires_often" | "close_to_cutoff" | "never_fires";
+
+export interface AttentionReason {
+  kind: AttentionKind;
+  /** Why, in a sentence. */
+  summary: string;
+}
+
+/** A rule on the Needs attention list, with every reason it is there. */
+export interface AttentionEntry {
+  ruleId: number;
+  name: string;
+  checkType: CheckType;
+  versionNumber: number;
+  reasons: AttentionReason[];
+}
+
+/** The rules that need attention, worst first. */
+export function listAttention(): Promise<AttentionEntry[]> {
+  return call<{ rules: AttentionEntry[] }>("GET", "/api/attention").then((r) => r.rules);
+}
+
 /** The user marks a firing wrong or correct; it becomes a saved case for its rule. */
 export function flagFiring(firingId: number, verdict: Verdict): Promise<{ flag: Flag; recorded: boolean }> {
   return call("POST", `/api/firings/${firingId}/flag`, { verdict });
@@ -267,4 +290,26 @@ export interface SavedCase {
 
 export function listSavedCases(ruleId: number): Promise<SavedCase[]> {
   return call<{ cases: SavedCase[] }>("GET", `/api/rules/${ruleId}/cases`).then((r) => r.cases);
+}
+
+/** How one saved case fares against the draft's conditions. */
+export interface CaseResult {
+  case: SavedCase;
+  scores: { condition: string; score: number }[];
+  best: number;
+  /** The rule would fire on the case: a condition reaches the cutoff. */
+  fired: boolean;
+  /** That is what the case expects. */
+  passed: boolean;
+}
+
+/** The draft scored against the rule's saved cases. A failure never blocks publishing. */
+export type RescoreResult =
+  | { status: "scored"; cutoff: number; cases: CaseResult[]; passed: number; failed: number }
+  | { status: "no_cases"; cutoff: number }
+  | { status: "failed"; cutoff: number; error: string; caseCount: number };
+
+/** Scores the draft's conditions against the rule's saved cases with Jev. Changes nothing. */
+export function rescoreDraft(id: number): Promise<RescoreResult> {
+  return call("POST", `/api/rules/${id}/rescore`, {});
 }

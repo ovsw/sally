@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 
+import { RescoreDialog } from "@/components/rescore-dialog";
 import { RuleAnalyticsPanel } from "@/components/rule-analytics";
 import {
   AlertDialog,
@@ -54,6 +55,8 @@ import {
   type Project,
   publish,
   type PublishedVersion,
+  rescoreDraft,
+  type RescoreResult,
   type RuleDetail,
   saveDraft,
   startDraftFrom,
@@ -470,6 +473,10 @@ export function RuleScreen({ id }: { id: number }) {
   const [projectsAttempt, setProjectsAttempt] = React.useState(0);
   const [save, setSave] = React.useState<SaveState>({ kind: "idle" });
   const [action, setAction] = React.useState<string | null>(null);
+  /** The draft's re-score against the saved cases, shown before publishing. */
+  const [rescore, setRescore] = React.useState<Exclude<RescoreResult, { status: "no_cases" }> | null>(
+    null,
+  );
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [undoSteps, setUndoSteps] = React.useState(0);
   const timer = React.useRef<number | undefined>(undefined);
@@ -478,6 +485,10 @@ export function RuleScreen({ id }: { id: number }) {
   const ruleRef = React.useRef<RuleDetail | null>(null);
   const undoStack = React.useRef<UndoStep[]>([]);
   const lastTyped = React.useRef<{ field: string; at: number } | null>(null);
+  /** Counts edits to the form, so a re-score knows whether the draft changed after it. */
+  const edits = React.useRef(0);
+  /** The edit count the shown re-score was made at. */
+  const scoredAt = React.useRef(0);
 
   const setRule = React.useCallback((next: RuleDetail) => {
     ruleRef.current = next;
@@ -603,6 +614,7 @@ export function RuleScreen({ id }: { id: number }) {
   const saveSoon = (next: VersionView) => {
     setDraft(next);
     setActionError(null);
+    edits.current += 1;
     latest.current = next;
     setSave({ kind: "pending" });
     window.clearTimeout(timer.current);
@@ -680,19 +692,46 @@ export function RuleScreen({ id }: { id: number }) {
       lastTyped.current = null;
     });
 
+  const publishNow = async () => {
+    const result = await publish(id);
+    setRule(result.rule);
+    // Edits typed while publishing stay in the form and are saved as the
+    // next draft.
+    if (!latest.current) {
+      setDraft(contentOf(result.rule));
+      setSave({ kind: "idle" });
+    }
+  };
+
+  /**
+   * Publishing first scores the draft against the rule's saved cases and
+   * shows the result; a rule with none publishes straight away.
+   */
   const doPublish = () =>
     act("publish", async () => {
       // A draft the server refused must not be published as the old draft.
       if (!(await flush())) return;
-      const result = await publish(id);
-      setRule(result.rule);
-      // Edits typed while publishing stay in the form and are saved as the
-      // next draft.
-      if (!latest.current) {
-        setDraft(contentOf(result.rule));
-        setSave({ kind: "idle" });
-      }
+      const at = edits.current;
+      const result = await rescoreDraft(id);
+      if (result.status === "no_cases") return publishNow();
+      scoredAt.current = at;
+      setRescore(result);
     });
+
+  const publishAnyway = () => {
+    setRescore(null);
+    // The form stays editable while the draft is scored, so the shown result
+    // may be for an older draft. Score the current one again instead of
+    // publishing what the user has not seen scored.
+    if (edits.current !== scoredAt.current) {
+      void doPublish();
+      return;
+    }
+    void act("publish", async () => {
+      if (!(await flush())) return;
+      await publishNow();
+    });
+  };
 
   const toggle = (on: boolean) =>
     act("switch", async () => {
@@ -844,6 +883,7 @@ export function RuleScreen({ id }: { id: number }) {
           </fieldset>
         </section>
       </div>
+      <RescoreDialog result={rescore} onPublish={publishAnyway} onBack={() => setRescore(null)} />
       <VersionHistory rule={rule} busy={acting} onStartDraft={(v) => void startFrom(v)} />
       {/* Reloads after a publish, so the new version shows. */}
       <RuleAnalyticsPanel key={rule.live?.number ?? 0} id={id} />
