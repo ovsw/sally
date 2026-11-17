@@ -228,6 +228,15 @@ describe("flags and saved cases", () => {
       expect(() => rules.flagFiring(firing!.id, "correct", "user")).toThrow(RuleNotFoundError);
     });
     expect(sandbox.query("SELECT * FROM saved_cases")).toEqual([]);
+
+    // A new rule does not inherit the deleted rule's firings.
+    const newRuleId = sandbox.liveRule({ name: "Replacement", conditions: ["Condition B."] });
+    expect(newRuleId).not.toBe(ruleId);
+    sandbox.withRules((rules) => {
+      expect(() => rules.flagFiring(firing!.id, "correct", "user")).toThrow(RuleNotFoundError);
+    });
+    expect(firings(newRuleId)).toEqual([]);
+    expect(sandbox.query("SELECT * FROM saved_cases")).toEqual([]);
   });
 });
 

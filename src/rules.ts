@@ -368,10 +368,22 @@ export function createRulesService(db: Store): RulesService {
       requireCompleteScope(scope);
       return transaction(db, () => {
         requireFreeName(name);
-        const { lastInsertRowid } = db
-          .prepare("INSERT INTO rules (name, check_type, created_at) VALUES (?, ?, ?)")
-          .run(name, rule.checkType, now());
-        const ruleId = Number(lastInsertRowid);
+        // A deleted rule's firings and scores stay, so a new rule never takes an
+        // id they still name; otherwise SQLite reuses the highest free id.
+        const { next } = db
+          .prepare(
+            `SELECT MAX(COALESCE((SELECT MAX(id) FROM rules), 0),
+                        COALESCE((SELECT MAX(rule_id) FROM firings), 0),
+                        COALESCE((SELECT MAX(rule_id) FROM scores), 0)) + 1 AS next`,
+          )
+          .get() as { next: number };
+        db.prepare("INSERT INTO rules (id, name, check_type, created_at) VALUES (?, ?, ?, ?)").run(
+          next,
+          name,
+          rule.checkType,
+          now(),
+        );
+        const ruleId = Number(next);
         insertDraft(ruleId, { name, instruction: rule.instruction, conditions: rule.conditions, scope });
         return { ruleId };
       });

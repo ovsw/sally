@@ -256,12 +256,16 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
     };
   }, [load]);
 
+  // Marks can overlap; only the latest reload may replace the panel.
+  const latestReload = React.useRef(0);
   const onFlag = React.useCallback(
     async (firing: RuleFiring, verdict: Verdict) => {
       setFlagError(null);
       try {
         await flagFiring(firing.firingId, verdict);
+        const reload = ++latestReload.current;
         const [loaded, savedCases] = await load();
+        if (reload !== latestReload.current) return;
         setAnalytics(loaded);
         setCases(savedCases);
       } catch (e) {
