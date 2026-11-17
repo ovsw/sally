@@ -5,6 +5,7 @@ import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldDescription,
@@ -13,12 +14,22 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   getRule,
+  listProjects,
+  type Project,
   publish,
   type RuleDetail,
   saveDraft,
+  type Scope,
   type VersionView,
 } from "@/lib/api";
 import { followLink } from "@/lib/router";
@@ -94,6 +105,22 @@ function LiveVersion({ rule }: { rule: RuleDetail }) {
               {live.instruction}
             </dd>
           </div>
+          <div className="space-y-1.5">
+            <dt className="font-medium">Scope</dt>
+            <dd>
+              {live.scope.kind === "all" ? (
+                "All projects"
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {live.scope.projects.map((project) => (
+                    <Badge key={project} variant="secondary">
+                      {project}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </dd>
+          </div>
           <p className="text-xs text-muted-foreground">
             Published {new Date(live.publishedAt).toLocaleString()}
           </p>
@@ -108,14 +135,108 @@ function LiveVersion({ rule }: { rule: RuleDetail }) {
   );
 }
 
+interface ScopeFieldProps {
+  value: Scope;
+  onChange: (next: Scope) => void;
+  /** The projects Sally has seen; null while they load or when loading failed. */
+  projects: Project[] | null;
+  /** Why the projects could not be loaded, if they could not. */
+  projectsError: string | null;
+  onRetryProjects: () => void;
+}
+
+function ScopeField({ value, onChange, projects, projectsError, onRetryProjects }: ScopeFieldProps) {
+  const selected = value.kind === "projects" ? value.projects : [];
+  // A project already in the scope stays listed even if the list has not loaded.
+  const names = [...new Set([...(projects ?? []).map((p) => p.name), ...selected])].sort(
+    (a, b) => a.localeCompare(b),
+  );
+  const toggle = (name: string, checked: boolean) =>
+    onChange({
+      kind: "projects",
+      projects: checked
+        ? [...selected, name]
+        : selected.filter((project) => project !== name),
+    });
+
+  return (
+    <Field>
+      <FieldLabel htmlFor="draft-scope">Scope</FieldLabel>
+      <Select
+        value={value.kind}
+        onValueChange={(kind) =>
+          onChange(kind === "all" ? { kind: "all" } : { kind: "projects", projects: selected })
+        }
+      >
+        <SelectTrigger id="draft-scope" className="w-full bg-background">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All projects</SelectItem>
+          <SelectItem value="projects">Only some projects</SelectItem>
+        </SelectContent>
+      </Select>
+      {value.kind === "projects" && projectsError && (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-destructive">
+          <span>Could not load the projects: {projectsError}</span>
+          <Button type="button" variant="outline" size="sm" onClick={onRetryProjects}>
+            Retry
+          </Button>
+        </div>
+      )}
+      {value.kind === "projects" &&
+        (names.length === 0 ? (
+          !projectsError && (
+            <p className="text-sm text-muted-foreground">
+              {projects === null
+                ? "Loading projects..."
+                : "Sally has not seen any project yet. A project appears here after its first check."}
+            </p>
+          )
+        ) : (
+          <div className="space-y-3 rounded-md border bg-background p-3">
+            {names.map((name, index) => (
+              <Field key={name} orientation="horizontal">
+                <Checkbox
+                  id={`draft-project-${index}`}
+                  checked={selected.includes(name)}
+                  onCheckedChange={(checked) => toggle(name, checked === true)}
+                />
+                <FieldLabel htmlFor={`draft-project-${index}`} className="font-normal">
+                  {name}
+                </FieldLabel>
+              </Field>
+            ))}
+          </div>
+        ))}
+      <FieldDescription>
+        A project is a git repository, named by its remote, so every worktree
+        of it counts as one project. Rules outside the session&apos;s project are
+        never checked.
+      </FieldDescription>
+    </Field>
+  );
+}
+
 interface DraftFormProps {
   value: VersionView;
   onChange: (next: VersionView) => void;
   error: string | null;
   checkType: RuleDetail["checkType"];
+  projects: Project[] | null;
+  projectsError: string | null;
+  onRetryProjects: () => void;
 }
 
-function DraftForm({ value, onChange, error, checkType }: DraftFormProps) {
+function DraftForm({
+  value,
+  onChange,
+  error,
+  checkType,
+  projects,
+  projectsError,
+  onRetryProjects,
+}: DraftFormProps) {
   const setCondition = (index: number, text: string) =>
     onChange({
       ...value,
@@ -192,6 +313,13 @@ function DraftForm({ value, onChange, error, checkType }: DraftFormProps) {
           already implied by the text that triggers it.
         </FieldDescription>
       </Field>
+      <ScopeField
+        value={value.scope}
+        onChange={(scope) => onChange({ ...value, scope })}
+        projects={projects}
+        projectsError={projectsError}
+        onRetryProjects={onRetryProjects}
+      />
       {error && <FieldError>{error}</FieldError>}
     </FieldGroup>
   );
@@ -203,6 +331,10 @@ const contentOf = (rule: RuleDetail): VersionView => {
     name: source?.name ?? rule.name,
     instruction: source?.instruction ?? "",
     conditions: source?.conditions.length ? [...source.conditions] : [""],
+    scope:
+      source?.scope.kind === "projects"
+        ? { kind: "projects", projects: [...source.scope.projects] }
+        : { kind: "all" },
   };
 };
 
@@ -210,6 +342,9 @@ export function RuleScreen({ id }: { id: number }) {
   const [rule, setRule] = React.useState<RuleDetail | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState<VersionView | null>(null);
+  const [projects, setProjects] = React.useState<Project[] | null>(null);
+  const [projectsError, setProjectsError] = React.useState<string | null>(null);
+  const [projectsAttempt, setProjectsAttempt] = React.useState(0);
   const [save, setSave] = React.useState<SaveState>({ kind: "idle" });
   const [publishing, setPublishing] = React.useState(false);
   const [publishError, setPublishError] = React.useState<string | null>(null);
@@ -230,6 +365,23 @@ export function RuleScreen({ id }: { id: number }) {
       stale = true;
     };
   }, [id]);
+
+  React.useEffect(() => {
+    let stale = false;
+    listProjects()
+      .then((loaded) => !stale && setProjects(loaded))
+      // Without the list, the projects already in the scope still show,
+      // next to the error and a way to try again.
+      .catch((e: unknown) => !stale && setProjectsError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      stale = true;
+    };
+  }, [projectsAttempt]);
+
+  const retryProjects = React.useCallback(() => {
+    setProjectsError(null);
+    setProjectsAttempt((n) => n + 1);
+  }, []);
 
   /**
    * Saves the latest edits now; saves run one after another. Resolves to
@@ -368,6 +520,9 @@ export function RuleScreen({ id }: { id: number }) {
               value={draft}
               onChange={edit}
               checkType={rule.checkType}
+              projects={projects}
+              projectsError={projectsError}
+              onRetryProjects={retryProjects}
               error={save.kind === "error" ? save.message : null}
             />
           </div>

@@ -13,10 +13,19 @@ export interface RuleSummary {
   hasDraft: boolean;
 }
 
+/** All projects, or only the named ones (owner/name, or a folder path). */
+export type Scope = { kind: "all" } | { kind: "projects"; projects: string[] };
+
 export interface VersionView {
   name: string;
   instruction: string;
   conditions: string[];
+  scope: Scope;
+}
+
+export interface Project {
+  name: string;
+  firstSeenAt: string;
 }
 
 export interface RuleDetail extends RuleSummary {
@@ -76,7 +85,9 @@ export function getRule(id: number): Promise<RuleDetail> {
   return call("GET", `/api/rules/${id}`);
 }
 
-export function createRule(rule: VersionView & { checkType: CheckType }): Promise<RuleDetail> {
+export function createRule(
+  rule: Omit<VersionView, "scope"> & { checkType: CheckType; scope?: Scope },
+): Promise<RuleDetail> {
   return call("POST", "/api/rules", rule);
 }
 
@@ -87,4 +98,9 @@ export function saveDraft(id: number, draft: VersionView, keepalive = false): Pr
 
 export function publish(id: number): Promise<{ versionNumber: number; rule: RuleDetail }> {
   return call("POST", `/api/rules/${id}/publish`, {});
+}
+
+/** The projects Sally has seen, by name. */
+export function listProjects(): Promise<Project[]> {
+  return call<{ projects: Project[] }>("GET", "/api/projects").then((r) => r.projects);
 }
