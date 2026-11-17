@@ -176,7 +176,9 @@ export function AttentionScreen() {
         emptyMessage={
           !loaded
             ? "Loading..."
-            : filtered
+            : error
+              ? "Could not load the list."
+              : filtered
               ? "No rules match."
               : "Nothing needs attention. Rules appear here when they misfire, fire often, only just clear the cutoff or never fire."
         }
