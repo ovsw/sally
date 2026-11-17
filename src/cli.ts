@@ -23,7 +23,16 @@ async function main(args: string[]): Promise<number> {
     }
     return 0;
   }
-  process.stderr.write("Usage: sally hook message|reply\n");
+  if (group === "rules") {
+    // Loaded only here, so the hooks stay as small as they are.
+    const { runRulesCommand } = await import("./rules-command.ts");
+    return runRulesCommand(args.slice(1), {
+      env: process.env,
+      stdout: (text) => process.stdout.write(text),
+      stderr: (text) => process.stderr.write(text),
+    });
+  }
+  process.stderr.write("Usage: sally hook message|reply | sally rules list|show|create|edit\n");
   return 1;
 }
 

@@ -101,6 +101,21 @@ const migrations: string[] = [
   ALTER TABLE checks ADD COLUMN cap INTEGER;
   ALTER TABLE firings ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0 CHECK (dropped IN (0, 1));
   `,
+  `
+  -- The name is part of a version, so renaming a rule in its draft changes
+  -- nothing until it is published. rules.name stays the name in force: the
+  -- live version's, or the draft's while the rule has never been published.
+  ALTER TABLE versions ADD COLUMN name TEXT NOT NULL DEFAULT '';
+  UPDATE versions SET name = (SELECT name FROM rules WHERE rules.id = versions.rule_id);
+  `,
+  `
+  -- The check type is part of a version too, so moving a rule between the
+  -- message check and the reply check in its draft changes nothing until it is
+  -- published. rules.check_type stays the check type in force, as with names.
+  ALTER TABLE versions ADD COLUMN check_type TEXT NOT NULL DEFAULT 'message'
+    CHECK (check_type IN ('message', 'reply'));
+  UPDATE versions SET check_type = (SELECT check_type FROM rules WHERE rules.id = versions.rule_id);
+  `,
 ];
 
 /**

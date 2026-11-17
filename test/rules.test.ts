@@ -44,6 +44,48 @@ describe("rules service", () => {
     });
   });
 
+  it("keeps a draft's new name out of the live version until it is published", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do X.", conditions: ["Condition A."] });
+      expect(rules.liveRules("message")[0]).toMatchObject({ name: "A rule" });
+      expect(rules.listRules()).toMatchObject([{ name: "A rule", hasDraft: true }]);
+      rules.publish(ruleId);
+      expect(rules.liveRules("message")[0]).toMatchObject({ name: "Renamed" });
+      expect(() => rules.createRule({ ...rule, name: "Renamed" })).toThrow(RuleError);
+    });
+  });
+
+  it("keeps a draft's new check type out of the live version until it is published", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { checkType: "reply", instruction: "Do X.", conditions: ["Condition A."] });
+      expect(rules.liveRules("message")).toMatchObject([{ ruleId }]);
+      expect(rules.liveRules("reply")).toEqual([]);
+      expect(rules.getRule(ruleId)).toMatchObject({
+        checkType: "message",
+        live: { checkType: "message" },
+        draft: { checkType: "reply" },
+      });
+      rules.publish(ruleId);
+      expect(rules.liveRules("message")).toEqual([]);
+      expect(rules.liveRules("reply")).toMatchObject([{ ruleId, versionNumber: 2 }]);
+      expect(rules.listRules({ checkType: "reply" })).toMatchObject([{ id: ruleId }]);
+    });
+  });
+
+  it("refuses a draft with a check type other than message or reply", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      expect(() =>
+        rules.saveDraft(ruleId, { checkType: "tool" as never, instruction: "Do X.", conditions: ["Condition A."] }),
+      ).toThrow(RuleError);
+      expect(rules.getRule(ruleId).draft).toMatchObject({ checkType: "message" });
+    });
+  });
+
   it("refuses a rule without a name, an instruction or a condition, or with a taken name", () => {
     sandbox.withRules((rules) => {
       expect(() => rules.createRule({ ...rule, name: " " })).toThrow(RuleError);

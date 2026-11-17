@@ -22,6 +22,22 @@ tracked in this repository's issues.
 `XDG_CONFIG_HOME` and `XDG_DATA_HOME` move these folders as usual;
 `SALLY_CONFIG_DIR` and `SALLY_DATA_DIR` override them outright.
 
+## Commands for agents
+
+An agent can read your rules and prepare drafts; it cannot publish, switch off
+or delete a rule. Those stay with you in the web app. Output is JSON.
+
+```sh
+sally rules list [--search TEXT] [--check-type message|reply] [--state live|draft]
+sally rules show RULE            # id or exact name: live version beside draft
+sally rules create --name NAME --check-type message|reply \
+  --instruction TEXT --condition TEXT [--condition TEXT ...]
+sally rules edit RULE [--name NAME] [--check-type message|reply] \
+  [--instruction TEXT] [--condition TEXT ...]
+```
+
+`sally rules help` lists every option.
+
 ## Development
 
 Requires Node 24 or later and pnpm. Sally runs its TypeScript directly with
