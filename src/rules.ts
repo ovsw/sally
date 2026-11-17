@@ -1,5 +1,8 @@
 import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
 import { type AttentionEntry, attentionList } from "./attention.ts";
+import { RuleError, RuleNotFoundError } from "./errors.ts";
+import { createFlags, type Flags } from "./flags.ts";
+import { conditionFits, REQUEST_TOKEN_LIMIT, REQUEST_WARNING_SHARE } from "./limits.ts";
 import { type Store, transaction } from "./store.ts";
 
 export type CheckType = "message" | "reply";
@@ -107,9 +110,7 @@ export interface RuleFilter {
   hasDraft?: boolean;
 }
 
-export class RuleError extends Error {}
-
-export class RuleNotFoundError extends RuleError {}
+export { RuleError, RuleNotFoundError };
 
 /** The engine's settings. */
 export interface Settings {
@@ -168,8 +169,24 @@ function validSetting(key: keyof Settings, value: number): boolean {
   return Number.isInteger(value) && value >= 1;
 }
 
-/** The rules service also answers the analytics queries (see analytics.ts). */
-export interface RulesService extends AnalyticsQueries {
+/** How much of Jev's per-request limit recent checks have used. */
+export interface LimitUse {
+  /** Jev's per-request token limit. */
+  requestLimit: number;
+  /** The share of the limit from which the app warns. */
+  warningShare: number;
+  /** How many recent checks reported a token count. */
+  checks: number;
+  /** The most input tokens one request of those checks held; null with no such checks. */
+  largestRequest: number | null;
+  /** largestRequest as a share of the limit. */
+  share: number | null;
+  /** True from the warning share up. */
+  warning: boolean;
+}
+
+/** The rules service also answers the analytics queries (see analytics.ts) and keeps flags and saved cases (see flags.ts). */
+export interface RulesService extends AnalyticsQueries, Flags {
   /** Creates a rule whose only version is a draft. It is not live until published. */
   createRule(rule: NewRule): { ruleId: number };
   /**
@@ -208,6 +225,8 @@ export interface RulesService extends AnalyticsQueries {
   updateSettings(changes: Partial<Settings>): Settings;
   /** The rules that need attention under the stored thresholds, worst first, each with why (see attention.ts). */
   attention(): AttentionEntry[];
+  /** How much of Jev's per-request limit the recent checks have used. */
+  limitUse(): LimitUse;
 }
 
 const now = () => new Date().toISOString();
@@ -217,7 +236,9 @@ const cleanConditions = (conditions: string[]) => conditions.map((c) => c.trim()
 /** What a version needs before it can be live. */
 function requireComplete(content: RuleContent): void {
   if (!content.instruction.trim()) throw new RuleError("A rule needs an instruction.");
-  if (cleanConditions(content.conditions).length === 0) throw new RuleError("A rule needs at least one condition.");
+  const conditions = cleanConditions(content.conditions);
+  if (conditions.length === 0) throw new RuleError("A rule needs at least one condition.");
+  if (!conditions.every(conditionFits)) throw new RuleError("A condition is too long for one Jev request.");
 }
 
 function requireCheckType(checkType: unknown): asserts checkType is CheckType {
@@ -397,6 +418,7 @@ export function createRulesService(db: Store): RulesService {
 
   return {
     ...createAnalyticsQueries(db, requireRule),
+    ...createFlags(db, requireRule),
 
     createRule(rule) {
       const name = cleanName(rule.name);
@@ -407,10 +429,22 @@ export function createRulesService(db: Store): RulesService {
       requireCompleteScope(scope);
       return transaction(db, () => {
         requireFreeName(name);
-        const { lastInsertRowid } = db
-          .prepare("INSERT INTO rules (name, check_type, created_at) VALUES (?, ?, ?)")
-          .run(name, rule.checkType, now());
-        const ruleId = Number(lastInsertRowid);
+        // A deleted rule's firings and scores stay, so a new rule never takes an
+        // id they still name; otherwise SQLite reuses the highest free id.
+        const { next } = db
+          .prepare(
+            `SELECT MAX(COALESCE((SELECT MAX(id) FROM rules), 0),
+                        COALESCE((SELECT MAX(rule_id) FROM firings), 0),
+                        COALESCE((SELECT MAX(rule_id) FROM scores), 0)) + 1 AS next`,
+          )
+          .get() as { next: number };
+        db.prepare("INSERT INTO rules (id, name, check_type, created_at) VALUES (?, ?, ?, ?)").run(
+          next,
+          name,
+          rule.checkType,
+          now(),
+        );
+        const ruleId = Number(next);
         insertDraft(ruleId, {
           name,
           checkType: rule.checkType,
@@ -626,6 +660,28 @@ export function createRulesService(db: Store): RulesService {
     },
 
     settings: readSettings,
+
+    limitUse() {
+      const { recentChecks } = readSettings();
+      // Checks recorded before the largest request was kept had only one request.
+      const row = db
+        .prepare(
+          `SELECT COUNT(tokens) AS checks, MAX(tokens) AS largest FROM (
+             SELECT COALESCE(request_tokens, input_tokens) AS tokens FROM checks
+             WHERE input_tokens IS NOT NULL ORDER BY id DESC LIMIT ?
+           )`,
+        )
+        .get(recentChecks) as { checks: number; largest: number | null };
+      const share = row.largest === null ? null : row.largest / REQUEST_TOKEN_LIMIT;
+      return {
+        requestLimit: REQUEST_TOKEN_LIMIT,
+        warningShare: REQUEST_WARNING_SHARE,
+        checks: row.checks,
+        largestRequest: row.largest,
+        share,
+        warning: share !== null && share >= REQUEST_WARNING_SHARE,
+      };
+    },
 
     updateSettings(changes) {
       const entries = SETTINGS.filter((key) => changes[key] !== undefined).map((key) => [key, changes[key]!] as const);

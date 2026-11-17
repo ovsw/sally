@@ -1,4 +1,5 @@
-import { MalformedAnswerError, type Matcher, type MatcherCondition } from "./matcher.ts";
+import { cutToLastPart, splitIntoRequests, textTokenBudget } from "./limits.ts";
+import { MalformedAnswerError, type Matcher, type MatcherCondition, type MatchResult } from "./matcher.ts";
 import { resolveProject } from "./project.ts";
 import type { CheckType, LiveRule, RulesService } from "./rules.ts";
 import { type Store, transaction } from "./store.ts";
@@ -57,11 +58,27 @@ interface FiringRow extends ScoreRow {
   dropped: boolean;
 }
 
+/** The input tokens Jev reported for a check: in all, and in its largest request. */
+interface Tokens {
+  input: number | null;
+  largestRequest: number | null;
+}
+
+/** Adds up the requests' token counts; unknown if any request did not report one. */
+function combineTokens(results: MatchResult[]): Tokens {
+  const counts = results.map((r) => r.inputTokens);
+  if (counts.some((count) => count === null)) return { input: null, largestRequest: null };
+  const known = counts as number[];
+  return { input: known.reduce((a, b) => a + b, 0), largestRequest: Math.max(...known) };
+}
+
 /** What one check records about itself, besides its scores and firings. */
 interface CheckRecord {
   input: CheckInput;
-  /** The text the check judged: the message after any slash command. */
+  /** The text the check judged: the message after any slash command, cut to its last part if too long. */
   text: string;
+  /** Whether the text was cut to fit Jev's per-question limit. */
+  cut: boolean;
   /** The project the session's folder belongs to; undefined without a folder. */
   project: string | undefined;
   startedAt: number;
@@ -80,7 +97,7 @@ export function createEngine(options: EngineOptions): Engine {
   function record(
     check: CheckRecord,
     outcome: Outcome,
-    extra: { error?: string; inputTokens?: number | null; scores?: ScoreRow[]; firings?: FiringRow[] } = {},
+    extra: { error?: string; tokens?: Tokens; scores?: ScoreRow[]; firings?: FiringRow[] } = {},
   ): number {
     const { input } = check;
     const durationMs = Math.round(performance.now() - check.startedAt);
@@ -97,8 +114,8 @@ export function createEngine(options: EngineOptions): Engine {
       const { lastInsertRowid: checkId } = store
         .prepare(
           `INSERT INTO checks (created_at, session_id, cwd, project_id, check_type, text, duration_ms,
-                               input_tokens, cutoff, cap, outcome, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                               input_tokens, request_tokens, cut, cutoff, cap, outcome, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           createdAt,
@@ -108,7 +125,9 @@ export function createEngine(options: EngineOptions): Engine {
           input.checkType,
           check.text,
           durationMs,
-          extra.inputTokens ?? null,
+          extra.tokens?.input ?? null,
+          extra.tokens?.largestRequest ?? null,
+          check.cut ? 1 : 0,
           check.cutoff,
           check.cap,
           outcome,
@@ -133,7 +152,16 @@ export function createEngine(options: EngineOptions): Engine {
 
   const projectOf = (input: CheckInput) => (input.cwd ? resolveProject(input.cwd) : undefined);
 
-  async function score(text: string, conditions: MatcherCondition[], timeLimitMs: number) {
+  /**
+   * Scores the conditions against the text. When they would not fit one of
+   * Jev's requests, they are split across parallel requests with the same
+   * text, all inside the one time limit, and their scores are combined.
+   */
+  async function score(
+    text: string,
+    conditions: MatcherCondition[],
+    timeLimitMs: number,
+  ): Promise<{ scores: Record<string, number | undefined>; tokens: Tokens }> {
     if (!matcher) throw new Error("missing API key");
     const controller = new AbortController();
     let timer: NodeJS.Timeout | undefined;
@@ -144,7 +172,20 @@ export function createEngine(options: EngineOptions): Engine {
       }, timeLimitMs);
     });
     try {
-      return await Promise.race([matcher.match(text, conditions, controller.signal), timeout]);
+      const parts = splitIntoRequests(text, conditions);
+      const results = await Promise.race([
+        Promise.all(parts.map((part) => matcher.match(text, part, controller.signal))),
+        timeout,
+      ]);
+      // Each request is read only for the conditions it carried.
+      const scores: Record<string, number | undefined> = {};
+      parts.forEach((part, index) => {
+        for (const { id } of part) scores[id] = results[index]!.scores[id];
+      });
+      return { scores, tokens: combineTokens(results) };
+    } catch (error) {
+      controller.abort();
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -154,7 +195,10 @@ export function createEngine(options: EngineOptions): Engine {
     skip(input) {
       const startedAt = performance.now();
       const { cutoff, cap } = rules.settings();
-      return record({ input, text: input.text, project: projectOf(input), startedAt, cutoff, cap }, "skipped");
+      return record(
+        { input, text: input.text, cut: false, project: projectOf(input), startedAt, cutoff, cap },
+        "skipped",
+      );
     },
 
     async check(input) {
@@ -165,18 +209,11 @@ export function createEngine(options: EngineOptions): Engine {
       // A message that starts with a slash command is judged only on what follows the command name.
       const judged = input.checkType === "message" ? messageText(input.text) : { kind: "check" as const, text: input.text };
       if (judged.kind === "skip") {
-        const checkId = record({ input, text: input.text, project, startedAt, cutoff, cap }, "skipped");
+        const checkId = record({ input, text: input.text, cut: false, project, startedAt, cutoff, cap }, "skipped");
         return { outcome: "skipped", checkId, firings: [] };
       }
-      const check: CheckRecord = { input, text: judged.text, project, startedAt, cutoff, cap };
-      const failed = (error: string, inputTokens?: number | null): CheckResult => {
-        const checkId = record(check, "failed", { error, inputTokens });
-        return { outcome: "failed", checkId, firings: [] };
-      };
-
       // Only the rules in scope for this project reach the matcher.
       const live = rules.liveRules(input.checkType, project);
-      if (live.length === 0) return failed("no live rules");
 
       const sent = new Map<string, { rule: LiveRule; conditionId: number }>();
       for (const rule of live) {
@@ -187,9 +224,18 @@ export function createEngine(options: EngineOptions): Engine {
         rule.conditions.map((c) => ({ id: `c${c.id}`, text: maskEmails(c.text) })),
       );
 
+      // A text too long for Jev's per-question limit is cut to its last part, and the cut is recorded.
+      const { text, cut } = cutToLastPart(judged.text, textTokenBudget(conditions));
+      const check: CheckRecord = { input, text, cut, project, startedAt, cutoff, cap };
+      const failed = (error: string, tokens?: Tokens): CheckResult => {
+        const checkId = record(check, "failed", { error, tokens });
+        return { outcome: "failed", checkId, firings: [] };
+      };
+      if (live.length === 0) return failed("no live rules");
+
       let result;
       try {
-        result = await score(maskEmails(check.text), conditions, timeLimitMs);
+        result = await score(maskEmails(text), conditions, timeLimitMs);
       } catch (error) {
         return failed(error instanceof Error ? error.message : String(error));
       }
@@ -199,7 +245,7 @@ export function createEngine(options: EngineOptions): Engine {
       for (const [id, { rule, conditionId }] of sent) {
         const value = result.scores[id];
         if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
-          return failed(new MalformedAnswerError(`no valid score for ${id}`).message, result.inputTokens);
+          return failed(new MalformedAnswerError(`no valid score for ${id}`).message, result.tokens);
         }
         scores.push({ rule, conditionId, score: value });
       }
@@ -218,7 +264,7 @@ export function createEngine(options: EngineOptions): Engine {
       const kept = fired.filter((row) => !row.dropped);
 
       const outcome: Outcome = kept.length === 0 ? "nothing" : input.checkType === "message" ? "attached" : "sent_back";
-      const checkId = record(check, outcome, { inputTokens: result.inputTokens, scores, firings: fired });
+      const checkId = record(check, outcome, { tokens: result.tokens, scores, firings: fired });
       return {
         outcome,
         checkId,

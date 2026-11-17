@@ -7,10 +7,12 @@ import { ActivityScreen } from "@/screens/activity-screen";
 import { AttentionScreen } from "@/screens/attention-screen";
 import { RuleScreen } from "@/screens/rule-screen";
 import { RulesScreen } from "@/screens/rules-screen";
+import { SettingsScreen } from "@/screens/settings-screen";
 
 function Screen({ path }: { path: string }) {
   const rule = path.match(/^\/rules\/(\d+)$/);
   if (rule) return <RuleScreen key={rule[1]} id={Number(rule[1])} />;
+  if (path === "/settings") return <SettingsScreen />;
   if (path === "/activity") return <ActivityScreen />;
   if (path === "/attention" || path === "/" || path === "/index.html") return <AttentionScreen />;
   return <RulesScreen />;

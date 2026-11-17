@@ -132,6 +132,40 @@ export function listProjects(): Promise<Project[]> {
   return call<{ projects: Project[] }>("GET", "/api/projects").then((r) => r.projects);
 }
 
+/** The engine's settings: matching, then the attention thresholds. */
+export interface Settings {
+  cutoff: number;
+  cap: number;
+  timeLimitMs: number;
+  recentChecks: number;
+  busyShare: number;
+  closeMargin: number;
+  quietChecks: number;
+}
+
+/** How much of Jev's per-request limit recent checks have used. */
+export interface LimitUse {
+  requestLimit: number;
+  warningShare: number;
+  checks: number;
+  largestRequest: number | null;
+  share: number | null;
+  warning: boolean;
+}
+
+export interface SettingsAnswer {
+  settings: Settings;
+  limitUse: LimitUse;
+}
+
+export function getSettings(): Promise<SettingsAnswer> {
+  return call("GET", "/api/settings");
+}
+
+export function updateSettings(changes: Partial<Settings>): Promise<SettingsAnswer> {
+  return call("PUT", "/api/settings", changes);
+}
+
 export type Outcome = "nothing" | "attached" | "sent_back" | "skipped" | "failed";
 
 /** A rule that fired in a check. `name` is null when the rule has since been deleted. */
@@ -183,14 +217,32 @@ export interface RuleCheckView {
   condition: string | null;
 }
 
+export type Verdict = "wrong" | "correct";
+export type RaisedBy = "claude" | "user" | "automatic";
+
+/** A verdict on one firing and who raised it. */
+export interface Flag {
+  verdict: Verdict;
+  raisedBy: RaisedBy;
+  createdAt: string;
+}
+
+export interface RuleFiring extends RuleCheckView {
+  firingId: number;
+  /** The cap dropped it, so it was not attached or sent back. */
+  dropped: boolean;
+  flag: Flag | null;
+}
+
 export interface RuleAnalytics {
   checks: number;
   firings: number;
   dropped: number;
-  recentFirings: (RuleCheckView & { dropped: boolean })[];
+  wrongMatches: number;
+  recentFirings: RuleFiring[];
   nearMisses: RuleCheckView[];
   nearMissMargin: number;
-  versions: { number: number; publishedAt: string; checks: number; firings: number }[];
+  versions: { number: number; publishedAt: string; checks: number; firings: number; wrongMatches: number }[];
 }
 
 export function getRuleAnalytics(id: number): Promise<RuleAnalytics> {
@@ -218,4 +270,24 @@ export interface AttentionEntry {
 /** The rules that need attention, worst first. */
 export function listAttention(): Promise<AttentionEntry[]> {
   return call<{ rules: AttentionEntry[] }>("GET", "/api/attention").then((r) => r.rules);
+}
+
+/** The user marks a firing wrong or correct; it becomes a saved case for its rule. */
+export function flagFiring(firingId: number, verdict: Verdict): Promise<{ flag: Flag; recorded: boolean }> {
+  return call("POST", `/api/firings/${firingId}/flag`, { verdict });
+}
+
+/** A real message or reply kept with a rule, with the outcome it should have. */
+export interface SavedCase {
+  id: number;
+  ruleId: number;
+  checkType: CheckType;
+  text: string;
+  expected: "should_fire" | "should_not_fire";
+  createdAt: string;
+  source: { verdict: Verdict; raisedBy: RaisedBy; checkId: number; versionNumber: number | null } | null;
+}
+
+export function listSavedCases(ruleId: number): Promise<SavedCase[]> {
+  return call<{ cases: SavedCase[] }>("GET", `/api/rules/${ruleId}/cases`).then((r) => r.cases);
 }

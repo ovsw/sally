@@ -1,6 +1,6 @@
 // Adapted from the shadcnblocks block application-shell2 (inset sidebar with
 // icon collapse).
-import { Activity, BellDot, ListChecks, Sparkle } from "lucide-react";
+import { Activity, BellDot, ListChecks, Settings, Sparkle } from "lucide-react";
 import type * as React from "react";
 import { cn } from "cn";
 
@@ -42,6 +42,10 @@ const navGroups: NavGroup[] = [
       { label: "Rules", icon: ListChecks, href: "/rules" },
       { label: "Activity", icon: Activity, href: "/activity" },
     ],
+  },
+  {
+    title: "Engine",
+    items: [{ label: "Settings", icon: Settings, href: "/settings" }],
   },
 ];
 
