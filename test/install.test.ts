@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { AUTHORITY_LINE, hookCommand } from "../src/install.ts";
@@ -179,6 +179,29 @@ it("refuses settings whose hooks are not in Claude Code's shape, and changes not
   expect(read(settingsPath)).toBe(odd);
   expect(existsSync(rulesPath)).toBe(false);
 });
+
+// Root ignores file permissions, so the rules file cannot be made unwritable there.
+it.skipIf(process.getuid?.() === 0)(
+  "says which changes were made when the rules file cannot be written",
+  () => {
+    const locked = join(sandbox.root, "locked");
+    writeFile(join(locked, "CLAUDE.md"), otherRules);
+    mkdirSync(join(rulesPath, ".."), { recursive: true });
+    symlinkSync(join(locked, "CLAUDE.md"), rulesPath);
+    chmodSync(locked, 0o555);
+    try {
+      const result = sally("install");
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Already done:");
+      expect(result.stderr).toContain("Registered the message hook");
+      expect(result.stderr).toContain('run "sally install" again');
+      expect(settings()).toEqual({ hooks: sallyHooks });
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+  },
+);
 
 it("uses CLAUDE_CONFIG_DIR when it is set", () => {
   const configDir = join(sandbox.root, "claude-config");

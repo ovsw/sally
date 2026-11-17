@@ -94,6 +94,23 @@ function writeSettings({ path, settings, indent }: SettingsFile): void {
   writeAtomically(path, JSON.stringify(settings, null, indent) + "\n");
 }
 
+/**
+ * Writes the rules file after the settings may already have changed. If this
+ * write fails, the error says which changes were already made, so the user
+ * knows the two files are out of step and that a rerun finishes the job.
+ */
+function writeRules(path: string, content: string, changes: string[], rerun: string): void {
+  try {
+    writeAtomically(path, content);
+  } catch (error) {
+    if (changes.length === 0) throw error;
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new SetupError(
+      `Could not write ${path}: ${reason}\nAlready done:\n${changes.join("\n")}\nFix the problem and run "sally ${rerun}" again to finish.`,
+    );
+  }
+}
+
 function readRules(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
@@ -128,7 +145,7 @@ export function install({ env, cliPath }: SetupOptions): SetupResult {
     let text = rules;
     if (text !== "" && !text.endsWith("\n")) text += "\n";
     if (text !== "") text += "\n";
-    writeAtomically(rulesPath, text + AUTHORITY_LINE + "\n");
+    writeRules(rulesPath, text + AUTHORITY_LINE + "\n", changes, "install");
     changes.push(`Added Sally's authority line to ${rulesPath}`);
   }
   return { changes };
@@ -172,7 +189,7 @@ export function uninstall({ env, cliPath }: SetupOptions): SetupResult {
     lines.splice(at, 1);
     // Take out the blank line install put before it.
     if (at > 0 && lines[at - 1]?.trim() === "") lines.splice(at - 1, 1);
-    writeAtomically(rulesPath, lines.join("\n"));
+    writeRules(rulesPath, lines.join("\n"), changes, "uninstall");
     changes.push(`Removed Sally's authority line from ${rulesPath}`);
   }
   return { changes };
