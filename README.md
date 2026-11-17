@@ -119,6 +119,10 @@ pnpm check   # typecheck, lint and tests
 The user-prompt-submit hook runs `sally hook message`; the stop hook runs
 `sally hook reply`.
 
+`pnpm dev` runs the web app with hot reload on sample data: a database in
+`.dev/` and a stand-in matcher, so it needs no API key and never touches the
+real database. `pnpm dev --fresh` starts the sample data over.
+
 The web app is React with shadcn/ui, in `web/`. `pnpm dev:web` serves it with
 hot reload and sends `/api` to a running `sally app`. Layouts and components
 come from shadcn blocks through the `@shadcnblocks` registry set up in

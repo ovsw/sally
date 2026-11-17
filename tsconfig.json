@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "paths": { "@/*": ["./web/src/*"] }
   },
-  "include": ["src", "test", "*.ts"]
+  "include": ["src", "test", "dev", "*.ts"]
 }
