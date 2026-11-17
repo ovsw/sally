@@ -132,6 +132,40 @@ export function listProjects(): Promise<Project[]> {
   return call<{ projects: Project[] }>("GET", "/api/projects").then((r) => r.projects);
 }
 
+/** The engine's settings: matching, then the attention thresholds. */
+export interface Settings {
+  cutoff: number;
+  cap: number;
+  timeLimitMs: number;
+  recentChecks: number;
+  busyShare: number;
+  closeMargin: number;
+  quietChecks: number;
+}
+
+/** How much of Jev's per-request limit recent checks have used. */
+export interface LimitUse {
+  requestLimit: number;
+  warningShare: number;
+  checks: number;
+  largestRequest: number | null;
+  share: number | null;
+  warning: boolean;
+}
+
+export interface SettingsAnswer {
+  settings: Settings;
+  limitUse: LimitUse;
+}
+
+export function getSettings(): Promise<SettingsAnswer> {
+  return call("GET", "/api/settings");
+}
+
+export function updateSettings(changes: Partial<Settings>): Promise<SettingsAnswer> {
+  return call("PUT", "/api/settings", changes);
+}
+
 export type Outcome = "nothing" | "attached" | "sent_back" | "skipped" | "failed";
 
 /** A rule that fired in a check. `name` is null when the rule has since been deleted. */
@@ -213,6 +247,29 @@ export interface RuleAnalytics {
 
 export function getRuleAnalytics(id: number): Promise<RuleAnalytics> {
   return call("GET", `/api/rules/${id}/analytics`);
+}
+
+/** Why a rule needs attention, worst first. */
+export type AttentionKind = "wrong_matches" | "fires_often" | "close_to_cutoff" | "never_fires";
+
+export interface AttentionReason {
+  kind: AttentionKind;
+  /** Why, in a sentence. */
+  summary: string;
+}
+
+/** A rule on the Needs attention list, with every reason it is there. */
+export interface AttentionEntry {
+  ruleId: number;
+  name: string;
+  checkType: CheckType;
+  versionNumber: number;
+  reasons: AttentionReason[];
+}
+
+/** The rules that need attention, worst first. */
+export function listAttention(): Promise<AttentionEntry[]> {
+  return call<{ rules: AttentionEntry[] }>("GET", "/api/attention").then((r) => r.rules);
 }
 
 /** The user marks a firing wrong or correct; it becomes a saved case for its rule. */
