@@ -60,6 +60,47 @@ describe("rules service", () => {
     });
   });
 
+  it("keeps a draft's new check type out of the live version until it is published", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { checkType: "reply", instruction: "Do X.", conditions: ["Condition A."] });
+      expect(rules.liveRules("message")).toMatchObject([{ ruleId }]);
+      expect(rules.liveRules("reply")).toEqual([]);
+      expect(rules.getRule(ruleId)).toMatchObject({
+        checkType: "message",
+        live: { checkType: "message" },
+        draft: { checkType: "reply" },
+      });
+      // A later edit that does not mention the check type keeps the draft's.
+      rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: ["Condition A."] });
+      expect(rules.getRule(ruleId).draft).toMatchObject({ checkType: "reply", instruction: "Do Y." });
+      rules.publish(ruleId);
+      expect(rules.liveRules("message")).toEqual([]);
+      expect(rules.liveRules("reply")).toMatchObject([{ ruleId, versionNumber: 2 }]);
+      expect(rules.listRules({ checkType: "reply" })).toMatchObject([{ id: ruleId }]);
+    });
+  });
+
+  it("files a never-published rule under its draft's check type", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.saveDraft(ruleId, { checkType: "reply", instruction: "Do X.", conditions: ["Condition A."] });
+      expect(rules.listRules({ checkType: "reply" })).toMatchObject([{ id: ruleId, state: "draft" }]);
+      expect(rules.liveRules("reply")).toEqual([]);
+    });
+  });
+
+  it("refuses a draft with a check type other than message or reply", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      expect(() =>
+        rules.saveDraft(ruleId, { checkType: "tool" as never, instruction: "Do X.", conditions: ["Condition A."] }),
+      ).toThrow(RuleError);
+      expect(rules.getRule(ruleId).draft).toMatchObject({ checkType: "message" });
+    });
+  });
+
   it("refuses a rule without a name, an instruction or a condition, or with a taken name", () => {
     sandbox.withRules((rules) => {
       expect(() => rules.createRule({ ...rule, name: " " })).toThrow(RuleError);
@@ -83,7 +124,7 @@ describe("rules service", () => {
 
       const { versions, live } = rules.getRule(ruleId);
       expect(versions).toEqual([
-        { number: 2, publishedAt: expect.any(String), name: "Renamed", instruction: "Do Y.", conditions: ["Condition B."], scope: { kind: "all" } },
+        { number: 2, publishedAt: expect.any(String), name: "Renamed", checkType: "message", instruction: "Do Y.", conditions: ["Condition B."], scope: { kind: "all" } },
         first[0],
       ]);
       expect(first).toEqual([
@@ -91,6 +132,7 @@ describe("rules service", () => {
           number: 1,
           publishedAt: expect.any(String),
           name: "A rule",
+          checkType: "message",
           instruction: "Do X.",
           conditions: ["Condition A."],
           scope: { kind: "all" },

@@ -51,6 +51,40 @@ the next check on.
 The command builds the app into `dist/web` when the build is missing or older
 than its sources.
 
+## Commands for agents
+
+An agent can read your rules and prepare drafts; it cannot publish, switch off
+or delete a rule. Those stay with you in the web app, where the agent's drafts
+show up like your own. Output is JSON.
+
+```sh
+sally rules list [--search TEXT] [--check-type message|reply] [--state live|draft]
+sally rules show RULE            # id or exact name: live version beside draft
+sally rules create --name NAME --check-type message|reply \
+  --instruction TEXT --condition TEXT [--condition TEXT ...]
+sally rules edit RULE [--name NAME] [--check-type message|reply] \
+  [--instruction TEXT] [--condition TEXT ...]
+```
+
+`sally rules help` lists every option.
+
+## Wrong matches
+
+Each reminder ends with a line telling Claude how to report a rule that does
+not apply:
+
+```sh
+sally wrong-match "<rule name>"
+```
+
+It flags the session's most recent firing of that rule as a wrong match raised
+by Claude. The session is the one Claude Code runs the command in
+(`CLAUDE_CODE_SESSION_ID`); `--session <id>` names another. On a rule's page
+in the app, one click marks a firing wrong and one marks it correct. Every
+flag records who raised it and keeps the text as a saved case for the rule:
+a wrong match should not fire, a correct one should. A firing holds one flag;
+a new one replaces it, but never your own.
+
 ## Development
 
 Requires Node 24 or later and pnpm. The command line runs its TypeScript

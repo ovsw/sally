@@ -134,6 +134,40 @@ const migrations: string[] = [
   ALTER TABLE rules ADD COLUMN switched_off INTEGER NOT NULL DEFAULT 0 CHECK (switched_off IN (0, 1));
   `,
   `
+  -- The check type is part of a version too, so moving a rule between the
+  -- message check and the reply check in its draft changes nothing until it is
+  -- published. rules.check_type stays the check type in force, as with names.
+  ALTER TABLE versions ADD COLUMN check_type TEXT NOT NULL DEFAULT 'message'
+    CHECK (check_type IN ('message', 'reply'));
+  UPDATE versions SET check_type = (SELECT check_type FROM rules WHERE rules.id = versions.rule_id);
+  `,
+  `
+  -- A verdict on one firing: wrong (the rule did not apply) or correct, and who
+  -- raised it. A firing holds one flag; a later one replaces it, except that
+  -- the user's own flag is never replaced by Claude's or the automatic check's.
+  CREATE TABLE flags (
+    id          INTEGER PRIMARY KEY,
+    firing_id   INTEGER NOT NULL UNIQUE REFERENCES firings (id) ON DELETE CASCADE,
+    verdict     TEXT NOT NULL CHECK (verdict IN ('wrong', 'correct')),
+    raised_by   TEXT NOT NULL CHECK (raised_by IN ('claude', 'user', 'automatic')),
+    created_at  TEXT NOT NULL
+  );
+
+  -- A real message or reply kept with a rule, with the outcome it should have.
+  -- flag_id is where it came from; a case goes with the flag that made it.
+  CREATE TABLE saved_cases (
+    id          INTEGER PRIMARY KEY,
+    rule_id     INTEGER NOT NULL REFERENCES rules (id) ON DELETE CASCADE,
+    check_type  TEXT NOT NULL CHECK (check_type IN ('message', 'reply')),
+    text        TEXT NOT NULL,
+    expected    TEXT NOT NULL CHECK (expected IN ('should_fire', 'should_not_fire')),
+    flag_id     INTEGER REFERENCES flags (id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX saved_cases_by_rule ON saved_cases (rule_id);
+  CREATE INDEX checks_by_session ON checks (session_id);
+  `,
+  `
   -- Jev's limits: whether the text was cut to its last part to fit the
   -- per-question limit, and the input tokens of the check's largest request
   -- (input_tokens is the total when the conditions were split across requests).
