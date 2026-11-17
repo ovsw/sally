@@ -3,13 +3,14 @@
 // code.
 
 export type CheckType = "message" | "reply";
-export type RuleState = "live" | "draft";
+export type RuleState = "live" | "draft" | "off";
 
 export interface RuleSummary {
   id: number;
   name: string;
   checkType: CheckType;
   state: RuleState;
+  on: boolean;
   hasDraft: boolean;
 }
 
@@ -19,9 +20,16 @@ export interface VersionView {
   conditions: string[];
 }
 
+export interface PublishedVersion extends VersionView {
+  number: number;
+  publishedAt: string;
+}
+
 export interface RuleDetail extends RuleSummary {
-  live: (VersionView & { number: number; publishedAt: string }) | null;
+  live: PublishedVersion | null;
   draft: (VersionView & { savedAt: string }) | null;
+  /** Every published version, newest first. */
+  versions: PublishedVersion[];
 }
 
 export interface RuleFilter {
@@ -51,9 +59,8 @@ async function call<T>(
 }
 
 /**
- * The server filters by one value per facet; picking every value of a facet
- * is the same as picking none, and picking several of two (the only case
- * here, since each facet has two values) is the same as picking all.
+ * The server filters check type and draft by one value each; picking both
+ * values of one of them is the same as picking none.
  */
 function single<T>(values: T[] | undefined): T | undefined {
   return values && values.length === 1 ? values[0] : undefined;
@@ -64,8 +71,7 @@ export function listRules(filter: RuleFilter): Promise<RuleSummary[]> {
   if (filter.search?.trim()) params.set("search", filter.search.trim());
   const checkType = single(filter.checkType);
   if (checkType) params.set("checkType", checkType);
-  const state = single(filter.state);
-  if (state) params.set("state", state);
+  for (const state of filter.state ?? []) params.append("state", state);
   const hasDraft = single(filter.hasDraft);
   if (hasDraft !== undefined) params.set("hasDraft", String(hasDraft));
   const query = params.toString();
@@ -87,4 +93,20 @@ export function saveDraft(id: number, draft: VersionView, keepalive = false): Pr
 
 export function publish(id: number): Promise<{ versionNumber: number; rule: RuleDetail }> {
   return call("POST", `/api/rules/${id}/publish`, {});
+}
+
+export function discardDraft(id: number): Promise<RuleDetail> {
+  return call("DELETE", `/api/rules/${id}/draft`);
+}
+
+export function startDraftFrom(id: number, versionNumber: number): Promise<RuleDetail> {
+  return call("POST", `/api/rules/${id}/versions/${versionNumber}/draft`, {});
+}
+
+export function switchRule(id: number, on: boolean): Promise<RuleDetail> {
+  return call("POST", `/api/rules/${id}/${on ? "on" : "off"}`, {});
+}
+
+export function deleteRule(id: number): Promise<{ deleted: true }> {
+  return call("DELETE", `/api/rules/${id}`);
 }

@@ -32,8 +32,12 @@ export interface LiveRule {
   conditions: LiveCondition[];
 }
 
-/** A rule is live once published; until then it has only its draft. */
-export type RuleState = "live" | "draft";
+/**
+ * A rule is live once published; until then it has only its draft. A
+ * published rule that is switched off is "off": it keeps its history, and the
+ * engine skips it.
+ */
+export type RuleState = "live" | "draft" | "off";
 
 /** One row of the rules list. `name` is the name in force (the live one, if any). */
 export interface RuleSummary {
@@ -41,6 +45,8 @@ export interface RuleSummary {
   name: string;
   checkType: CheckType;
   state: RuleState;
+  /** False once switched off. A rule switched off before its first publish stays off when published. */
+  on: boolean;
   hasDraft: boolean;
 }
 
@@ -59,17 +65,20 @@ export interface DraftView extends VersionView {
   savedAt: string;
 }
 
-/** A rule with its live version and its draft side by side. */
+/** A rule with its live version and its draft side by side, and every published version. */
 export interface RuleDetail extends RuleSummary {
   live: PublishedVersionView | null;
   draft: DraftView | null;
+  /** Every published version, newest first. Published versions never change. */
+  versions: PublishedVersionView[];
 }
 
 export interface RuleFilter {
   /** Matches the name, instruction or conditions of the live version or the draft, ignoring case. */
   search?: string;
   checkType?: CheckType;
-  state?: RuleState;
+  /** One state, or any of several. */
+  state?: RuleState | RuleState[];
   hasDraft?: boolean;
 }
 
@@ -115,7 +124,17 @@ export interface RulesService {
   saveDraft(ruleId: number, content: DraftContent): void;
   /** Turns the draft into a new live version and returns its number. */
   publish(ruleId: number): { versionNumber: number };
-  /** The live version of every rule of this check type, read fresh from the database. */
+  /** Replaces the rule's draft, or starts one, with a copy of the given published version. */
+  startDraftFrom(ruleId: number, versionNumber: number): void;
+  /** Drops the draft, leaving the live version as it is. A rule never published has only its draft: delete it instead. */
+  discardDraft(ruleId: number): void;
+  /** Switches the rule off: it keeps its versions and draft, and the engine skips it. */
+  switchOff(ruleId: number): void;
+  /** Switches the rule back on. */
+  switchOn(ruleId: number): void;
+  /** Deletes the rule with all its versions and its draft. */
+  deleteRule(ruleId: number): void;
+  /** The live version of every rule of this check type that is on, read fresh from the database. */
   liveRules(checkType: CheckType): LiveRule[];
   /** Every rule matching the filter, by name. */
   listRules(filter?: RuleFilter): RuleSummary[];
@@ -190,12 +209,48 @@ export function createRulesService(db: Store): RulesService {
     ).map((row) => row.text);
   }
 
-  function requireRule(ruleId: number): { name: string; check_type: CheckType } {
-    const row = db.prepare("SELECT name, check_type FROM rules WHERE id = ?").get(ruleId) as
-      | { name: string; check_type: CheckType }
+  function published(ruleId: number): VersionRow[] {
+    return db
+      .prepare(
+        `SELECT id, number, name, instruction, created_at, published_at FROM versions
+          WHERE rule_id = ? AND number IS NOT NULL ORDER BY number DESC`,
+      )
+      .all(ruleId) as unknown as VersionRow[];
+  }
+
+  function publishedView(row: VersionRow): PublishedVersionView {
+    return {
+      number: row.number!,
+      publishedAt: row.published_at!,
+      name: row.name,
+      instruction: row.instruction,
+      conditions: conditionsOf(row.id),
+    };
+  }
+
+  function requireRule(ruleId: number): { name: string; check_type: CheckType; switched_off: number } {
+    const row = db.prepare("SELECT name, check_type, switched_off FROM rules WHERE id = ?").get(ruleId) as
+      | { name: string; check_type: CheckType; switched_off: number }
       | undefined;
     if (!row) throw new RuleNotFoundError(`No rule with id ${ruleId}.`);
     return row;
+  }
+
+  function setSwitchedOff(ruleId: number, off: boolean): void {
+    transaction(db, () => {
+      requireRule(ruleId);
+      db.prepare("UPDATE rules SET switched_off = ? WHERE id = ?").run(off ? 1 : 0, ruleId);
+    });
+  }
+
+  /** Replaces the draft, if any, with this content. */
+  function replaceDraft(ruleId: number, content: Required<DraftContent>): void {
+    requireFreeName(content.name, ruleId);
+    const existing = draft(ruleId);
+    if (existing) db.prepare("DELETE FROM versions WHERE id = ?").run(existing.id);
+    insertDraft(ruleId, content);
+    // A rule never published goes by its draft's name.
+    if (!live(ruleId)) db.prepare("UPDATE rules SET name = ? WHERE id = ?").run(content.name, ruleId);
   }
 
   /** Refuses a name that another rule uses, as its name in force or in its draft. */
@@ -240,13 +295,42 @@ export function createRulesService(db: Store): RulesService {
     saveDraft(ruleId, content) {
       transaction(db, () => {
         const rule = requireRule(ruleId);
-        const existing = draft(ruleId);
-        const name = content.name === undefined ? (existing?.name ?? rule.name) : cleanName(content.name);
-        requireFreeName(name, ruleId);
-        if (existing) db.prepare("DELETE FROM versions WHERE id = ?").run(existing.id);
-        insertDraft(ruleId, { name, instruction: content.instruction, conditions: content.conditions });
-        // A rule never published goes by its draft's name.
-        if (!live(ruleId)) db.prepare("UPDATE rules SET name = ? WHERE id = ?").run(name, ruleId);
+        const name = content.name === undefined ? (draft(ruleId)?.name ?? rule.name) : cleanName(content.name);
+        replaceDraft(ruleId, { name, instruction: content.instruction, conditions: content.conditions });
+      });
+    },
+
+    startDraftFrom(ruleId, versionNumber) {
+      transaction(db, () => {
+        requireRule(ruleId);
+        const source = published(ruleId).find((row) => row.number === versionNumber);
+        if (!source) throw new RuleNotFoundError(`This rule has no version ${versionNumber}.`);
+        replaceDraft(ruleId, { name: source.name, instruction: source.instruction, conditions: conditionsOf(source.id) });
+      });
+    },
+
+    discardDraft(ruleId) {
+      transaction(db, () => {
+        requireRule(ruleId);
+        const row = draft(ruleId);
+        if (!row) throw new RuleError("This rule has no draft to discard.");
+        if (!live(ruleId)) throw new RuleError("This rule has never been published, so its draft is all it has. Delete the rule instead.");
+        db.prepare("DELETE FROM versions WHERE id = ?").run(row.id);
+      });
+    },
+
+    switchOff(ruleId) {
+      setSwitchedOff(ruleId, true);
+    },
+
+    switchOn(ruleId) {
+      setSwitchedOff(ruleId, false);
+    },
+
+    deleteRule(ruleId) {
+      transaction(db, () => {
+        requireRule(ruleId);
+        db.prepare("DELETE FROM rules WHERE id = ?").run(ruleId);
       });
     },
 
@@ -273,7 +357,7 @@ export function createRulesService(db: Store): RulesService {
              JOIN versions v ON v.rule_id = r.id
                             AND v.number = (SELECT MAX(number) FROM versions WHERE rule_id = r.id)
              JOIN conditions c ON c.version_id = v.id
-            WHERE r.check_type = ?
+            WHERE r.check_type = ? AND r.switched_off = 0
             ORDER BY r.id, c.position`,
         )
         .all(checkType) as {
@@ -311,9 +395,10 @@ export function createRulesService(db: Store): RulesService {
         where.push("check_type = ?");
         params.push(filter.checkType);
       }
-      if (filter.state) {
-        where.push("state = ?");
-        params.push(filter.state);
+      const states = filter.state === undefined ? [] : [filter.state].flat();
+      if (states.length) {
+        where.push(`state IN (${states.map(() => "?").join(", ")})`);
+        params.push(...states);
       }
       if (filter.hasDraft !== undefined) {
         where.push("has_draft = ?");
@@ -334,43 +419,46 @@ export function createRulesService(db: Store): RulesService {
       const rows = db
         .prepare(
           `SELECT * FROM (
-             SELECT r.id, r.name, r.check_type,
-                    CASE WHEN EXISTS (SELECT 1 FROM versions WHERE rule_id = r.id AND number IS NOT NULL)
-                         THEN 'live' ELSE 'draft' END AS state,
+             SELECT r.id, r.name, r.check_type, r.switched_off,
+                    CASE WHEN NOT EXISTS (SELECT 1 FROM versions WHERE rule_id = r.id AND number IS NOT NULL)
+                         THEN 'draft' WHEN r.switched_off THEN 'off' ELSE 'live' END AS state,
                     EXISTS (SELECT 1 FROM versions WHERE rule_id = r.id AND number IS NULL) AS has_draft
                FROM rules r) r
            ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
            ORDER BY lower(name), id`,
         )
-        .all(...params) as { id: number; name: string; check_type: CheckType; state: RuleState; has_draft: number }[];
+        .all(...params) as {
+        id: number;
+        name: string;
+        check_type: CheckType;
+        switched_off: number;
+        state: RuleState;
+        has_draft: number;
+      }[];
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
         checkType: row.check_type,
         state: row.state,
+        on: row.switched_off === 0,
         hasDraft: row.has_draft === 1,
       }));
     },
 
     getRule(ruleId) {
       const rule = requireRule(ruleId);
-      const liveRow = live(ruleId);
+      const versions = published(ruleId).map(publishedView);
       const draftRow = draft(ruleId);
+      const on = rule.switched_off === 0;
       return {
         id: ruleId,
         name: rule.name,
         checkType: rule.check_type,
-        state: liveRow ? "live" : "draft",
+        state: versions.length === 0 ? "draft" : on ? "live" : "off",
+        on,
         hasDraft: draftRow !== undefined,
-        live: liveRow
-          ? {
-              number: liveRow.number!,
-              publishedAt: liveRow.published_at!,
-              name: liveRow.name,
-              instruction: liveRow.instruction,
-              conditions: conditionsOf(liveRow.id),
-            }
-          : null,
+        live: versions[0] ?? null,
+        versions,
         draft: draftRow
           ? {
               savedAt: draftRow.created_at,

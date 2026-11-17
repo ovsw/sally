@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { RuleError } from "../src/rules.ts";
+import { RuleError, RuleNotFoundError } from "../src/rules.ts";
 import { createSandbox, type Sandbox } from "./support/sandbox.ts";
 
 let sandbox: Sandbox;
@@ -64,6 +64,155 @@ describe("rules service", () => {
       expect(() => rules.createRule({ ...rule, conditions: ["  "] })).toThrow(RuleError);
       rules.createRule(rule);
       expect(() => rules.createRule(rule)).toThrow(RuleError);
+    });
+  });
+
+  it("lists every published version with its date, newest first, and never changes one", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      expect(rules.getRule(ruleId).versions).toEqual([]);
+      rules.publish(ruleId);
+      const first = rules.getRule(ruleId).versions;
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: ["Condition B."] });
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { instruction: "Do Z.", conditions: ["Condition C."] });
+
+      const { versions, live } = rules.getRule(ruleId);
+      expect(versions).toEqual([
+        { number: 2, publishedAt: expect.any(String), name: "Renamed", instruction: "Do Y.", conditions: ["Condition B."] },
+        first[0],
+      ]);
+      expect(first).toEqual([
+        { number: 1, publishedAt: expect.any(String), name: "A rule", instruction: "Do X.", conditions: ["Condition A."] },
+      ]);
+      expect(Number.isNaN(Date.parse(versions[0]!.publishedAt))).toBe(false);
+      expect(live).toEqual(versions[0]);
+    });
+  });
+
+  it("starts a draft from an old version, replacing any draft, and leaves the live version alone", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: ["Condition B.", "Condition C."] });
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { instruction: "Half-finished.", conditions: [] });
+
+      rules.startDraftFrom(ruleId, 1);
+      const detail = rules.getRule(ruleId);
+      expect(detail.draft).toMatchObject({ name: "A rule", instruction: "Do X.", conditions: ["Condition A."] });
+      expect(detail.live).toMatchObject({ number: 2, name: "Renamed" });
+      expect(rules.liveRules("message")[0]).toMatchObject({ versionNumber: 2, instruction: "Do Y." });
+
+      expect(rules.publish(ruleId)).toEqual({ versionNumber: 3 });
+      expect(rules.getRule(ruleId).versions.map((v) => [v.number, v.instruction])).toEqual([
+        [3, "Do X."],
+        [2, "Do Y."],
+        [1, "Do X."],
+      ]);
+      expect(() => rules.startDraftFrom(ruleId, 9)).toThrow(RuleNotFoundError);
+    });
+  });
+
+  it("refuses to start a draft from a version whose name another rule now uses", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do X.", conditions: ["Condition A."] });
+      rules.publish(ruleId);
+      rules.createRule({ ...rule, name: "A rule" });
+      expect(() => rules.startDraftFrom(ruleId, 1)).toThrow(RuleError);
+      expect(rules.getRule(ruleId).draft).toBeNull();
+    });
+  });
+
+  it("discards a draft, keeping the live version and its name", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: ["Condition B."] });
+      rules.discardDraft(ruleId);
+      expect(rules.getRule(ruleId)).toMatchObject({ name: "A rule", hasDraft: false, draft: null, live: { number: 1 } });
+      expect(rules.liveRules("message")[0]).toMatchObject({ name: "A rule", instruction: "Do X." });
+      expect(() => rules.publish(ruleId)).toThrow(RuleError);
+      expect(() => rules.discardDraft(ruleId)).toThrow(RuleError);
+      // The discarded draft's name is free again.
+      expect(() => rules.createRule({ ...rule, name: "Renamed" })).not.toThrow();
+    });
+  });
+
+  it("will not discard the draft of a rule never published, since it is all the rule has", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      expect(() => rules.discardDraft(ruleId)).toThrow(RuleError);
+      expect(rules.getRule(ruleId).draft).toMatchObject({ instruction: "Do X." });
+    });
+  });
+
+  it("switches a rule off and on without losing its versions or draft", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: ["Condition B."] });
+
+      rules.switchOff(ruleId);
+      expect(rules.liveRules("message")).toEqual([]);
+      expect(rules.getRule(ruleId)).toMatchObject({
+        state: "off",
+        on: false,
+        live: { number: 1 },
+        draft: { instruction: "Do Y." },
+      });
+      expect(rules.listRules({ state: "off" })).toMatchObject([{ id: ruleId, state: "off", on: false }]);
+      expect(rules.listRules({ state: "live" })).toEqual([]);
+
+      // Publishing while off keeps the rule off.
+      rules.publish(ruleId);
+      expect(rules.liveRules("message")).toEqual([]);
+      expect(rules.getRule(ruleId).versions).toHaveLength(2);
+
+      rules.switchOn(ruleId);
+      expect(rules.getRule(ruleId)).toMatchObject({ state: "live", on: true });
+      expect(rules.liveRules("message")).toMatchObject([{ ruleId, versionNumber: 2, instruction: "Do Y." }]);
+    });
+  });
+
+  it("keeps a rule switched off before its first publish off once published", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.switchOff(ruleId);
+      expect(rules.getRule(ruleId)).toMatchObject({ state: "draft", on: false });
+      rules.publish(ruleId);
+      expect(rules.getRule(ruleId)).toMatchObject({ state: "off", on: false });
+      expect(rules.liveRules("message")).toEqual([]);
+    });
+  });
+
+  it("deletes a rule with all its versions and draft, freeing its name", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: ["Condition B."] });
+      const other = rules.createRule({ ...rule, name: "Other" }).ruleId;
+      rules.publish(other);
+
+      rules.deleteRule(ruleId);
+      expect(() => rules.getRule(ruleId)).toThrow(RuleNotFoundError);
+      expect(rules.listRules().map((r) => r.name)).toEqual(["Other"]);
+      expect(rules.liveRules("message").map((r) => r.ruleId)).toEqual([other]);
+      expect(sandbox.query("SELECT 1 FROM versions WHERE rule_id = ?", ruleId)).toEqual([]);
+      expect(() => rules.createRule({ ...rule, name: "A rule" })).not.toThrow();
+      expect(() => rules.createRule({ ...rule, name: "Renamed" })).not.toThrow();
+    });
+  });
+
+  it("refuses every change to a rule that does not exist", () => {
+    sandbox.withRules((rules) => {
+      expect(() => rules.startDraftFrom(999, 1)).toThrow(RuleNotFoundError);
+      expect(() => rules.discardDraft(999)).toThrow(RuleNotFoundError);
+      expect(() => rules.switchOff(999)).toThrow(RuleNotFoundError);
+      expect(() => rules.switchOn(999)).toThrow(RuleNotFoundError);
+      expect(() => rules.deleteRule(999)).toThrow(RuleNotFoundError);
     });
   });
 

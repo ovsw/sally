@@ -1,8 +1,30 @@
-// The Rule screen: the live version beside the draft. The draft form follows
-// the shadcnblocks block form-layouts-1 (vertical field layout).
-import { ArrowLeft, Check, Loader2, Plus, Upload, X } from "lucide-react";
+// The Rule screen: the live version beside the draft, then the version
+// history. The draft form follows the shadcnblocks block form-layouts-1
+// (vertical field layout).
+import {
+  ArrowLeft,
+  Check,
+  FilePen,
+  Loader2,
+  Plus,
+  Trash2,
+  Undo2,
+  Upload,
+  X,
+} from "lucide-react";
 import * as React from "react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,17 +35,32 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  deleteRule,
+  discardDraft,
   getRule,
   publish,
+  type PublishedVersion,
   type RuleDetail,
   saveDraft,
+  startDraftFrom,
+  switchRule,
   type VersionView,
 } from "@/lib/api";
-import { followLink } from "@/lib/router";
+import { followLink, navigate } from "@/lib/router";
 
 const SAVE_DELAY_MS = 500;
+/** Typing in one field with pauses shorter than this is undone in one step. */
+const UNDO_GROUP_MS = 1000;
+const UNDO_LIMIT = 200;
+
+/** One undo step: the form as it was, and whether it was a saved or pending draft. */
+interface UndoStep {
+  content: VersionView;
+  hadDraft: boolean;
+}
 
 type SaveState =
   | { kind: "idle" }
@@ -65,7 +102,9 @@ function LiveVersion({ rule }: { rule: RuleDetail }) {
   return (
     <section className="rounded-md border">
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-        <h2 className="font-medium">Live version</h2>
+        <h2 className="font-medium">
+          {rule.on ? "Live version" : "Live version (switched off)"}
+        </h2>
         {live && <Badge variant="secondary">Version {live.number}</Badge>}
       </div>
       {live ? (
@@ -110,24 +149,31 @@ function LiveVersion({ rule }: { rule: RuleDetail }) {
 
 interface DraftFormProps {
   value: VersionView;
-  onChange: (next: VersionView) => void;
+  /** `field` names the field being typed in; null for a change made in one step. */
+  onChange: (next: VersionView, field: string | null) => void;
   error: string | null;
   checkType: RuleDetail["checkType"];
 }
 
 function DraftForm({ value, onChange, error, checkType }: DraftFormProps) {
   const setCondition = (index: number, text: string) =>
-    onChange({
-      ...value,
-      conditions: value.conditions.map((c, i) => (i === index ? text : c)),
-    });
+    onChange(
+      {
+        ...value,
+        conditions: value.conditions.map((c, i) => (i === index ? text : c)),
+      },
+      `condition-${index}`,
+    );
   const removeCondition = (index: number) =>
-    onChange({
-      ...value,
-      conditions: value.conditions.filter((_, i) => i !== index),
-    });
+    onChange(
+      {
+        ...value,
+        conditions: value.conditions.filter((_, i) => i !== index),
+      },
+      null,
+    );
   const addCondition = () =>
-    onChange({ ...value, conditions: [...value.conditions, ""] });
+    onChange({ ...value, conditions: [...value.conditions, ""] }, null);
 
   return (
     <FieldGroup>
@@ -137,7 +183,7 @@ function DraftForm({ value, onChange, error, checkType }: DraftFormProps) {
           id="draft-name"
           className="bg-background"
           value={value.name}
-          onChange={(e) => onChange({ ...value, name: e.target.value })}
+          onChange={(e) => onChange({ ...value, name: e.target.value }, "name")}
         />
       </Field>
       <Field>
@@ -185,7 +231,9 @@ function DraftForm({ value, onChange, error, checkType }: DraftFormProps) {
           id="draft-instruction"
           className="min-h-[140px] bg-background"
           value={value.instruction}
-          onChange={(e) => onChange({ ...value, instruction: e.target.value })}
+          onChange={(e) =>
+            onChange({ ...value, instruction: e.target.value }, "instruction")
+          }
         />
         <FieldDescription>
           Claude receives this word for word. Worth having only when it is not
@@ -206,30 +254,111 @@ const contentOf = (rule: RuleDetail): VersionView => {
   };
 };
 
+function VersionHistory({
+  rule,
+  busy,
+  onStartDraft,
+}: {
+  rule: RuleDetail;
+  busy: boolean;
+  onStartDraft: (version: PublishedVersion) => void;
+}) {
+  return (
+    <section className="rounded-md border">
+      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+        <h2 className="font-medium">Version history</h2>
+        <span className="text-xs text-muted-foreground">
+          Published versions never change
+        </span>
+      </div>
+      {rule.versions.length === 0 ? (
+        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+          No published versions yet.
+        </p>
+      ) : (
+        <ol className="divide-y">
+          {rule.versions.map((version) => (
+            <li
+              key={version.number}
+              className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between"
+            >
+              <div className="min-w-0 space-y-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">Version {version.number}</span>
+                  {version.number === rule.live?.number && (
+                    <Badge variant="secondary">{rule.on ? "Live" : "Latest"}</Badge>
+                  )}
+                  <span className="text-xs text-muted-foreground">
+                    Published {new Date(version.publishedAt).toLocaleString()}
+                  </span>
+                </div>
+                {version.name !== rule.name && (
+                  <p className="text-muted-foreground">Named "{version.name}"</p>
+                )}
+                <ul className="list-disc space-y-1 pl-5">
+                  {version.conditions.map((condition, i) => (
+                    <li key={i}>{condition}</li>
+                  ))}
+                </ul>
+                <p className="whitespace-pre-wrap text-muted-foreground">
+                  {version.instruction}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="self-start"
+                disabled={busy}
+                onClick={() => onStartDraft(version)}
+              >
+                <FilePen />
+                Start a draft from this
+              </Button>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 export function RuleScreen({ id }: { id: number }) {
-  const [rule, setRule] = React.useState<RuleDetail | null>(null);
+  const [rule, setRuleState] = React.useState<RuleDetail | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState<VersionView | null>(null);
   const [save, setSave] = React.useState<SaveState>({ kind: "idle" });
-  const [publishing, setPublishing] = React.useState(false);
-  const [publishError, setPublishError] = React.useState<string | null>(null);
+  const [action, setAction] = React.useState<string | null>(null);
+  const [actionError, setActionError] = React.useState<string | null>(null);
+  const [undoSteps, setUndoSteps] = React.useState(0);
   const timer = React.useRef<number | undefined>(undefined);
   const latest = React.useRef<VersionView | null>(null);
   const inFlight = React.useRef<Promise<boolean>>(Promise.resolve(true));
+  const ruleRef = React.useRef<RuleDetail | null>(null);
+  const undoStack = React.useRef<UndoStep[]>([]);
+  const lastTyped = React.useRef<{ field: string; at: number } | null>(null);
+
+  const setRule = React.useCallback((next: RuleDetail) => {
+    ruleRef.current = next;
+    setRuleState(next);
+  }, []);
 
   React.useEffect(() => {
     let stale = false;
+    undoStack.current = [];
+    setUndoSteps(0);
     getRule(id)
       .then((loaded) => {
         if (stale) return;
         setRule(loaded);
         setDraft(contentOf(loaded));
       })
-      .catch((e: unknown) => !stale && setLoadError(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) => !stale && setLoadError(errorText(e)));
     return () => {
       stale = true;
     };
-  }, [id]);
+  }, [id, setRule]);
 
   /**
    * Saves the latest edits now; saves run one after another. Resolves to
@@ -249,12 +378,20 @@ export function RuleScreen({ id }: { id: number }) {
         setSave(latest.current ? { kind: "pending" } : { kind: "saved" });
         return true;
       } catch (e) {
-        setSave({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+        setSave({ kind: "error", message: errorText(e) });
         return false;
       }
     });
     return inFlight.current;
-  }, [id]);
+  }, [id, setRule]);
+
+  /** Drops edits not yet sent and waits for the saves already sent. */
+  const settle = async () => {
+    window.clearTimeout(timer.current);
+    timer.current = undefined;
+    latest.current = null;
+    await inFlight.current;
+  };
 
   // Edits still waiting when the screen closes are saved straight away. When
   // the page itself goes (tab closed, reload), the save is sent at once with
@@ -275,19 +412,94 @@ export function RuleScreen({ id }: { id: number }) {
     };
   }, [id, flush]);
 
-  const edit = (next: VersionView) => {
+  const busySaving = save.kind === "pending" || save.kind === "saving";
+  const showingDraft = (rule?.hasDraft ?? false) || busySaving;
+
+  const pushUndo = (step: UndoStep) => {
+    undoStack.current.push(step);
+    if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift();
+    setUndoSteps(undoStack.current.length);
+  };
+
+  /** Puts `next` in the form and saves it into the draft after a pause. */
+  const saveSoon = (next: VersionView) => {
     setDraft(next);
-    setPublishError(null);
+    setActionError(null);
     latest.current = next;
     setSave({ kind: "pending" });
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => void flush(), SAVE_DELAY_MS);
   };
 
-  const doPublish = async () => {
-    setPublishing(true);
-    setPublishError(null);
+  const edit = (next: VersionView, field: string | null) => {
+    if (draft) {
+      const now = Date.now();
+      const last = lastTyped.current;
+      const sameRun = field !== null && last?.field === field && now - last.at < UNDO_GROUP_MS;
+      if (!sameRun) pushUndo({ content: draft, hadDraft: showingDraft });
+      lastTyped.current = field === null ? null : { field, at: now };
+    }
+    saveSoon(next);
+  };
+
+  /** Runs one action on the rule, showing it as busy and any refusal as an error. */
+  const act = async (name: string, run: () => Promise<void>) => {
+    setAction(name);
+    setActionError(null);
     try {
+      await run();
+    } catch (e) {
+      setActionError(errorText(e));
+    } finally {
+      setAction(null);
+    }
+  };
+
+  /** Drops the draft on the server, if it has one, and shows the live version in the form. */
+  const dropDraft = async () => {
+    await settle();
+    const current = ruleRef.current!;
+    const updated = current.hasDraft ? await discardDraft(id) : current;
+    setRule(updated);
+    setDraft(contentOf(updated));
+    setSave({ kind: "idle" });
+  };
+
+  const undo = () =>
+    act("undo", async () => {
+      const step = undoStack.current.pop();
+      setUndoSteps(undoStack.current.length);
+      lastTyped.current = null;
+      if (!step) return;
+      if (step.hadDraft || !ruleRef.current?.live) {
+        saveSoon(step.content);
+      } else {
+        await dropDraft();
+      }
+    });
+
+  const discard = () =>
+    act("discard", async () => {
+      const before = { content: draft!, hadDraft: showingDraft };
+      await dropDraft();
+      pushUndo(before);
+      lastTyped.current = null;
+    });
+
+  const startFrom = (version: PublishedVersion) =>
+    act("start-draft", async () => {
+      const before = { content: draft!, hadDraft: showingDraft };
+      await settle();
+      const updated = await startDraftFrom(id, version.number);
+      setRule(updated);
+      setDraft(contentOf(updated));
+      setSave({ kind: "saved" });
+      pushUndo(before);
+      lastTyped.current = null;
+    });
+
+  const doPublish = () =>
+    act("publish", async () => {
       // A draft the server refused must not be published as the old draft.
       if (!(await flush())) return;
       const result = await publish(id);
@@ -298,12 +510,19 @@ export function RuleScreen({ id }: { id: number }) {
         setDraft(contentOf(result.rule));
         setSave({ kind: "idle" });
       }
-    } catch (e) {
-      setPublishError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPublishing(false);
-    }
-  };
+    });
+
+  const toggle = (on: boolean) =>
+    act("switch", async () => {
+      setRule(await switchRule(id, on));
+    });
+
+  const remove = () =>
+    act("delete", async () => {
+      await settle();
+      await deleteRule(id);
+      navigate("/rules");
+    });
 
   if (loadError) {
     return (
@@ -319,8 +538,9 @@ export function RuleScreen({ id }: { id: number }) {
     return <p className="text-sm text-muted-foreground">Loading...</p>;
   }
 
-  const busy = save.kind === "pending" || save.kind === "saving";
-  const canPublish = (rule.hasDraft || busy) && save.kind !== "error" && !publishing;
+  const acting = action !== null;
+  const canPublish = (rule.hasDraft || busySaving) && save.kind !== "error" && !acting;
+  const canDiscard = rule.live !== null && showingDraft && !acting;
 
   return (
     <div className="w-full space-y-6">
@@ -334,34 +554,88 @@ export function RuleScreen({ id }: { id: number }) {
             </Badge>
             {rule.state === "live" ? (
               <Badge>Live</Badge>
+            ) : rule.state === "off" ? (
+              <Badge variant="secondary">Off</Badge>
             ) : (
               <Badge variant="outline">Draft only</Badge>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <SaveStatus state={save} hasDraft={rule.hasDraft} />
-          <Button onClick={doPublish} disabled={!canPublish}>
-            {publishing ? <Loader2 className="animate-spin" /> : <Upload />}
+          <label className="flex items-center gap-2 text-sm">
+            <Switch
+              checked={rule.on}
+              disabled={acting}
+              onCheckedChange={(on) => void toggle(on)}
+              aria-label="Rule on"
+            />
+            {rule.on ? "On" : "Off"}
+          </label>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" disabled={acting}>
+                <Trash2 />
+                Delete
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete "{rule.name}"?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  The rule, all its versions and its draft are deleted for good.
+                  To pause it and keep its history, switch it off instead.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" onClick={() => void remove()}>
+                  Delete rule
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <Button onClick={() => void doPublish()} disabled={!canPublish}>
+            {action === "publish" ? <Loader2 className="animate-spin" /> : <Upload />}
             Publish
           </Button>
         </div>
       </div>
-      {publishError && (
+      {actionError && (
         <p role="alert" className="text-sm text-destructive">
-          {publishError}
+          {actionError}
         </p>
       )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <LiveVersion rule={rule} />
         <section className="rounded-md border">
-          <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-            <h2 className="font-medium">Draft</h2>
-            <span className="text-xs text-muted-foreground">
-              {rule.hasDraft
-                ? "Edits save automatically"
-                : "Editing starts a draft"}
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
+            <div className="flex items-center gap-2">
+              <h2 className="font-medium">Draft</h2>
+              <span className="text-xs text-muted-foreground">
+                {showingDraft ? "Edits save automatically" : "Editing starts a draft"}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void undo()}
+                disabled={undoSteps === 0 || acting}
+              >
+                <Undo2 />
+                Undo
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void discard()}
+                disabled={!canDiscard}
+              >
+                <X />
+                Discard draft
+              </Button>
+            </div>
           </div>
           <div className="px-4 py-4">
             <DraftForm
@@ -373,6 +647,7 @@ export function RuleScreen({ id }: { id: number }) {
           </div>
         </section>
       </div>
+      <VersionHistory rule={rule} busy={acting} onStartDraft={(v) => void startFrom(v)} />
     </div>
   );
 }

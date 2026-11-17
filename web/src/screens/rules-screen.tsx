@@ -1,7 +1,7 @@
 // The Rules screen, built on the shadcnblocks block data-table12 (faceted
 // filter data table).
 import type { ColumnDef, ColumnFiltersState } from "@tanstack/react-table";
-import { CircleDot, FileEdit, MessageSquare, Reply } from "lucide-react";
+import { CircleDot, CirclePause, FileEdit, MessageSquare, Reply } from "lucide-react";
 import * as React from "react";
 
 import {
@@ -30,6 +30,7 @@ export const checkTypes = [
 
 const states = [
   { value: "live", label: "Live", icon: CircleDot },
+  { value: "off", label: "Off", icon: CirclePause },
   { value: "draft", label: "Draft only", icon: FileEdit },
 ];
 
@@ -81,6 +82,11 @@ const columns: ColumnDef<RuleSummary>[] = [
         <Badge className="gap-1 whitespace-nowrap">
           <CircleDot className="size-3" />
           Live
+        </Badge>
+      ) : row.original.state === "off" ? (
+        <Badge variant="secondary" className="gap-1 whitespace-nowrap">
+          <CirclePause className="size-3" />
+          Off
         </Badge>
       ) : (
         <Badge variant="outline" className="gap-1 whitespace-nowrap">
