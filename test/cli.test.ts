@@ -35,6 +35,20 @@ it("prints nothing and exits successfully with a live rule but no API key", () =
   expect(sandbox.query("SELECT outcome, error FROM checks")).toEqual([{ outcome: "failed", error: "missing API key" }]);
 });
 
+it("runs the reply hook: prints nothing and exits successfully with a live reply rule but no API key", () => {
+  sandbox.liveRule({ name: "Rule", checkType: "reply", conditions: ["Condition A."] });
+  const result = spawnSync(process.execPath, [cli, "hook", "reply"], {
+    input: JSON.stringify({ session_id: "s", cwd: "/work/project", stop_hook_active: false, last_assistant_message: "Done." }),
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, ...sandbox.env },
+  });
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe("");
+  expect(sandbox.query("SELECT check_type, outcome, error FROM checks")).toEqual([
+    { check_type: "reply", outcome: "failed", error: "missing API key" },
+  ]);
+});
+
 it("prints nothing and exits successfully on unreadable input", () => {
   const result = run("{ not json");
   expect(result.status).toBe(0);
