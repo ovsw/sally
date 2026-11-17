@@ -20,8 +20,8 @@ export interface VersionView {
 }
 
 export interface RuleDetail extends RuleSummary {
-  live: (VersionView & { number: number; publishedAt: string }) | null;
-  draft: (VersionView & { savedAt: string }) | null;
+  live: (VersionView & { checkType: CheckType; number: number; publishedAt: string }) | null;
+  draft: (VersionView & { checkType: CheckType; savedAt: string }) | null;
 }
 
 export interface RuleFilter {

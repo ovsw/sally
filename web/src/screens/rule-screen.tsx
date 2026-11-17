@@ -367,7 +367,7 @@ export function RuleScreen({ id }: { id: number }) {
             <DraftForm
               value={draft}
               onChange={edit}
-              checkType={rule.checkType}
+              checkType={rule.draft?.checkType ?? rule.checkType}
               error={save.kind === "error" ? save.message : null}
             />
           </div>
