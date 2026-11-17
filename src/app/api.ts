@@ -6,6 +6,7 @@ import {
   RuleNotFoundError,
   type RulesService,
   type RuleState,
+  type Scope,
 } from "../rules.ts";
 
 /** A request the API refuses, with the HTTP status to answer with. */
@@ -60,6 +61,20 @@ function textList(body: Record<string, unknown>, key: string): string[] {
   return value;
 }
 
+/** The scope, when given: { kind: "all" } or { kind: "projects", projects: [...] }. */
+function optionalScope(body: Record<string, unknown>, key: string): Scope | undefined {
+  const value = body[key];
+  if (value === undefined) return undefined;
+  if (typeof value === "object" && value !== null) {
+    const { kind, projects } = value as { kind?: unknown; projects?: unknown };
+    if (kind === "all") return { kind: "all" };
+    if (kind === "projects" && Array.isArray(projects) && projects.every((p) => typeof p === "string")) {
+      return { kind: "projects", projects };
+    }
+  }
+  throw new HttpError(400, `"${key}" must be all projects or a list of projects.`);
+}
+
 function filterFrom(params: URLSearchParams): RuleFilter {
   const filter: RuleFilter = {};
   const search = params.get("search");
@@ -95,6 +110,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * - POST /api/rules/:id/versions/:number/draft           start a draft from a published version
  * - POST /api/rules/:id/off, POST /api/rules/:id/on      switch the rule off or on
  * - DELETE /api/rules/:id                                delete the rule
+ * - GET  /api/projects                                   the projects Sally has seen
  *
  * Every change answers with the rule as it now is, except a delete, which
  * answers { deleted: true }. Refusals answer with { error } and a 4xx status.
@@ -108,6 +124,9 @@ export async function handleApi(
   try {
     const parts = url.pathname.split("/").filter(Boolean).slice(1);
     const method = req.method ?? "GET";
+    if (parts.length === 1 && parts[0] === "projects" && method === "GET") {
+      return send(res, 200, { projects: rules.projects() });
+    }
     if (parts[0] !== "rules") throw new HttpError(404, "Not found.");
     const id = parts[1] === undefined ? undefined : Number(parts[1]);
     if (id !== undefined && !Number.isSafeInteger(id)) throw new HttpError(404, "Not found.");
@@ -122,6 +141,7 @@ export async function handleApi(
         checkType: text(body, "checkType") as CheckType,
         instruction: text(body, "instruction"),
         conditions: textList(body, "conditions"),
+        scope: optionalScope(body, "scope"),
       });
       return send(res, 201, rules.getRule(ruleId));
     }
@@ -134,6 +154,7 @@ export async function handleApi(
         name: optionalText(body, "name"),
         instruction: text(body, "instruction"),
         conditions: textList(body, "conditions"),
+        scope: optionalScope(body, "scope"),
       });
       return send(res, 200, rules.getRule(id));
     }

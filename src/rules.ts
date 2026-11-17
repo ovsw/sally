@@ -2,6 +2,14 @@ import { type Store, transaction } from "./store.ts";
 
 export type CheckType = "message" | "reply";
 
+/**
+ * Where a rule applies: in every project, or only in the named projects
+ * (each named as Sally records it: owner/name, or a folder path).
+ */
+export type Scope = { kind: "all" } | { kind: "projects"; projects: string[] };
+
+export const ALL_PROJECTS: Readonly<Scope> = Object.freeze({ kind: "all" });
+
 export interface RuleContent {
   instruction: string;
   conditions: string[];
@@ -10,11 +18,23 @@ export interface RuleContent {
 export interface NewRule extends RuleContent {
   name: string;
   checkType: CheckType;
+  /** All projects when left out. */
+  scope?: Scope;
 }
 
-/** What a draft holds. Without a name, the draft keeps the name it has. */
+/**
+ * What a draft holds. Without a name or a scope, the draft keeps the one it
+ * has (or the live version's, when it starts a new draft).
+ */
 export interface DraftContent extends RuleContent {
   name?: string;
+  scope?: Scope;
+}
+
+/** A project Sally has seen a session run in. */
+export interface ProjectView {
+  name: string;
+  firstSeenAt: string;
 }
 
 export interface LiveCondition {
@@ -54,6 +74,7 @@ export interface VersionView {
   name: string;
   instruction: string;
   conditions: string[];
+  scope: Scope;
 }
 
 export interface PublishedVersionView extends VersionView {
@@ -134,12 +155,18 @@ export interface RulesService {
   switchOn(ruleId: number): void;
   /** Deletes the rule with all its versions and its draft. */
   deleteRule(ruleId: number): void;
-  /** The live version of every rule of this check type that is on, read fresh from the database. */
-  liveRules(checkType: CheckType): LiveRule[];
+  /**
+   * The live version of every rule of this check type that is on and in scope
+   * for the project, read fresh from the database. Without a project, only
+   * rules for all projects.
+   */
+  liveRules(checkType: CheckType, project?: string): LiveRule[];
   /** Every rule matching the filter, by name. */
   listRules(filter?: RuleFilter): RuleSummary[];
   /** One rule with its live version and its draft. */
   getRule(ruleId: number): RuleDetail;
+  /** Every project Sally has seen, by name: the choices for a rule's scope. */
+  projects(): ProjectView[];
   /** The stored settings, each falling back to its default. */
   settings(): Settings;
   /** Stores the given settings and returns them all. Refuses a value out of range. */
@@ -162,6 +189,24 @@ function requireCheckType(checkType: unknown): asserts checkType is CheckType {
   }
 }
 
+function requireScope(scope: unknown): asserts scope is Scope {
+  const valid =
+    typeof scope === "object" &&
+    scope !== null &&
+    ((scope as Scope).kind === "all" ||
+      ((scope as Scope).kind === "projects" &&
+        Array.isArray((scope as { projects?: unknown }).projects) &&
+        (scope as { projects: unknown[] }).projects.every((p) => typeof p === "string")));
+  if (!valid) throw new RuleError("A rule's scope is all projects or a list of projects.");
+}
+
+/** What a scope needs before it can be live. */
+function requireCompleteScope(scope: Scope): void {
+  if (scope.kind === "projects" && scope.projects.length === 0) {
+    throw new RuleError("Pick at least one project, or apply the rule to all projects.");
+  }
+}
+
 function cleanName(name: string): string {
   const cleaned = name.trim();
   if (!cleaned) throw new RuleError("A rule needs a name.");
@@ -178,12 +223,43 @@ interface VersionRow {
 }
 
 export function createRulesService(db: Store): RulesService {
+  /** The ids of these seen projects, without repeats. Refuses a project Sally has not seen. */
+  function projectIds(names: string[]): number[] {
+    const find = db.prepare("SELECT id FROM projects WHERE name = ?");
+    const ids = new Set<number>();
+    for (const name of names) {
+      const row = find.get(name) as { id: number } | undefined;
+      if (!row) throw new RuleError(`Sally has not seen a project named "${name}".`);
+      ids.add(row.id);
+    }
+    return [...ids];
+  }
+
   function insertDraft(ruleId: number, content: Required<DraftContent>): void {
+    const ids = content.scope.kind === "projects" ? projectIds(content.scope.projects) : [];
     const { lastInsertRowid } = db
-      .prepare("INSERT INTO versions (rule_id, number, name, instruction, created_at) VALUES (?, NULL, ?, ?, ?)")
-      .run(ruleId, content.name, content.instruction, now());
+      .prepare(
+        "INSERT INTO versions (rule_id, number, name, instruction, all_projects, created_at) VALUES (?, NULL, ?, ?, ?, ?)",
+      )
+      .run(ruleId, content.name, content.instruction, content.scope.kind === "all" ? 1 : 0, now());
     const addCondition = db.prepare("INSERT INTO conditions (version_id, position, text) VALUES (?, ?, ?)");
     cleanConditions(content.conditions).forEach((text, position) => addCondition.run(lastInsertRowid, position, text));
+    const addProject = db.prepare("INSERT INTO version_projects (version_id, project_id) VALUES (?, ?)");
+    for (const id of ids) addProject.run(lastInsertRowid, id);
+  }
+
+  function scopeOf(versionId: number): Scope {
+    const { all_projects } = db.prepare("SELECT all_projects FROM versions WHERE id = ?").get(versionId) as {
+      all_projects: number;
+    };
+    if (all_projects === 1) return { kind: "all" };
+    const rows = db
+      .prepare(
+        `SELECT p.name FROM version_projects vp JOIN projects p ON p.id = vp.project_id
+          WHERE vp.version_id = ? ORDER BY lower(p.name), p.name`,
+      )
+      .all(versionId) as { name: string }[];
+    return { kind: "projects", projects: rows.map((row) => row.name) };
   }
 
   function draft(ruleId: number): VersionRow | undefined {
@@ -225,6 +301,7 @@ export function createRulesService(db: Store): RulesService {
       name: row.name,
       instruction: row.instruction,
       conditions: conditionsOf(row.id),
+      scope: scopeOf(row.id),
     };
   }
 
@@ -281,22 +358,29 @@ export function createRulesService(db: Store): RulesService {
       const name = cleanName(rule.name);
       requireCheckType(rule.checkType);
       requireComplete(rule);
+      const scope = rule.scope ?? ALL_PROJECTS;
+      requireScope(scope);
+      requireCompleteScope(scope);
       return transaction(db, () => {
         requireFreeName(name);
         const { lastInsertRowid } = db
           .prepare("INSERT INTO rules (name, check_type, created_at) VALUES (?, ?, ?)")
           .run(name, rule.checkType, now());
         const ruleId = Number(lastInsertRowid);
-        insertDraft(ruleId, { name, instruction: rule.instruction, conditions: rule.conditions });
+        insertDraft(ruleId, { name, instruction: rule.instruction, conditions: rule.conditions, scope });
         return { ruleId };
       });
     },
 
     saveDraft(ruleId, content) {
+      if (content.scope !== undefined) requireScope(content.scope);
       transaction(db, () => {
         const rule = requireRule(ruleId);
-        const name = content.name === undefined ? (draft(ruleId)?.name ?? rule.name) : cleanName(content.name);
-        replaceDraft(ruleId, { name, instruction: content.instruction, conditions: content.conditions });
+        const existing = draft(ruleId);
+        const name = content.name === undefined ? (existing?.name ?? rule.name) : cleanName(content.name);
+        const kept = existing ?? live(ruleId);
+        const scope = content.scope ?? (kept ? scopeOf(kept.id) : ALL_PROJECTS);
+        replaceDraft(ruleId, { name, instruction: content.instruction, conditions: content.conditions, scope });
       });
     },
 
@@ -305,7 +389,12 @@ export function createRulesService(db: Store): RulesService {
         requireRule(ruleId);
         const source = published(ruleId).find((row) => row.number === versionNumber);
         if (!source) throw new RuleNotFoundError(`This rule has no version ${versionNumber}.`);
-        replaceDraft(ruleId, { name: source.name, instruction: source.instruction, conditions: conditionsOf(source.id) });
+        replaceDraft(ruleId, {
+          name: source.name,
+          instruction: source.instruction,
+          conditions: conditionsOf(source.id),
+          scope: scopeOf(source.id),
+        });
       });
     },
 
@@ -340,6 +429,7 @@ export function createRulesService(db: Store): RulesService {
         const row = draft(ruleId);
         if (!row) throw new RuleError("This rule has no draft to publish.");
         requireComplete({ instruction: row.instruction, conditions: conditionsOf(row.id) });
+        requireCompleteScope(scopeOf(row.id));
         requireFreeName(row.name, ruleId);
         const versionNumber = (live(ruleId)?.number ?? 0) + 1;
         db.prepare("UPDATE versions SET number = ?, published_at = ? WHERE id = ?").run(versionNumber, now(), row.id);
@@ -348,7 +438,7 @@ export function createRulesService(db: Store): RulesService {
       });
     },
 
-    liveRules(checkType) {
+    liveRules(checkType, project) {
       const rows = db
         .prepare(
           `SELECT r.id AS ruleId, r.name AS name, v.id AS versionId, v.number AS versionNumber,
@@ -358,9 +448,12 @@ export function createRulesService(db: Store): RulesService {
                             AND v.number = (SELECT MAX(number) FROM versions WHERE rule_id = r.id)
              JOIN conditions c ON c.version_id = v.id
             WHERE r.check_type = ? AND r.switched_off = 0
+              AND (v.all_projects = 1
+                   OR EXISTS (SELECT 1 FROM version_projects vp JOIN projects p ON p.id = vp.project_id
+                               WHERE vp.version_id = v.id AND p.name = ?))
             ORDER BY r.id, c.position`,
         )
-        .all(checkType) as {
+        .all(checkType, project ?? null) as {
         ruleId: number;
         name: string;
         versionId: number;
@@ -465,9 +558,17 @@ export function createRulesService(db: Store): RulesService {
               name: draftRow.name,
               instruction: draftRow.instruction,
               conditions: conditionsOf(draftRow.id),
+              scope: scopeOf(draftRow.id),
             }
           : null,
       };
+    },
+
+    projects() {
+      const rows = db
+        .prepare("SELECT name, first_seen_at FROM projects ORDER BY lower(name), name")
+        .all() as { name: string; first_seen_at: string }[];
+      return rows.map((row) => ({ name: row.name, firstSeenAt: row.first_seen_at }));
     },
 
     settings: readSettings,

@@ -109,6 +109,27 @@ const migrations: string[] = [
   UPDATE versions SET name = (SELECT name FROM rules WHERE rules.id = versions.rule_id);
   `,
   `
+  -- A project is the git repository a session runs in, named by its remote as
+  -- owner/name, or a folder path outside any repository. Recorded when first seen.
+  CREATE TABLE projects (
+    id             INTEGER PRIMARY KEY,
+    name           TEXT NOT NULL UNIQUE,
+    first_seen_at  TEXT NOT NULL
+  );
+
+  ALTER TABLE checks ADD COLUMN project_id INTEGER REFERENCES projects (id);
+  CREATE INDEX checks_by_project ON checks (project_id);
+
+  -- A version's scope is part of the version, like its name: all projects, or
+  -- only the projects listed for it in version_projects.
+  ALTER TABLE versions ADD COLUMN all_projects INTEGER NOT NULL DEFAULT 1 CHECK (all_projects IN (0, 1));
+  CREATE TABLE version_projects (
+    version_id  INTEGER NOT NULL REFERENCES versions (id) ON DELETE CASCADE,
+    project_id  INTEGER NOT NULL REFERENCES projects (id),
+    PRIMARY KEY (version_id, project_id)
+  );
+  `,
+  `
   -- A rule switched off keeps its versions and draft but is never sent to the matcher.
   ALTER TABLE rules ADD COLUMN switched_off INTEGER NOT NULL DEFAULT 0 CHECK (switched_off IN (0, 1));
   `,
