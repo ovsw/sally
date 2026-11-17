@@ -405,4 +405,25 @@ describe("activity and analytics over HTTP", () => {
       { ruleId: created.id, name: "Local link first", reasons: [{ kind: "matches_often", matches: 1, checks: 1 }] },
     ]);
   });
+
+  it("clears an attention reason the user judged fine, and refuses what cannot be cleared", async () => {
+    const created = await create();
+    await app.json("POST", `/api/rules/${created.id}/publish`, {});
+    const matcher = standInMatcher({ "The message asks for a visual change.": 0.9 });
+    await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
+    const looksFine = (id: number, body: unknown) => app.call("POST", `/api/rules/${id}/looks-fine`, body);
+
+    expect((await looksFine(created.id, { reason: "wrong_matches" })).status).toBe(400);
+    expect((await looksFine(created.id, { reason: "looks_odd" })).status).toBe(400);
+    expect((await looksFine(created.id, {})).status).toBe(400);
+    expect((await looksFine(created.id, { reason: "never_matches" })).status).toBe(400);
+    expect((await looksFine(999, { reason: "matches_often" })).status).toBe(404);
+    expect((await app.json<{ rules: unknown[] }>("GET", "/api/attention")).rules).toHaveLength(1);
+
+    const cleared = await app.json<{ rules: unknown[] }>("POST", `/api/rules/${created.id}/looks-fine`, {
+      reason: "matches_often",
+    });
+    expect(cleared.rules).toEqual([]);
+    expect((await app.json<{ rules: unknown[] }>("GET", "/api/attention")).rules).toEqual([]);
+  });
 });

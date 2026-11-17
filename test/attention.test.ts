@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runMessageHook } from "../src/message-hook.ts";
 import { databasePath } from "../src/paths.ts";
 import { runReplyHook } from "../src/reply-hook.ts";
-import type { Settings } from "../src/rules.ts";
+import type { AttentionKind } from "../src/attention.ts";
+import { RuleError, RuleNotFoundError, type Settings } from "../src/rules.ts";
 import { gitRepo } from "./support/git.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { standInMatcher } from "./support/stand-in-matcher.ts";
@@ -254,5 +255,89 @@ describe("needs attention", () => {
       [weak, ["matches_often", "weak_matches"]],
       [quiet, ["never_matches"]],
     ]);
+  });
+
+  describe("looks fine", () => {
+    const clear = (ruleId: number, kind: AttentionKind) =>
+      sandbox.withRules((rules) => rules.clearAttentionReason(ruleId, kind));
+    const kindsOf = (ruleId: number) =>
+      attention()
+        .find((entry) => entry.ruleId === ruleId)
+        ?.reasons.map((reason) => reason.kind);
+
+    it("clears one reason of several, for that rule only", async () => {
+      thresholds({ recentChecks: 2, busyShare: 0.5 });
+      const rule = sandbox.liveRule({ name: "Weak and eager", conditions: ["Condition A."] });
+      const other = sandbox.liveRule({ name: "Also eager", conditions: ["Condition B."] });
+      await message({ "Condition A.": 0.61, "Condition B.": 0.9 });
+      await message({ "Condition A.": 0.9, "Condition B.": 0.9 });
+      expect(kindsOf(rule)).toEqual(["matches_often", "weak_matches"]);
+
+      clear(rule, "matches_often");
+
+      expect(kindsOf(rule)).toEqual(["weak_matches"]);
+      expect(kindsOf(other)).toEqual(["matches_often"]);
+      expect(sandbox.query("SELECT v.rule_id, c.kind FROM cleared_reasons c JOIN versions v ON v.id = c.version_id")).toEqual([
+        { rule_id: rule, kind: "matches_often" },
+      ]);
+      // It stays cleared as more checks come in, and clearing it again changes nothing.
+      await message({ "Condition A.": 0.61 });
+      clear(rule, "matches_often");
+      expect(kindsOf(rule)).toEqual(["weak_matches"]);
+    });
+
+    it("takes the rule off the list when its last reason is cleared", async () => {
+      thresholds({ quietChecks: 2 });
+      const quiet = sandbox.liveRule({ name: "Quiet", conditions: ["Condition A."] });
+      await message({});
+      await message({});
+      expect(kindsOf(quiet)).toEqual(["never_matches"]);
+
+      clear(quiet, "never_matches");
+
+      expect(attention()).toEqual([]);
+    });
+
+    it("lets the reason come back once a new version is published", async () => {
+      thresholds({ quietChecks: 2 });
+      const quiet = sandbox.liveRule({ name: "Quiet", conditions: ["Old wording."] });
+      await message({});
+      await message({});
+      clear(quiet, "never_matches");
+      expect(attention()).toEqual([]);
+
+      sandbox.withRules((rules) => {
+        rules.saveDraft(quiet, { instruction: "Do it.", conditions: ["New wording."] });
+        rules.publish(quiet);
+      });
+      await message({});
+      await message({});
+
+      expect(attention()).toMatchObject([{ ruleId: quiet, versionNumber: 2, reasons: [{ kind: "never_matches" }] }]);
+    });
+
+    it("refuses wrong matches, which stay listed", async () => {
+      thresholds({ busyShare: 1 });
+      const wrong = sandbox.liveRule({ name: "Wrong matches", conditions: ["Condition A."] });
+      await message({ "Condition A.": 0.9 });
+      await message({});
+      flag(matchesOf(wrong)[0]!, "wrong");
+
+      expect(() => clear(wrong, "wrong_matches")).toThrow(RuleError);
+      expect(kindsOf(wrong)).toEqual(["wrong_matches"]);
+    });
+
+    it("refuses an unknown rule, an unknown reason and a reason the rule is not listed for", async () => {
+      thresholds({ quietChecks: 2 });
+      const quiet = sandbox.liveRule({ name: "Quiet", conditions: ["Condition A."] });
+      await message({});
+      await message({});
+
+      expect(() => clear(999, "never_matches")).toThrow(RuleNotFoundError);
+      expect(() => clear(quiet, "looks_odd" as AttentionKind)).toThrow(RuleError);
+      expect(() => clear(quiet, "matches_often")).toThrow(RuleError);
+      expect(kindsOf(quiet)).toEqual(["never_matches"]);
+      expect(sandbox.query("SELECT * FROM cleared_reasons")).toEqual([]);
+    });
   });
 });

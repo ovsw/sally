@@ -1,7 +1,14 @@
 // The Needs attention screen, built on the shadcnblocks block data-table12
 // (faceted filter data table), like the Rules and Activity screens.
 import type { ColumnDef, ColumnFiltersState } from "@tanstack/react-table";
-import { Activity, CircleSlash, Flag, Gauge, RefreshCw } from "lucide-react";
+import {
+  Activity,
+  Check,
+  CircleSlash,
+  Flag,
+  Gauge,
+  RefreshCw,
+} from "lucide-react";
 import * as React from "react";
 
 import {
@@ -13,7 +20,12 @@ import {
 } from "@/components/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { type AttentionEntry, type AttentionKind, listAttention } from "@/lib/api";
+import {
+  type AttentionEntry,
+  type AttentionKind,
+  clearAttentionReason,
+  listAttention,
+} from "@/lib/api";
 import { followLink, navigate } from "@/lib/router";
 import { checkTypes } from "@/screens/rules-screen";
 
@@ -39,6 +51,54 @@ function ReasonBadge({ kind }: { kind: AttentionKind }) {
       {Icon && <Icon className="size-3" />}
       {meta?.label ?? kind}
     </Badge>
+  );
+}
+
+/** Takes the list as it is after a reason was cleared. */
+const ClearedContext = React.createContext<(entries: AttentionEntry[]) => void>(
+  () => undefined,
+);
+
+/**
+ * Clears one reason for one rule's live version: the user looked and judged
+ * it fine. Wrong matches get no such button; they go when the rule is fixed.
+ */
+function LooksFine({ ruleId, kind }: { ruleId: number; kind: AttentionKind }) {
+  const onCleared = React.useContext(ClearedContext);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const label =
+    kinds.find((k) => k.value === kind)?.label.toLowerCase() ?? kind;
+
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="xs"
+        className="text-muted-foreground"
+        aria-label={`Looks fine: ${label}`}
+        disabled={busy}
+        onClick={(event) => {
+          event.stopPropagation();
+          setBusy(true);
+          setError(null);
+          clearAttentionReason(ruleId, kind)
+            .then(onCleared)
+            .catch((e: unknown) => {
+              setError(e instanceof Error ? e.message : String(e));
+              setBusy(false);
+            });
+        }}
+      >
+        <Check />
+        Looks fine
+      </Button>
+      {error && (
+        <p role="alert" className="w-full text-xs text-destructive">
+          Could not clear it: {error}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -94,6 +154,9 @@ const columns: ColumnDef<AttentionEntry>[] = [
             <span className="min-w-[200px] flex-1 whitespace-normal">
               {reason.summary}
             </span>
+            {reason.kind !== "wrong_matches" && (
+              <LooksFine ruleId={row.original.ruleId} kind={reason.kind} />
+            )}
           </li>
         ))}
       </ul>
@@ -125,7 +188,10 @@ export function AttentionScreen() {
         setEntries(next);
         setError(null);
       })
-      .catch((e: unknown) => !stale && setError(e instanceof Error ? e.message : String(e)))
+      .catch(
+        (e: unknown) =>
+          !stale && setError(e instanceof Error ? e.message : String(e)),
+      )
       .finally(() => !stale && setLoaded(true));
     return () => {
       stale = true;
@@ -137,9 +203,11 @@ export function AttentionScreen() {
       <div className="mb-4 text-left">
         <h1 className="text-2xl font-bold tracking-tight">Needs attention</h1>
         <p className="mt-2 text-muted-foreground">
-          Rules worth a look, worst first: wrong matches, rules that match
-          much of what they see, rules that only just clear the cutoff, and
-          rules that never match.
+          Rules worth a look, worst first: wrong matches, rules that match much
+          of what they see, rules that only just clear the cutoff, and rules
+          that never match. When you have looked at a reason and the rule is
+          doing what you want, "Looks fine" clears it until the rule's next
+          version.
         </p>
       </div>
       <DataTableToolbar table={table}>
@@ -170,19 +238,21 @@ export function AttentionScreen() {
           {error}
         </p>
       )}
-      <DataTable
-        table={table}
-        onRowClick={(entry) => navigate(`/rules/${entry.ruleId}`)}
-        emptyMessage={
-          !loaded
-            ? "Loading..."
-            : error
-              ? "Could not load the list."
-              : filtered
-              ? "No rules match."
-              : "Nothing needs attention. Rules appear here when they match wrongly, match often, only just clear the cutoff or never match."
-        }
-      />
+      <ClearedContext.Provider value={setEntries}>
+        <DataTable
+          table={table}
+          onRowClick={(entry) => navigate(`/rules/${entry.ruleId}`)}
+          emptyMessage={
+            !loaded
+              ? "Loading..."
+              : error
+                ? "Could not load the list."
+                : filtered
+                  ? "No rules match."
+                  : "Nothing needs attention. Rules appear here when they match wrongly, match often, only just clear the cutoff or never match."
+          }
+        />
+      </ClearedContext.Provider>
       <DataTablePagination table={table} />
     </div>
   );

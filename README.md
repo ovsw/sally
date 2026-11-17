@@ -143,7 +143,10 @@ screens:
 
 - **Needs attention:** rules that deserve a look, worst first. A rule lands
   here for matches flagged as wrong, for matching often, for weak matches
-  (scores just over the cutoff), or for never matching.
+  (scores just over the cutoff), or for never matching. When you have looked
+  at a reason and the rule is doing what you want, **Looks fine** clears that
+  one reason for that rule until its next version is published. Wrong matches
+  have no such button: they go when the rule is fixed.
 - **Rules:** a searchable, filterable list showing each rule's check type and
   state (live, draft only, off).
 - **Rule:** one rule in full: the live version beside its draft; conditions,

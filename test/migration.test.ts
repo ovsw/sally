@@ -134,7 +134,21 @@ describe("an old database", () => {
       { key: "stop_on_failure", value: 1 },
       { key: "time_limit_ms", value: 4000 },
     ]);
-    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 11 }]);
+    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 12 }]);
+  });
+
+  it("can have an attention reason cleared", () => {
+    writeOldDatabase();
+
+    // The old rule matched on all three of its checks.
+    sandbox.withRules((rules) => rules.clearAttentionReason(1, "matches_often"));
+
+    expect(sandbox.withRules((rules) => rules.attention()).flatMap((e) => e.reasons.map((r) => r.kind))).toEqual([
+      "wrong_matches",
+    ]);
+    expect(sandbox.query("SELECT version_id, kind FROM cleared_reasons")).toEqual([
+      { version_id: 1, kind: "matches_often" },
+    ]);
   });
 
   it("ends in the same shape as a new database", () => {

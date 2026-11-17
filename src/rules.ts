@@ -1,5 +1,5 @@
 import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
-import { type AttentionEntry, attentionList } from "./attention.ts";
+import { type AttentionEntry, type AttentionKind, attentionList, CLEARABLE_KINDS } from "./attention.ts";
 import { RuleError, RuleNotFoundError } from "./errors.ts";
 import { createFlags, type Flags } from "./flags.ts";
 import { conditionFits, REQUEST_TOKEN_LIMIT, REQUEST_WARNING_SHARE } from "./limits.ts";
@@ -246,6 +246,13 @@ export interface RulesService extends AnalyticsQueries, Flags {
   updateSettings(changes: Partial<Settings>): Settings;
   /** The rules that need attention under the stored thresholds, worst first, each with why (see attention.ts). */
   attention(): AttentionEntry[];
+  /**
+   * The user looked at one attention reason of a rule and judged it fine: the
+   * reason leaves the list for the rule's live version, and can come back once
+   * a new version is published. Refuses wrong matches (those are cleared by
+   * fixing the rule), an unknown reason, and a reason the rule is not listed for.
+   */
+  clearAttentionReason(ruleId: number, kind: AttentionKind): void;
   /** How much of Jev's per-request limit the recent checks have used. */
   limitUse(): LimitUse;
 }
@@ -749,6 +756,29 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
 
     attention() {
       return attentionList(db, readSettings());
+    },
+
+    clearAttentionReason(ruleId, kind) {
+      requireRule(ruleId);
+      if (kind === "wrong_matches") {
+        throw new RuleError("Wrong matches cannot be cleared this way: fix the rule and publish a new version.");
+      }
+      if (!CLEARABLE_KINDS.includes(kind)) throw new RuleError("No such attention reason.");
+      const version = live(ruleId);
+      // Clearing twice is fine; clearing a reason the rule is not listed for is not.
+      const already =
+        version !== undefined &&
+        db.prepare("SELECT 1 FROM cleared_reasons WHERE version_id = ? AND kind = ?").get(version.id, kind) !== undefined;
+      if (already) return;
+      const entry = attentionList(db, readSettings()).find((e) => e.ruleId === ruleId);
+      if (!version || !entry?.reasons.some((reason) => reason.kind === kind)) {
+        throw new RuleError("This rule is not listed for that reason.");
+      }
+      db.prepare("INSERT INTO cleared_reasons (version_id, kind, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING").run(
+        version.id,
+        kind,
+        now(),
+      );
     },
   };
 }
