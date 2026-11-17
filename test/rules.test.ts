@@ -44,6 +44,19 @@ describe("rules service", () => {
     });
   });
 
+  it("keeps a draft's new name out of the live version until it is published", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.publish(ruleId);
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do X.", conditions: ["Condition A."] });
+      expect(rules.liveRules("message")[0]).toMatchObject({ name: "A rule" });
+      expect(rules.listRules()).toMatchObject([{ name: "A rule", hasDraft: true }]);
+      rules.publish(ruleId);
+      expect(rules.liveRules("message")[0]).toMatchObject({ name: "Renamed" });
+      expect(() => rules.createRule({ ...rule, name: "Renamed" })).toThrow(RuleError);
+    });
+  });
+
   it("refuses a rule without a name, an instruction or a condition, or with a taken name", () => {
     sandbox.withRules((rules) => {
       expect(() => rules.createRule({ ...rule, name: " " })).toThrow(RuleError);
@@ -51,6 +64,30 @@ describe("rules service", () => {
       expect(() => rules.createRule({ ...rule, conditions: ["  "] })).toThrow(RuleError);
       rules.createRule(rule);
       expect(() => rules.createRule(rule)).toThrow(RuleError);
+    });
+  });
+
+  it("gives the default settings until they are changed, then the stored ones", () => {
+    sandbox.withRules((rules) => {
+      expect(rules.settings()).toEqual({ cutoff: 0.6, cap: 3, timeLimitMs: 3000 });
+      expect(rules.updateSettings({ cap: 5 })).toEqual({ cutoff: 0.6, cap: 5, timeLimitMs: 3000 });
+    });
+    sandbox.withRules((rules) => {
+      expect(rules.settings()).toEqual({ cutoff: 0.6, cap: 5, timeLimitMs: 3000 });
+    });
+  });
+
+  it.each([
+    [{ cutoff: 1.2 }],
+    [{ cutoff: -0.1 }],
+    [{ cap: 0 }],
+    [{ cap: 2.5 }],
+    [{ timeLimitMs: 0 }],
+    [{ timeLimitMs: Number.NaN }],
+  ])("refuses the setting %o and stores nothing", (change) => {
+    sandbox.withRules((rules) => {
+      expect(() => rules.updateSettings({ cap: 4, ...change })).toThrow(RuleError);
+      expect(rules.settings()).toEqual({ cutoff: 0.6, cap: 3, timeLimitMs: 3000 });
     });
   });
 });
