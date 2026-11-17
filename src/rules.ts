@@ -494,7 +494,10 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       const row = draft(ruleId);
       if (!row) throw new RuleError("This rule has no draft to publish.");
       const conditions = conditionsOf(row.id);
+      // The same refusals as publish, so a draft that scores can be published.
       requireComplete({ instruction: row.instruction, conditions });
+      requireCompleteScope(scopeOf(row.id));
+      requireFreeName(row.name, ruleId);
       return rescoreCases({
         matcher: options.matcher,
         conditions,
