@@ -252,7 +252,7 @@ export interface RulesService extends AnalyticsQueries, Flags {
    * a new version is published. Refuses wrong matches (those are cleared by
    * fixing the rule), an unknown reason, and a reason the rule is not listed for.
    */
-  clearAttentionReason(ruleId: number, kind: AttentionKind): void;
+  clearAttentionReason(ruleId: number, kind: AttentionKind, versionNumber?: number): void;
   /** How much of Jev's per-request limit the recent checks have used. */
   limitUse(): LimitUse;
 }
@@ -758,13 +758,17 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       return attentionList(db, readSettings());
     },
 
-    clearAttentionReason(ruleId, kind) {
+    clearAttentionReason(ruleId, kind, versionNumber) {
       requireRule(ruleId);
       if (kind === "wrong_matches") {
         throw new RuleError("Wrong matches cannot be cleared this way: fix the rule and publish a new version.");
       }
       if (!CLEARABLE_KINDS.includes(kind)) throw new RuleError("No such attention reason.");
       const version = live(ruleId);
+      // The user judged the version they were shown; a newer one has not been looked at.
+      if (versionNumber !== undefined && version?.number !== versionNumber) {
+        throw new RuleError("This rule has a newer version than the one listed. Refresh the list and look again.");
+      }
       // Clearing twice is fine; clearing a reason the rule is not listed for is not.
       const already =
         version !== undefined &&

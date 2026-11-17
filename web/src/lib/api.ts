@@ -269,13 +269,18 @@ export function listAttention(): Promise<AttentionEntry[]> {
 }
 
 /**
- * The user judged one of a rule's attention reasons fine. Answers with the
- * list as it now is. Wrong matches are refused: they go when the rule is fixed.
+ * The user judged one of a rule's attention reasons fine, for the version
+ * they were shown. Answers with the list as it now is. Wrong matches are refused: they go when the rule is fixed.
  */
-export function clearAttentionReason(ruleId: number, kind: AttentionKind): Promise<AttentionEntry[]> {
-  return call<{ rules: AttentionEntry[] }>("POST", `/api/rules/${ruleId}/looks-fine`, { reason: kind }).then(
-    (r) => r.rules,
-  );
+export function clearAttentionReason(
+  ruleId: number,
+  kind: AttentionKind,
+  versionNumber: number,
+): Promise<AttentionEntry[]> {
+  return call<{ rules: AttentionEntry[] }>("POST", `/api/rules/${ruleId}/looks-fine`, {
+    reason: kind,
+    version: versionNumber,
+  }).then((r) => r.rules);
 }
 
 /** The user marks a match wrong or right; it becomes a saved case for its rule. */

@@ -275,7 +275,10 @@ export async function handleApi(
       return send(res, 200, rules.getRule(id));
     }
     if (id !== undefined && parts.length === 3 && parts[2] === "looks-fine" && method === "POST") {
-      rules.clearAttentionReason(id, text(await readJson(req), "reason") as AttentionKind);
+      const body = await readJson(req);
+      const version = body["version"];
+      if (version !== undefined && typeof version !== "number") throw new HttpError(400, '"version" must be a number.');
+      rules.clearAttentionReason(id, text(body, "reason") as AttentionKind, version);
       return send(res, 200, { rules: rules.attention() });
     }
     if (id !== undefined && parts.length === 2 && method === "DELETE") {

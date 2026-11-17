@@ -265,6 +265,24 @@ describe("needs attention", () => {
         .find((entry) => entry.ruleId === ruleId)
         ?.reasons.map((reason) => reason.kind);
 
+    it("refuses to clear a reason for a version other than the live one", async () => {
+      thresholds({ quietChecks: 1 });
+      const ruleId = sandbox.liveRule({ name: "Reworded", conditions: ["Old wording."] });
+      sandbox.withRules((rules) => {
+        rules.saveDraft(ruleId, { instruction: "Do it.", conditions: ["New wording."] });
+        rules.publish(ruleId);
+      });
+      await message({});
+      expect(kindsOf(ruleId)).toEqual(["never_matches"]);
+
+      // The list the user looked at showed version 1; version 2 has not been judged.
+      expect(() => sandbox.withRules((rules) => rules.clearAttentionReason(ruleId, "never_matches", 1))).toThrow(RuleError);
+      expect(kindsOf(ruleId)).toEqual(["never_matches"]);
+
+      sandbox.withRules((rules) => rules.clearAttentionReason(ruleId, "never_matches", 2));
+      expect(kindsOf(ruleId)).toBeUndefined();
+    });
+
     it("clears one reason of several, for that rule only", async () => {
       thresholds({ recentChecks: 2, busyShare: 0.5 });
       const rule = sandbox.liveRule({ name: "Weak and eager", conditions: ["Condition A."] });

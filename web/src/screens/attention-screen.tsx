@@ -54,16 +54,42 @@ function ReasonBadge({ kind }: { kind: AttentionKind }) {
   );
 }
 
-/** Takes the list as it is after a reason was cleared. */
-const ClearedContext = React.createContext<(entries: AttentionEntry[]) => void>(
-  () => undefined,
-);
+/** Told which reason of which rule was cleared, so the list can drop it. */
+const ClearedContext = React.createContext<
+  (ruleId: number, kind: AttentionKind) => void
+>(() => undefined);
+
+/**
+ * The list without one reason of one rule; the rule goes with its last
+ * reason. Each clear removes only its own reason, so answers that arrive out
+ * of order cannot bring a cleared reason back.
+ */
+const withoutReason = (
+  entries: AttentionEntry[],
+  ruleId: number,
+  kind: AttentionKind,
+): AttentionEntry[] =>
+  entries
+    .map((entry) =>
+      entry.ruleId === ruleId
+        ? { ...entry, reasons: entry.reasons.filter((r) => r.kind !== kind) }
+        : entry,
+    )
+    .filter((entry) => entry.reasons.length > 0);
 
 /**
  * Clears one reason for one rule's live version: the user looked and judged
  * it fine. Wrong matches get no such button; they go when the rule is fixed.
  */
-function LooksFine({ ruleId, kind }: { ruleId: number; kind: AttentionKind }) {
+function LooksFine({
+  ruleId,
+  versionNumber,
+  kind,
+}: {
+  ruleId: number;
+  versionNumber: number;
+  kind: AttentionKind;
+}) {
   const onCleared = React.useContext(ClearedContext);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -82,8 +108,8 @@ function LooksFine({ ruleId, kind }: { ruleId: number; kind: AttentionKind }) {
           event.stopPropagation();
           setBusy(true);
           setError(null);
-          clearAttentionReason(ruleId, kind)
-            .then(onCleared)
+          clearAttentionReason(ruleId, kind, versionNumber)
+            .then(() => onCleared(ruleId, kind))
             .catch((e: unknown) => {
               setError(e instanceof Error ? e.message : String(e));
               setBusy(false);
@@ -155,7 +181,11 @@ const columns: ColumnDef<AttentionEntry>[] = [
               {reason.summary}
             </span>
             {reason.kind !== "wrong_matches" && (
-              <LooksFine ruleId={row.original.ruleId} kind={reason.kind} />
+              <LooksFine
+                ruleId={row.original.ruleId}
+                versionNumber={row.original.versionNumber}
+                kind={reason.kind}
+              />
             )}
           </li>
         ))}
@@ -169,6 +199,11 @@ const columns: ColumnDef<AttentionEntry>[] = [
 
 export function AttentionScreen() {
   const [entries, setEntries] = React.useState<AttentionEntry[]>([]);
+  const dropReason = React.useCallback(
+    (ruleId: number, kind: AttentionKind) =>
+      setEntries((current) => withoutReason(current, ruleId, kind)),
+    [],
+  );
   const [loaded, setLoaded] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [attempt, setAttempt] = React.useState(0);
@@ -238,7 +273,7 @@ export function AttentionScreen() {
           {error}
         </p>
       )}
-      <ClearedContext.Provider value={setEntries}>
+      <ClearedContext.Provider value={dropReason}>
         <DataTable
           table={table}
           onRowClick={(entry) => navigate(`/rules/${entry.ruleId}`)}
