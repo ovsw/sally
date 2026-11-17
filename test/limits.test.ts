@@ -82,14 +82,15 @@ describe("splitting the conditions across requests", () => {
     expect(checks()).toMatchObject([{ input_tokens: 42, request_tokens: 42 }]);
   });
 
-  it("lets the message through untouched when any one of the requests fails", async () => {
+  it("fails the check when one of the requests fails on both tries", async () => {
     sandbox.liveRule({ name: "Many conditions", conditions: Array.from({ length: 400 }, (_, n) => longCondition(n)) });
     let call = 0;
     const matcher = standInMatcher(
       {},
       {
         answer: async (conditions) => {
-          if (++call === 2) throw new Error("Jev returned HTTP 500");
+          // The second request of each try fails.
+          if (++call % 2 === 0) throw new Error("Jev returned HTTP 500");
           return { scores: Object.fromEntries(conditions.map((c) => [c.id, 1])), inputTokens: 10 };
         },
       },
@@ -97,7 +98,7 @@ describe("splitting the conditions across requests", () => {
 
     const output = await runMessageHook(hookInput("Tidy up the sidebar"), { env: sandbox.env, matcher });
 
-    expect(output).toBe("");
+    expect(JSON.parse(output).decision).toBe("block");
     expect(checks()).toMatchObject([{ outcome: "failed" }]);
     expect(sandbox.query("SELECT * FROM matches")).toEqual([]);
   });
@@ -176,11 +177,22 @@ describe("settings in the app", () => {
     expect(settings).toEqual({
       cutoff: 0.6,
       timeLimitMs: 10_000,
+      stopOnFailure: true,
       recentChecks: 100,
       busyShare: 0.3,
       closeMargin: 0.05,
       quietChecks: 200,
     });
+  });
+
+  it("switches stopping on a failed check off and on, and takes only true or false for it", async () => {
+    expect((await put({ stopOnFailure: false })).settings.stopOnFailure).toBe(false);
+    expect((await app.json<SettingsAnswer>("GET", "/api/settings")).settings.stopOnFailure).toBe(false);
+    expect((await put({ stopOnFailure: true })).settings.stopOnFailure).toBe(true);
+
+    const refused = await app.call("PUT", "/api/settings", { stopOnFailure: 0 });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: '"stopOnFailure" must be true or false.' });
   });
 
   it("applies a changed cutoff on the next check", async () => {

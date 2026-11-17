@@ -116,6 +116,27 @@ describe("an old database", () => {
     ).toEqual(["should_match"]);
   });
 
+  it("stops the turn on a failed check from then on, and keeps the settings it had", async () => {
+    writeOldDatabase();
+    const old = new DatabaseSync(databasePath(sandbox.env));
+    old.exec("INSERT INTO settings (key, value) VALUES ('time_limit_ms', 4000)");
+    old.close();
+
+    // The old rule's check fails on both tries, so the message is blocked.
+    const output = await runMessageHook(hookInput("fifth message"), {
+      env: sandbox.env,
+      matcher: standInMatcher({}, { answer: () => Promise.reject(new Error("fetch failed")) }),
+    });
+    expect(JSON.parse(output).decision).toBe("block");
+
+    expect(sandbox.withRules((rules) => rules.settings())).toMatchObject({ stopOnFailure: true, timeLimitMs: 4000 });
+    expect(sandbox.query("SELECT key, value FROM settings ORDER BY key")).toEqual([
+      { key: "stop_on_failure", value: 1 },
+      { key: "time_limit_ms", value: 4000 },
+    ]);
+    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 11 }]);
+  });
+
   it("ends in the same shape as a new database", () => {
     writeOldDatabase();
     sandbox.withRules(() => undefined);

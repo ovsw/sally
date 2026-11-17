@@ -24,18 +24,21 @@ it("prints nothing and exits successfully with no live rules", () => {
   const result = run(hookInput("hello there"));
   expect(result.status).toBe(0);
   expect(result.stdout).toBe("");
-  expect(sandbox.query("SELECT outcome, error FROM checks")).toEqual([{ outcome: "failed", error: "no live rules" }]);
+  expect(sandbox.query("SELECT outcome, error FROM checks")).toEqual([{ outcome: "nothing", error: null }]);
 });
 
-it("prints nothing and exits successfully with a live rule but no API key", () => {
+it("blocks the message and exits successfully with a live rule but no API key", () => {
   sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
   const result = run(hookInput("hello there"));
   expect(result.status).toBe(0);
-  expect(result.stdout).toBe("");
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    decision: "block",
+    reason: expect.stringContaining("Sally could not check this message against your rules: no Jev API key is set."),
+  });
   expect(sandbox.query("SELECT outcome, error FROM checks")).toEqual([{ outcome: "failed", error: "missing API key" }]);
 });
 
-it("runs the reply hook: prints nothing and exits successfully with a live reply rule but no API key", () => {
+it("runs the reply hook: warns the user and exits successfully with a live reply rule but no API key", () => {
   sandbox.liveRule({ name: "Rule", checkType: "reply", conditions: ["Condition A."] });
   const result = spawnSync(process.execPath, [cli, "hook", "reply"], {
     input: JSON.stringify({ session_id: "s", cwd: "/work/project", stop_hook_active: false, last_assistant_message: "Done." }),
@@ -43,14 +46,35 @@ it("runs the reply hook: prints nothing and exits successfully with a live reply
     env: { PATH: process.env.PATH, ...sandbox.env },
   });
   expect(result.status).toBe(0);
-  expect(result.stdout).toBe("");
+  expect(JSON.parse(result.stdout)).toEqual({
+    systemMessage: "Sally could not check this reply against your rules: no Jev API key is set. The reply was not checked.",
+  });
   expect(sandbox.query("SELECT check_type, outcome, error FROM checks")).toEqual([
     { check_type: "reply", outcome: "failed", error: "missing API key" },
   ]);
 });
 
-it("prints nothing and exits successfully on unreadable input", () => {
+it("lets the turn through with a warning and exits successfully on unreadable input", () => {
   const result = run("{ not json");
   expect(result.status).toBe(0);
-  expect(result.stdout).toBe("");
+  expect(Object.keys(JSON.parse(result.stdout))).toEqual(["systemMessage"]);
+});
+
+it("switches stopping on a failed check off and on from the command line", () => {
+  const settings = (...args: string[]) =>
+    spawnSync(process.execPath, [cli, "settings", ...args], { encoding: "utf8", env: { PATH: process.env.PATH, ...sandbox.env } });
+  sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+
+  expect(settings("stop-on-failure").stdout).toBe("Stop on failure is on: when a check fails, Sally stops the turn.\n");
+  const off = settings("stop-on-failure", "off");
+  expect(off.status).toBe(0);
+  expect(off.stdout).toBe("Stop on failure is off: when a check fails, the turn goes through without your rules.\n");
+  expect(run(hookInput("hello there")).stdout).toBe("");
+
+  expect(settings("stop-on-failure", "on").status).toBe(0);
+  expect(JSON.parse(run(hookInput("hello there")).stdout).decision).toBe("block");
+
+  const wrong = settings("stop-on-failure", "maybe");
+  expect(wrong.status).toBe(1);
+  expect(wrong.stderr).toBe("Usage: sally settings stop-on-failure [on|off]\n");
 });

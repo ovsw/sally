@@ -141,7 +141,7 @@ describe("an evaluation run", () => {
     const matcher = standInMatcher({}, { answer: async () => Promise.reject(new Error("Jev returned HTTP 503")) });
     const result = await report([example], matcher);
     expect(result.summary).toMatchObject({ cases: 5, completed: 0, failed: 5, missed: 0, wrongMatchRate: null });
-    expect(result.cases[0]!.error).toBe("Jev returned HTTP 503");
+    expect(result.cases[0]!.error).toBe("Jev returned HTTP 503 (second try; the first failed: Jev returned HTTP 503)");
   });
 
   it("leaves skipped checks out of the wrong-match rate, timing and tokens", async () => {

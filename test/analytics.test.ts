@@ -110,12 +110,18 @@ describe("activity", () => {
     await message("first", failing);
     const pending = message("second", hanging);
     await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     await pending;
 
     const checks = sandbox.withRules((rules) => rules.activity());
     expect(checks).toMatchObject([
-      { text: "second", outcome: "failed", error: "timeout after 10000 ms", matches: [] },
-      { text: "first", outcome: "failed", error: "Jev answered 500", matches: [] },
+      {
+        text: "second",
+        outcome: "failed",
+        error: "timeout after 10000 ms (second try; the first failed: timeout after 10000 ms)",
+        matches: [],
+      },
+      { text: "first", outcome: "failed", error: "Jev answered 500 (second try; the first failed: Jev answered 500)", matches: [] },
     ]);
   });
 

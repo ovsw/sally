@@ -82,19 +82,26 @@ function optionalScope(body: Record<string, unknown>, key: string): Scope | unde
 const SETTING_NAMES: (keyof Settings)[] = [
   "cutoff",
   "timeLimitMs",
+  "stopOnFailure",
   "recentChecks",
   "busyShare",
   "closeMargin",
   "quietChecks",
 ];
 
-/** The settings given in the body; each must be a number. Unknown keys are refused. */
+/** The settings given in the body: stopOnFailure must be true or false, every other a number. Unknown keys are refused. */
 function settingsFrom(body: Record<string, unknown>): Partial<Settings> {
   const changes: Partial<Settings> = {};
-  for (const [key, value] of Object.entries(body)) {
-    if (!SETTING_NAMES.includes(key as keyof Settings)) throw new HttpError(400, `"${key}" is not a setting.`);
-    if (typeof value !== "number") throw new HttpError(400, `"${key}" must be a number.`);
-    changes[key as keyof Settings] = value;
+  for (const [name, value] of Object.entries(body)) {
+    const key = SETTING_NAMES.find((setting) => setting === name);
+    if (!key) throw new HttpError(400, `"${name}" is not a setting.`);
+    if (key === "stopOnFailure") {
+      if (typeof value !== "boolean") throw new HttpError(400, `"${name}" must be true or false.`);
+      changes[key] = value;
+    } else {
+      if (typeof value !== "number") throw new HttpError(400, `"${name}" must be a number.`);
+      changes[key] = value;
+    }
   }
   return changes;
 }

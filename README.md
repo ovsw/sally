@@ -28,7 +28,8 @@ files as it was, and both follow `CLAUDE_CONFIG_DIR` when it is set.
 
 - **API key**: the `TYPESAFE_API_KEY` environment variable, or the file
   `~/.config/sally/api_key` (readable only by you: `chmod 600`). Without a key
-  Sally stays silent.
+  every check fails as soon as you have a live rule: see
+  [When a check fails](#when-a-check-fails).
 - **Database**: `~/.local/share/sally/sally.db` (SQLite). It holds your rules
   and every check, including the full text of your messages, so it never
   belongs in a repository.
@@ -50,6 +51,34 @@ the next check on.
 
 The command builds the app into `dist/web` when the build is missing or older
 than its sources.
+
+## When a check fails
+
+A check fails when Sally cannot get scores from Jev: no API key, a network
+error, no answer within the time limit, or an answer it cannot read. Sally
+then cannot say whether a rule matched, so it stops the turn rather than let
+it through without your rules. Apart from a missing API key, scoring is tried
+once more first, with the full time limit again.
+
+- **Message check**: the message is not sent to Claude. You see why, and
+  sending the message again retries.
+- **Reply check**: the reply is already written, so it stands; you get a
+  warning that it was not checked. Claude is not made to continue.
+
+To let turns through when a check fails, as Sally did before, switch off
+"Stop the turn when a check fails" on the Settings screen of the web app, or
+run:
+
+```sh
+sally settings stop-on-failure off   # on switches it back; no value shows it
+```
+
+Having no live rules is not a failure: nothing is asked of Jev and nothing
+matched. And a Sally that is itself broken (its database cannot be opened,
+say) never blocks you: the turn goes through, with a warning.
+
+The time limit can be at most 10 seconds, so that the two tries always fit
+inside the 30 seconds Claude Code gives the message hook.
 
 ## Commands for agents
 

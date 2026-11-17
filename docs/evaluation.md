@@ -109,7 +109,8 @@ type.
 - **Wrong-match rate**: the share of checks that ran (neither failed nor
   skipped) with at least one wrong match.
 - **Failed checks** (timeout, Jev error) are listed with their error and left
-  out of the counts above, so a slow Jev does not look like a miss.
+  out of the counts above, so a slow Jev does not look like a miss. A check
+  counts as failed only after its second try also failed.
 - **Time per check**: the engine's own duration per check, Jev's round trip
   included. **Input tokens**: what Jev reported, in all and for the largest
   check. Both cover only the checks that ran: a skipped check never asks Jev.

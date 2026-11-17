@@ -27,12 +27,14 @@ export interface CheckResult {
   checkId: number;
   /** Matched rules, strongest first. Empty unless the outcome is attached or sent back. */
   matches: Match[];
+  /** Why the check failed, in a few plain words for the user. Only when the outcome is failed. */
+  failure?: string;
 }
 
 export interface EngineOptions {
   store: Store;
   rules: RulesService;
-  /** Undefined when no API key is available: every check then fails open. */
+  /** Undefined when no API key is available: every check with live rules then fails. */
   matcher: Matcher | undefined;
 }
 
@@ -46,6 +48,33 @@ class TimeoutError extends Error {
   constructor(ms: number) {
     super(`timeout after ${ms} ms`);
   }
+}
+
+/** No matcher could be built, so a second try would fail the same way. */
+class MissingApiKeyError extends Error {
+  constructor() {
+    super("missing API key");
+  }
+}
+
+/** A failed try, with the tokens Jev reported if it got that far. */
+class FailedTry extends Error {
+  readonly reason: unknown;
+  readonly tokens: Tokens | undefined;
+  constructor(reason: unknown, tokens?: Tokens) {
+    super(reason instanceof Error ? reason.message : String(reason));
+    this.reason = reason;
+    this.tokens = tokens;
+  }
+}
+
+/** Why a check failed, in a few plain words for the user. */
+function failureInWords(reason: unknown): string {
+  if (reason instanceof MissingApiKeyError) return "no Jev API key is set";
+  if (reason instanceof TimeoutError) return "Jev did not answer in time";
+  if (reason instanceof MalformedAnswerError) return "Jev's answer could not be read";
+  if (reason instanceof Error && /^Jev returned HTTP \d+$/.test(reason.message)) return reason.message;
+  return "Jev could not be reached";
 }
 
 interface ScoreRow {
@@ -83,8 +112,9 @@ interface CheckRecord {
 
 /**
  * Runs checks: scores the live conditions of the check type against the
- * text, decides which rules match, and records everything. Any failure
- * leaves the turn untouched.
+ * text, decides which rules match, and records everything. Scoring that
+ * fails is tried once more; a check that still has no scores is recorded as
+ * failed, and the hooks decide what that does to the turn.
  */
 export function createEngine(options: EngineOptions): Engine {
   const { store, rules, matcher } = options;
@@ -155,7 +185,7 @@ export function createEngine(options: EngineOptions): Engine {
     conditions: MatcherCondition[],
     timeLimitMs: number,
   ): Promise<{ scores: Record<string, number | undefined>; tokens: Tokens }> {
-    if (!matcher) throw new Error("missing API key");
+    if (!matcher) throw new MissingApiKeyError();
     const controller = new AbortController();
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -220,28 +250,51 @@ export function createEngine(options: EngineOptions): Engine {
       // A text too long for Jev's per-question limit is cut to its last part, and the cut is recorded.
       const { text, cut } = cutToLastPart(judged.text, textTokenBudget(conditions));
       const check: CheckRecord = { input, text, cut, project, startedAt, cutoff };
-      const failed = (error: string, tokens?: Tokens): CheckResult => {
-        const checkId = record(check, "failed", { error, tokens });
-        return { outcome: "failed", checkId, matches: [] };
-      };
-      if (live.length === 0) return failed("no live rules");
-
-      let result;
-      try {
-        result = await score(maskEmails(text), conditions, timeLimitMs);
-      } catch (error) {
-        return failed(error instanceof Error ? error.message : String(error));
+      // With no live rule there is nothing to ask Jev, and the answer is known: no rule matched.
+      if (live.length === 0) {
+        return { outcome: "nothing", checkId: record(check, "nothing"), matches: [] };
       }
 
-      // Read answers only for the IDs that were sent; every one must be a score from 0 to 1.
-      const scores: ScoreRow[] = [];
-      for (const [id, { rule, conditionId }] of sent) {
-        const value = result.scores[id];
-        if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
-          return failed(new MalformedAnswerError(`no valid score for ${id}`).message, result.tokens);
+      /** One try at getting a valid score for every condition sent. */
+      const tryScoring = async (): Promise<{ scores: ScoreRow[]; tokens: Tokens }> => {
+        let result;
+        try {
+          result = await score(maskEmails(text), conditions, timeLimitMs);
+        } catch (error) {
+          throw new FailedTry(error);
         }
-        scores.push({ rule, conditionId, score: value });
+        // Read answers only for the IDs that were sent; every one must be a score from 0 to 1.
+        const scores: ScoreRow[] = [];
+        for (const [id, { rule, conditionId }] of sent) {
+          const value = result.scores[id];
+          if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+            throw new FailedTry(new MalformedAnswerError(`no valid score for ${id}`), result.tokens);
+          }
+          scores.push({ rule, conditionId, score: value });
+        }
+        return { scores, tokens: result.tokens };
+      };
+
+      // A network error, a timeout or an unreadable answer may not happen twice, so scoring
+      // is tried once more, with the full time limit again. A missing API key is not retried.
+      let result;
+      let firstError: string | undefined;
+      for (;;) {
+        try {
+          result = await tryScoring();
+          break;
+        } catch (error) {
+          const failedTry = error as FailedTry;
+          if (firstError === undefined && !(failedTry.reason instanceof MissingApiKeyError)) {
+            firstError = failedTry.message;
+            continue;
+          }
+          const retried = firstError === undefined ? "" : ` (second try; the first failed: ${firstError})`;
+          const checkId = record(check, "failed", { error: failedTry.message + retried, tokens: failedTry.tokens });
+          return { outcome: "failed", checkId, matches: [], failure: failureInWords(failedTry.reason) };
+        }
       }
+      const { scores } = result;
 
       // A rule matches when any one of its conditions reaches the cutoff; its best condition stands for it.
       const best = new Map<number, ScoreRow>();

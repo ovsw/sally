@@ -120,6 +120,12 @@ export interface Settings {
   cutoff: number;
   /** How long a check may wait for the matcher before giving up. */
   timeLimitMs: number;
+  /**
+   * Whether a failed check stops the turn: a failed message check blocks the
+   * message, a failed reply check warns the user. Off, the turn goes through
+   * without the user's rules.
+   */
+  stopOnFailure: boolean;
   // The attention thresholds: when a rule is listed as needing attention.
   /** How many of the latest checks count as recent. */
   recentChecks: number;
@@ -134,6 +140,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   cutoff: 0.6,
   timeLimitMs: 10_000,
+  stopOnFailure: true,
   recentChecks: 100,
   busyShare: 0.3,
   closeMargin: 0.05,
@@ -144,6 +151,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
 const SETTING_KEYS: Record<keyof Settings, string> = {
   cutoff: "cutoff",
   timeLimitMs: "time_limit_ms",
+  stopOnFailure: "stop_on_failure",
   recentChecks: "recent_checks",
   busyShare: "busy_share",
   closeMargin: "close_margin",
@@ -152,17 +160,24 @@ const SETTING_KEYS: Record<keyof Settings, string> = {
 const SETTINGS = Object.keys(SETTING_KEYS) as (keyof Settings)[];
 const SETTING_RANGES: Record<keyof Settings, string> = {
   cutoff: "The cutoff is a score from 0 to 1.",
-  timeLimitMs: "The time limit is a whole number of milliseconds, at least 1.",
+  timeLimitMs: "The time limit is a whole number of milliseconds, from 1 to 10000.",
+  stopOnFailure: "Stopping the turn when a check fails is either on or off.",
   recentChecks: "The number of recent checks is a whole number of at least 1.",
   busyShare: "The share of recent checks is a number above 0, up to 1.",
   closeMargin: "The margin above the cutoff is a number from 0 to 1.",
   quietChecks: "The number of checks without a match is a whole number of at least 1.",
 };
 
-function validSetting(key: keyof Settings, value: number): boolean {
-  if (!Number.isFinite(value)) return false;
+/** The longest time limit a check may have. */
+export const MAX_TIME_LIMIT_MS = 10_000;
+
+function validSetting(key: keyof Settings, value: unknown): boolean {
+  if (key === "stopOnFailure") return typeof value === "boolean";
+  if (typeof value !== "number" || !Number.isFinite(value)) return false;
   if (key === "cutoff" || key === "closeMargin") return value >= 0 && value <= 1;
   if (key === "busyShare") return value > 0 && value <= 1;
+  // Two tries at the time limit must fit inside the 30 seconds Claude Code gives a hook.
+  if (key === "timeLimitMs") return Number.isInteger(value) && value >= 1 && value <= MAX_TIME_LIMIT_MS;
   return Number.isInteger(value) && value >= 1;
 }
 
@@ -422,7 +437,12 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     const result = { ...DEFAULT_SETTINGS };
     for (const key of SETTINGS) {
       const value = stored.get(SETTING_KEYS[key]);
-      if (value !== undefined && validSetting(key, value)) result[key] = value;
+      if (key === "stopOnFailure") {
+        // An on/off setting is stored as 1 or 0.
+        if (value === 0 || value === 1) result[key] = value === 1;
+      } else if (value !== undefined && validSetting(key, value)) {
+        result[key] = value;
+      }
     }
     return result;
   }
@@ -722,7 +742,7 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         const save = db.prepare(
           "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
         );
-        for (const [key, value] of entries) save.run(SETTING_KEYS[key], value);
+        for (const [key, value] of entries) save.run(SETTING_KEYS[key], typeof value === "boolean" ? Number(value) : value);
       });
       return readSettings();
     },

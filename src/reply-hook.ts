@@ -1,7 +1,7 @@
 import { type CheckInput, type CheckResult, createEngine } from "./engine.ts";
 import { createJevMatcher } from "./jev.ts";
 import type { Matcher } from "./matcher.ts";
-import { formatAttached } from "./message-hook.ts";
+import { formatAttached, formatBroken } from "./message-hook.ts";
 import { databasePath, type Env, readApiKey } from "./paths.ts";
 import { createRulesService } from "./rules.ts";
 import { openStore } from "./store.ts";
@@ -28,9 +28,19 @@ function finalReply(input: StopInput): string | undefined {
     return input.last_assistant_message;
   }
   if (typeof input.transcript_path === "string" && input.transcript_path) {
-    return finalReplyFromTranscript(input.transcript_path);
+    try {
+      return finalReplyFromTranscript(input.transcript_path);
+    } catch {
+      // A transcript that cannot be read holds no reply to check.
+      return undefined;
+    }
   }
   return undefined;
+}
+
+/** What the user sees when a reply check failed: the reply is already written, so it stands, with this warning. */
+export function formatUnchecked(failure: string): string {
+  return `Sally could not check this reply against your rules: ${failure}. The reply was not checked.`;
 }
 
 /**
@@ -38,7 +48,10 @@ function finalReply(input: StopInput): string | undefined {
  * what to print on stdout: a block with the matched instructions as the
  * reason when a reply-check rule matches, otherwise nothing. When Claude Code
  * is already continuing because of a stop hook, the revised reply is
- * recorded and let through without a check. It never throws.
+ * recorded and let through without a check. When the check failed and the
+ * stop-on-failure setting is on, the user gets a warning that the reply was
+ * not checked; Claude is not made to continue. It never throws: if Sally
+ * itself is broken, the reply stands, with a warning to the user.
  */
 export async function runReplyHook(stdin: string, options: ReplyHookOptions): Promise<string> {
   try {
@@ -58,9 +71,10 @@ export async function runReplyHook(stdin: string, options: ReplyHookOptions): Pr
     const store = openStore(databasePath(options.env));
     try {
       const apiKey = options.matcher || continuing ? undefined : readApiKey(options.env);
+      const rules = createRulesService(store);
       const engine = createEngine({
         store,
-        rules: createRulesService(store),
+        rules,
         matcher: options.matcher ?? (apiKey ? createJevMatcher({ apiKey }) : undefined),
       });
 
@@ -77,12 +91,16 @@ export async function runReplyHook(stdin: string, options: ReplyHookOptions): Pr
       } finally {
         recordReply(store, { sessionId, reply, replyCheckId: result?.checkId });
       }
+      if (result.outcome === "failed" && rules.settings().stopOnFailure) {
+        // A warning for the user only: with no decision, Claude stops as it meant to.
+        return JSON.stringify({ systemMessage: formatUnchecked(result.failure ?? "unknown error") });
+      }
       if (result.outcome !== "sent_back") return "";
       return JSON.stringify({ decision: "block", reason: formatAttached(result.matches) });
     } finally {
       store.close();
     }
-  } catch {
-    return "";
+  } catch (error) {
+    return JSON.stringify({ systemMessage: formatBroken("reply", error) });
   }
 }

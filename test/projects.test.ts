@@ -96,7 +96,7 @@ describe("the project of a check", () => {
   it("is recorded once, when first seen, and on every kind of check", async () => {
     const repo = gitRepo(join(sandbox.root, "repo"), { origin: "git@github.com:owner/repo.git" });
 
-    await messageIn(repo); // fails: no live rules
+    await messageIn(repo); // nothing: no live rules
     const [first] = projects();
     sandbox.liveRule({ name: "A rule", conditions: ["Condition A."] });
     await messageIn(repo, standInMatcher({ "Condition A.": 0.9 })); // attached
@@ -107,7 +107,7 @@ describe("the project of a check", () => {
     }); // skipped by the guard
 
     expect(sandbox.query<{ outcome: string }>("SELECT outcome FROM checks ORDER BY id").map((c) => c.outcome)).toEqual([
-      "failed",
+      "nothing",
       "attached",
       "skipped",
       "skipped",

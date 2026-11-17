@@ -1,6 +1,9 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MalformedAnswerError } from "../src/matcher.ts";
 import { ATTACHED_HEADER, REPORT_LINE, runMessageHook } from "../src/message-hook.ts";
+import { databasePath } from "../src/paths.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { standInMatcher } from "./support/stand-in-matcher.ts";
 
@@ -68,14 +71,14 @@ describe("message check", () => {
     expect(sandbox.query("SELECT * FROM matches")).toEqual([]);
   });
 
-  it("prints nothing with no live rules and records it as a failure without calling the matcher", async () => {
+  it("prints nothing with no live rules and records that nothing matched, without calling the matcher", async () => {
     const matcher = standInMatcher();
 
     const output = await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher });
 
     expect(output).toBe("");
     expect(matcher.calls).toEqual([]);
-    expect(checks()).toMatchObject([{ outcome: "failed", error: "no live rules" }]);
+    expect(checks()).toMatchObject([{ outcome: "nothing", error: null }]);
   });
 
   it("matches a rule when any one of its conditions clears the cutoff and records each score", async () => {
@@ -236,28 +239,46 @@ describe("what is recorded", () => {
   });
 });
 
-describe("failing open", () => {
-  const fails = async (matcher: ReturnType<typeof standInMatcher>, error: string | RegExp) => {
+describe("a failed message check", () => {
+  const RETRIED = (first: string) => ` (second try; the first failed: ${first})`;
+  const BLOCKED = (failure: string) =>
+    `Sally could not check this message against your rules: ${failure}. It was not sent to Claude.\n` +
+    "Send it again to retry.\n" +
+    'To let messages through when a check fails, switch off "Stop the turn when a check fails" on the Settings screen of `sally app`, or run: sally settings stop-on-failure off';
+
+  /** The block Claude Code is told to make: the reason is what the user sees. */
+  const blocked = (output: string): string => {
+    const parsed = JSON.parse(output);
+    expect(Object.keys(parsed).sort()).toEqual(["decision", "reason"]);
+    expect(parsed.decision).toBe("block");
+    return parsed.reason as string;
+  };
+
+  const fails = async (matcher: ReturnType<typeof standInMatcher>, error: string | RegExp, failure: string) => {
     sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
     const output = await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher });
-    expect(output).toBe("");
+    expect(blocked(output)).toBe(BLOCKED(failure));
+    // One check record for both tries.
+    expect(checks()).toHaveLength(1);
     const [check] = checks();
     expect(check!.outcome).toBe("failed");
     expect(check!.error).toMatch(error);
+    expect(check!.error).toContain("(second try; the first failed: ");
+    expect(matcher.calls).toHaveLength(2);
     expect(sandbox.query("SELECT * FROM matches")).toEqual([]);
   };
 
-  it("gives up after 10 seconds by default", async () => {
+  it("gives up on each try after 10 seconds by default, then blocks the message", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
-    let aborted = false;
+    let aborted = 0;
     const matcher = standInMatcher(
       {},
       {
         answer: (_conditions, signal) =>
           new Promise((_, reject) => {
             signal.addEventListener("abort", () => {
-              aborted = true;
+              aborted++;
               reject(signal.reason);
             });
           }),
@@ -268,25 +289,42 @@ describe("failing open", () => {
     let settled = false;
     void pending.then(() => (settled = true));
     await vi.advanceTimersByTimeAsync(9999);
+    expect(matcher.calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    // The second try has the full time limit again.
+    expect(matcher.calls).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(9999);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(await pending).toBe("");
-    expect(aborted).toBe(true);
-    expect(checks()).toMatchObject([{ outcome: "failed", error: "timeout after 10000 ms" }]);
+    expect(blocked(await pending)).toBe(BLOCKED("Jev did not answer in time"));
+    expect(aborted).toBe(2);
+    expect(checks()).toMatchObject([
+      { outcome: "failed", error: "timeout after 10000 ms" + RETRIED("timeout after 10000 ms") },
+    ]);
   });
 
-  it("fails open when the matcher errors", async () => {
+  it("blocks the message when the matcher errors twice", async () => {
     await fails(
       standInMatcher({}, { answer: async () => Promise.reject(new Error("Jev returned HTTP 503")) }),
+      "Jev returned HTTP 503",
       "Jev returned HTTP 503",
     );
   });
 
-  it("fails open when the matcher's answer is malformed", async () => {
+  it("blocks the message when Jev cannot be reached", async () => {
+    await fails(
+      standInMatcher({}, { answer: async () => Promise.reject(new TypeError("fetch failed")) }),
+      "fetch failed",
+      "Jev could not be reached",
+    );
+  });
+
+  it("blocks the message when the matcher's answer is malformed twice", async () => {
     await fails(
       standInMatcher({}, { answer: async () => Promise.reject(new MalformedAnswerError("response is not JSON")) }),
       /malformed answer/,
+      "Jev's answer could not be read",
     );
   });
 
@@ -294,32 +332,113 @@ describe("failing open", () => {
     ["a score that is not a number", Number.NaN],
     ["a score above 1", 1.5],
     ["a score below 0", -0.1],
-  ])("fails open on %s", async (_label, value) => {
+  ])("blocks the message on %s", async (_label, value) => {
     await fails(
       standInMatcher(
         {},
         { answer: async (conditions) => ({ scores: { [conditions[0]!.id]: value }, inputTokens: 5 }) },
       ),
       /malformed answer/,
+      "Jev's answer could not be read",
     );
   });
 
-  it("fails open when a sent condition gets no answer", async () => {
-    await fails(standInMatcher({}, { answer: async () => ({ scores: {}, inputTokens: 5 }) }), /malformed answer/);
+  it("blocks the message when a sent condition gets no answer", async () => {
+    await fails(
+      standInMatcher({}, { answer: async () => ({ scores: {}, inputTokens: 5 }) }),
+      /malformed answer/,
+      "Jev's answer could not be read",
+    );
   });
 
-  it("fails open with no API key and records the failure", async () => {
+  it("blocks the message with no API key, without a second try, and records the failure", async () => {
     sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
 
     const output = await runMessageHook(hookInput("hello there"), { env: sandbox.env });
 
-    expect(output).toBe("");
+    expect(blocked(output)).toBe(BLOCKED("no Jev API key is set"));
     expect(checks()).toMatchObject([{ outcome: "failed", error: "missing API key" }]);
   });
 
-  it("prints nothing for input it cannot read", async () => {
-    expect(await runMessageHook("not json", { env: sandbox.env, matcher: standInMatcher() })).toBe("");
+  it("attaches the rules when the second try succeeds, in one check record", async () => {
+    sandbox.liveRule({ name: "Rule", instruction: "Do the thing.", conditions: ["Condition A."] });
+    let tries = 0;
+    const matcher = standInMatcher(
+      {},
+      {
+        answer: async (conditions) => {
+          if (++tries === 1) throw new Error("fetch failed");
+          return { scores: Object.fromEntries(conditions.map((c) => [c.id, 0.9])), inputTokens: 42 };
+        },
+      },
+    );
+
+    const output = await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher });
+
+    expect(context(output)).toContain("Do the thing.");
+    expect(matcher.calls).toHaveLength(2);
+    expect(checks()).toMatchObject([{ outcome: "attached", error: null }]);
+  });
+
+  it("lets the message through in silence when stopping on a failed check is switched off", async () => {
+    sandbox.withRules((rules) => rules.updateSettings({ stopOnFailure: false }));
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher({}, { answer: async () => Promise.reject(new Error("fetch failed")) });
+
+    expect(await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher })).toBe("");
+    expect(await runMessageHook(hookInput("hello again"), { env: sandbox.env })).toBe("");
+    expect(checks()).toMatchObject([{ outcome: "failed" }, { outcome: "failed", error: "missing API key" }]);
+  });
+
+  it("does not block a bare slash command, which is skipped without asking Jev", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+
+    expect(await runMessageHook(hookInput("/clear"), { env: sandbox.env })).toBe("");
+    expect(checks()).toMatchObject([{ outcome: "skipped" }]);
+  });
+
+  it("prints nothing for a message with no text", async () => {
     expect(await runMessageHook(hookInput("   "), { env: sandbox.env, matcher: standInMatcher() })).toBe("");
+  });
+});
+
+describe("a broken Sally", () => {
+  /** The warning shown to the user; nothing in the output blocks the message. */
+  const warning = (output: string): string => {
+    const parsed = JSON.parse(output);
+    expect(Object.keys(parsed)).toEqual(["systemMessage"]);
+    return parsed.systemMessage as string;
+  };
+
+  it("lets the message through with a warning when the database cannot be opened", async () => {
+    // The data directory is a file, so the database inside it cannot be opened.
+    const blocked = join(sandbox.root, "not-a-directory");
+    writeFileSync(blocked, "");
+    const env = { ...sandbox.env, SALLY_DATA_DIR: join(blocked, "inside") };
+
+    const output = await runMessageHook(hookInput("hello there"), { env, matcher: standInMatcher() });
+
+    expect(warning(output)).toMatch(/^Sally is not working, so this message was not checked against your rules: /);
+  });
+
+  it("lets the message through with a warning when the database is not a database", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const dataDir = join(sandbox.root, "broken");
+    mkdirSync(dataDir);
+    writeFileSync(join(dataDir, basename(databasePath(sandbox.env))), "this is not a database");
+
+    const output = await runMessageHook(hookInput("hello there"), {
+      env: { ...sandbox.env, SALLY_DATA_DIR: dataDir },
+      matcher: standInMatcher(),
+    });
+
+    expect(warning(output)).toMatch(/^Sally is not working, so this message was not checked against your rules: /);
+  });
+
+  it("lets through, with a warning, input it cannot read", async () => {
+    const output = await runMessageHook("not json", { env: sandbox.env, matcher: standInMatcher() });
+
+    expect(warning(output)).toMatch(/^Sally is not working, so this message was not checked against your rules: /);
   });
 });
 
@@ -389,9 +508,10 @@ describe("stored settings", () => {
 
     const pending = runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher });
     await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(500);
 
-    expect(await pending).toBe("");
-    expect(checks()).toMatchObject([{ outcome: "failed", error: "timeout after 500 ms" }]);
+    expect(JSON.parse(await pending).decision).toBe("block");
+    expect(checks()).toMatchObject([{ outcome: "failed", error: expect.stringMatching(/^timeout after 500 ms /) }]);
   });
 });
 

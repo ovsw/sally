@@ -27,10 +27,38 @@ export function formatAttached(matches: Match[]): string {
   return [ATTACHED_HEADER, ...rules, REPORT_LINE].join("\n\n");
 }
 
+/** How the user switches stopping off; named in the text of a blocked message. */
+export const SWITCH_OFF_LINE =
+  'To let messages through when a check fails, switch off "Stop the turn when a check fails" on the Settings screen of `sally app`, or run: sally settings stop-on-failure off';
+
+/** What the user sees when a failed message check blocks the message. */
+export function formatBlocked(failure: string): string {
+  return [
+    `Sally could not check this message against your rules: ${failure}. It was not sent to Claude.`,
+    "Send it again to retry.",
+    SWITCH_OFF_LINE,
+  ].join("\n");
+}
+
+/** A short, one-line account of something thrown. */
+export function inAFewWords(error: unknown): string {
+  const text = (error instanceof Error ? error.message : String(error)).split("\n")[0]!.trim();
+  return text.length > 120 ? `${text.slice(0, 120)}...` : text || "unknown error";
+}
+
+/** What the user sees when Sally itself is broken: the turn goes through, with this warning. */
+export function formatBroken(what: "message" | "reply", error: unknown): string {
+  return `Sally is not working, so this ${what} was not checked against your rules: ${inAFewWords(error)}`;
+}
+
 /**
  * The user-prompt-submit hook. Takes the hook input Claude Code sends on
  * stdin and returns what to print on stdout: additional context for the
- * turn when a rule matches, otherwise nothing. It never throws.
+ * turn when a rule matches; a block, with the reason shown to the user, when
+ * the check failed and the stop-on-failure setting is on; otherwise nothing.
+ * It never throws: if Sally itself is broken (the database cannot be opened,
+ * say), the message goes through with a warning to the user, so that a
+ * broken Sally never blocks every message.
  */
 export async function runMessageHook(stdin: string, options: MessageHookOptions): Promise<string> {
   try {
@@ -40,9 +68,10 @@ export async function runMessageHook(stdin: string, options: MessageHookOptions)
     const store = openStore(databasePath(options.env));
     try {
       const apiKey = options.matcher ? undefined : readApiKey(options.env);
+      const rules = createRulesService(store);
       const engine = createEngine({
         store,
-        rules: createRulesService(store),
+        rules,
         matcher: options.matcher ?? (apiKey ? createJevMatcher({ apiKey }) : undefined),
       });
       const result = await engine.check({
@@ -51,6 +80,11 @@ export async function runMessageHook(stdin: string, options: MessageHookOptions)
         sessionId: typeof input.session_id === "string" ? input.session_id : undefined,
         cwd: typeof input.cwd === "string" ? input.cwd : undefined,
       });
+      if (result.outcome === "failed" && rules.settings().stopOnFailure) {
+        // The reason is shown to the user and never reaches Claude; Claude Code
+        // shows the message's text with it, so it can be sent again.
+        return JSON.stringify({ decision: "block", reason: formatBlocked(result.failure ?? "unknown error") });
+      }
       if (result.outcome !== "attached") return "";
       return JSON.stringify({
         hookSpecificOutput: {
@@ -61,7 +95,7 @@ export async function runMessageHook(stdin: string, options: MessageHookOptions)
     } finally {
       store.close();
     }
-  } catch {
-    return "";
+  } catch (error) {
+    return JSON.stringify({ systemMessage: formatBroken("message", error) });
   }
 }
