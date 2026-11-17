@@ -129,8 +129,11 @@ function changesFrom(
   saved: Settings,
 ): { changes: Partial<Settings> } | { invalid: FieldSpec } {
   const changes: Partial<Settings> = {};
+  const baseline = toForm(saved);
   for (const f of allFields) {
     const text = form[f.key].trim();
+    // An untouched field keeps its stored value exactly, unrounded.
+    if (text === baseline[f.key].trim()) continue;
     const number = Number(text);
     if (text === "" || !Number.isFinite(number)) return { invalid: f };
     const value = f.percent ? number / 100 : number;
@@ -269,7 +272,7 @@ export function SettingsScreen() {
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (!result) return;
+    if (!result || state.kind === "saving") return;
     if ("invalid" in result) {
       setState({
         kind: "error",
@@ -306,38 +309,44 @@ export function SettingsScreen() {
         <div className="w-full max-w-2xl">
           {/* The server checks each value and says what is wrong. */}
           <form className="space-y-8" onSubmit={save} noValidate>
-            <FieldSet>
-              <FieldLegend>Matching</FieldLegend>
-              <FieldDescription>
-                When a rule fires, and how long a check may take.
-              </FieldDescription>
-              <FieldGroup className="gap-6">
-                {matching.map((spec) => (
-                  <SettingField
-                    key={spec.key}
-                    spec={spec}
-                    value={form[spec.key]}
-                    onChange={change(spec.key)}
-                  />
-                ))}
-              </FieldGroup>
-            </FieldSet>
-            <FieldSet>
-              <FieldLegend>Needs attention</FieldLegend>
-              <FieldDescription>
-                When a rule is listed as needing attention.
-              </FieldDescription>
-              <FieldGroup className="gap-6">
-                {attention.map((spec) => (
-                  <SettingField
-                    key={spec.key}
-                    spec={spec}
-                    value={form[spec.key]}
-                    onChange={change(spec.key)}
-                  />
-                ))}
-              </FieldGroup>
-            </FieldSet>
+            {/* Locked while a save is pending, so no edit is lost to its answer. */}
+            <fieldset
+              className="space-y-8"
+              disabled={state.kind === "saving"}
+            >
+              <FieldSet>
+                <FieldLegend>Matching</FieldLegend>
+                <FieldDescription>
+                  When a rule fires, and how long a check may take.
+                </FieldDescription>
+                <FieldGroup className="gap-6">
+                  {matching.map((spec) => (
+                    <SettingField
+                      key={spec.key}
+                      spec={spec}
+                      value={form[spec.key]}
+                      onChange={change(spec.key)}
+                    />
+                  ))}
+                </FieldGroup>
+              </FieldSet>
+              <FieldSet>
+                <FieldLegend>Needs attention</FieldLegend>
+                <FieldDescription>
+                  When a rule is listed as needing attention.
+                </FieldDescription>
+                <FieldGroup className="gap-6">
+                  {attention.map((spec) => (
+                    <SettingField
+                      key={spec.key}
+                      spec={spec}
+                      value={form[spec.key]}
+                      onChange={change(spec.key)}
+                    />
+                  ))}
+                </FieldGroup>
+              </FieldSet>
+            </fieldset>
             <div className="flex items-center gap-3">
               <Button type="submit" disabled={!dirty || state.kind === "saving"}>
                 {state.kind === "saving" && (

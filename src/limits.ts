@@ -30,6 +30,11 @@ export function estimateTokens(text: string): number {
 
 const questionTokens = (condition: MatcherCondition) => estimateTokens(condition.text) + QUESTION_OVERHEAD_TOKENS;
 
+/** Whether one condition fits a request beside the least room the text is given. */
+export function conditionFits(text: string): boolean {
+  return estimateTokens(text) + QUESTION_OVERHEAD_TOKENS + MIN_TEXT_TOKENS + REQUEST_OVERHEAD_TOKENS <= QUESTION_TOKEN_LIMIT;
+}
+
 /** The most tokens the text may take so that it fits beside its longest question. */
 export function textTokenBudget(conditions: MatcherCondition[]): number {
   const longest = Math.max(0, ...conditions.map(questionTokens));

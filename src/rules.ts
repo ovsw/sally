@@ -1,4 +1,4 @@
-import { REQUEST_TOKEN_LIMIT, REQUEST_WARNING_SHARE } from "./limits.ts";
+import { conditionFits, REQUEST_TOKEN_LIMIT, REQUEST_WARNING_SHARE } from "./limits.ts";
 import { type Store, transaction } from "./store.ts";
 
 export type CheckType = "message" | "reply";
@@ -229,7 +229,9 @@ const cleanConditions = (conditions: string[]) => conditions.map((c) => c.trim()
 /** What a version needs before it can be live. */
 function requireComplete(content: RuleContent): void {
   if (!content.instruction.trim()) throw new RuleError("A rule needs an instruction.");
-  if (cleanConditions(content.conditions).length === 0) throw new RuleError("A rule needs at least one condition.");
+  const conditions = cleanConditions(content.conditions);
+  if (conditions.length === 0) throw new RuleError("A rule needs at least one condition.");
+  if (!conditions.every(conditionFits)) throw new RuleError("A condition is too long for one Jev request.");
 }
 
 function requireCheckType(checkType: unknown): asserts checkType is CheckType {

@@ -242,6 +242,7 @@ describe("reading the final reply", () => {
 
     // A reply this long is cut to its last part before checking.
     const sent = matcher.calls[0]!.text;
+    expect(sent.length).toBeLessThan(finalReply.length);
     expect(sent.endsWith("y The end.")).toBe(true);
     expect(finalReply.endsWith(sent)).toBe(true);
   });

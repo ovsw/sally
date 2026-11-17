@@ -65,6 +65,7 @@ describe("rules service", () => {
       expect(() => rules.createRule({ ...rule, name: " " })).toThrow(RuleError);
       expect(() => rules.createRule({ ...rule, instruction: "" })).toThrow(RuleError);
       expect(() => rules.createRule({ ...rule, conditions: ["  "] })).toThrow(RuleError);
+      expect(() => rules.createRule({ ...rule, conditions: ["a".repeat(200_000)] })).toThrow(RuleError);
       rules.createRule(rule);
       expect(() => rules.createRule(rule)).toThrow(RuleError);
     });

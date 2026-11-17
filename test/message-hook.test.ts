@@ -450,6 +450,7 @@ describe("email masking", () => {
     expect(Date.now() - started).toBeLessThan(1000);
     // A message this long is cut to its last part before checking.
     const sent = matcher.calls[0]!.text;
+    expect(sent.length).toBeLessThan(`look at ${word} please`.length);
     expect(sent.endsWith("a please")).toBe(true);
     expect(`look at ${word} please`.endsWith(sent)).toBe(true);
   });
