@@ -24,19 +24,24 @@ export interface VersionView {
   scope: Scope;
 }
 
+/** A version as the server returns it: with the check type it runs on. */
+export interface StoredVersion extends VersionView {
+  checkType: CheckType;
+}
+
 export interface Project {
   name: string;
   firstSeenAt: string;
 }
 
-export interface PublishedVersion extends VersionView {
+export interface PublishedVersion extends StoredVersion {
   number: number;
   publishedAt: string;
 }
 
 export interface RuleDetail extends RuleSummary {
   live: PublishedVersion | null;
-  draft: (VersionView & { savedAt: string }) | null;
+  draft: (StoredVersion & { savedAt: string }) | null;
   /** Every published version, newest first. */
   versions: PublishedVersion[];
 }

@@ -134,6 +134,14 @@ const migrations: string[] = [
   ALTER TABLE rules ADD COLUMN switched_off INTEGER NOT NULL DEFAULT 0 CHECK (switched_off IN (0, 1));
   `,
   `
+  -- The check type is part of a version too, so moving a rule between the
+  -- message check and the reply check in its draft changes nothing until it is
+  -- published. rules.check_type stays the check type in force, as with names.
+  ALTER TABLE versions ADD COLUMN check_type TEXT NOT NULL DEFAULT 'message'
+    CHECK (check_type IN ('message', 'reply'));
+  UPDATE versions SET check_type = (SELECT check_type FROM rules WHERE rules.id = versions.rule_id);
+  `,
+  `
   -- A verdict on one firing: wrong (the rule did not apply) or correct, and who
   -- raised it. A firing holds one flag; a later one replaces it, except that
   -- the user's own flag is never replaced by Claude's or the automatic check's.

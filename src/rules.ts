@@ -26,11 +26,12 @@ export interface NewRule extends RuleContent {
 }
 
 /**
- * What a draft holds. Without a name or a scope, the draft keeps the one it
- * has (or the live version's, when it starts a new draft).
+ * What a draft holds. Without a name, a check type or a scope, the draft keeps
+ * the one it has (or the live version's, when it starts a new draft).
  */
 export interface DraftContent extends RuleContent {
   name?: string;
+  checkType?: CheckType;
   scope?: Scope;
 }
 
@@ -75,6 +76,7 @@ export interface RuleSummary {
 
 export interface VersionView {
   name: string;
+  checkType: CheckType;
   instruction: string;
   conditions: string[];
   scope: Scope;
@@ -219,6 +221,7 @@ interface VersionRow {
   id: number;
   number: number | null;
   name: string;
+  check_type: CheckType;
   instruction: string;
   created_at: string;
   published_at: string | null;
@@ -241,9 +244,10 @@ export function createRulesService(db: Store): RulesService {
     const ids = content.scope.kind === "projects" ? projectIds(content.scope.projects) : [];
     const { lastInsertRowid } = db
       .prepare(
-        "INSERT INTO versions (rule_id, number, name, instruction, all_projects, created_at) VALUES (?, NULL, ?, ?, ?, ?)",
+        `INSERT INTO versions (rule_id, number, name, check_type, instruction, all_projects, created_at)
+          VALUES (?, NULL, ?, ?, ?, ?, ?)`,
       )
-      .run(ruleId, content.name, content.instruction, content.scope.kind === "all" ? 1 : 0, now());
+      .run(ruleId, content.name, content.checkType, content.instruction, content.scope.kind === "all" ? 1 : 0, now());
     const addCondition = db.prepare("INSERT INTO conditions (version_id, position, text) VALUES (?, ?, ?)");
     cleanConditions(content.conditions).forEach((text, position) => addCondition.run(lastInsertRowid, position, text));
     const addProject = db.prepare("INSERT INTO version_projects (version_id, project_id) VALUES (?, ?)");
@@ -266,14 +270,14 @@ export function createRulesService(db: Store): RulesService {
 
   function draft(ruleId: number): VersionRow | undefined {
     return db
-      .prepare("SELECT id, number, name, instruction, created_at, published_at FROM versions WHERE rule_id = ? AND number IS NULL")
+      .prepare("SELECT id, number, name, check_type, instruction, created_at, published_at FROM versions WHERE rule_id = ? AND number IS NULL")
       .get(ruleId) as VersionRow | undefined;
   }
 
   function live(ruleId: number): VersionRow | undefined {
     return db
       .prepare(
-        `SELECT id, number, name, instruction, created_at, published_at FROM versions
+        `SELECT id, number, name, check_type, instruction, created_at, published_at FROM versions
           WHERE rule_id = ? AND number IS NOT NULL ORDER BY number DESC LIMIT 1`,
       )
       .get(ruleId) as VersionRow | undefined;
@@ -290,7 +294,7 @@ export function createRulesService(db: Store): RulesService {
   function published(ruleId: number): VersionRow[] {
     return db
       .prepare(
-        `SELECT id, number, name, instruction, created_at, published_at FROM versions
+        `SELECT id, number, name, check_type, instruction, created_at, published_at FROM versions
           WHERE rule_id = ? AND number IS NOT NULL ORDER BY number DESC`,
       )
       .all(ruleId) as unknown as VersionRow[];
@@ -301,6 +305,7 @@ export function createRulesService(db: Store): RulesService {
       number: row.number!,
       publishedAt: row.published_at!,
       name: row.name,
+      checkType: row.check_type,
       instruction: row.instruction,
       conditions: conditionsOf(row.id),
       scope: scopeOf(row.id),
@@ -328,8 +333,10 @@ export function createRulesService(db: Store): RulesService {
     const existing = draft(ruleId);
     if (existing) db.prepare("DELETE FROM versions WHERE id = ?").run(existing.id);
     insertDraft(ruleId, content);
-    // A rule never published goes by its draft's name.
-    if (!live(ruleId)) db.prepare("UPDATE rules SET name = ? WHERE id = ?").run(content.name, ruleId);
+    // A rule never published goes by its draft's name and check type.
+    if (!live(ruleId)) {
+      db.prepare("UPDATE rules SET name = ?, check_type = ? WHERE id = ?").run(content.name, content.checkType, ruleId);
+    }
   }
 
   /** Refuses a name that another rule uses, as its name in force or in its draft. */
@@ -384,7 +391,13 @@ export function createRulesService(db: Store): RulesService {
           now(),
         );
         const ruleId = Number(next);
-        insertDraft(ruleId, { name, instruction: rule.instruction, conditions: rule.conditions, scope });
+        insertDraft(ruleId, {
+          name,
+          checkType: rule.checkType,
+          instruction: rule.instruction,
+          conditions: rule.conditions,
+          scope,
+        });
         return { ruleId };
       });
     },
@@ -396,8 +409,10 @@ export function createRulesService(db: Store): RulesService {
         const existing = draft(ruleId);
         const name = content.name === undefined ? (existing?.name ?? rule.name) : cleanName(content.name);
         const kept = existing ?? live(ruleId);
+        const checkType = content.checkType ?? kept?.check_type ?? rule.check_type;
+        requireCheckType(checkType);
         const scope = content.scope ?? (kept ? scopeOf(kept.id) : ALL_PROJECTS);
-        replaceDraft(ruleId, { name, instruction: content.instruction, conditions: content.conditions, scope });
+        replaceDraft(ruleId, { name, checkType, instruction: content.instruction, conditions: content.conditions, scope });
       });
     },
 
@@ -408,6 +423,7 @@ export function createRulesService(db: Store): RulesService {
         if (!source) throw new RuleNotFoundError(`This rule has no version ${versionNumber}.`);
         replaceDraft(ruleId, {
           name: source.name,
+          checkType: source.check_type,
           instruction: source.instruction,
           conditions: conditionsOf(source.id),
           scope: scopeOf(source.id),
@@ -450,7 +466,7 @@ export function createRulesService(db: Store): RulesService {
         requireFreeName(row.name, ruleId);
         const versionNumber = (live(ruleId)?.number ?? 0) + 1;
         db.prepare("UPDATE versions SET number = ?, published_at = ? WHERE id = ?").run(versionNumber, now(), row.id);
-        db.prepare("UPDATE rules SET name = ? WHERE id = ?").run(row.name, ruleId);
+        db.prepare("UPDATE rules SET name = ?, check_type = ? WHERE id = ?").run(row.name, row.check_type, ruleId);
         return { versionNumber };
       });
     },
@@ -573,6 +589,7 @@ export function createRulesService(db: Store): RulesService {
           ? {
               savedAt: draftRow.created_at,
               name: draftRow.name,
+              checkType: draftRow.check_type,
               instruction: draftRow.instruction,
               conditions: conditionsOf(draftRow.id),
               scope: scopeOf(draftRow.id),

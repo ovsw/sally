@@ -50,8 +50,17 @@ async function main(args: string[]): Promise<number> {
     await runApp(args.slice(1), process.env);
     return -1;
   }
+  if (group === "rules") {
+    // Loaded only here, so the hooks stay as small as they are.
+    const { runRulesCommand } = await import("./rules-command.ts");
+    return runRulesCommand(args.slice(1), {
+      env: process.env,
+      stdout: (text) => process.stdout.write(text),
+      stderr: (text) => process.stderr.write(text),
+    });
+  }
   process.stderr.write(
-    'Usage: sally hook message|reply\n       sally install\n       sally uninstall\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n',
+    'Usage: sally hook message|reply\n       sally install\n       sally uninstall\n       sally rules list|show|create|edit\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n',
   );
   return 1;
 }
