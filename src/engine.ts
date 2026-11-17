@@ -23,6 +23,8 @@ export interface Firing {
 
 export interface CheckResult {
   outcome: Outcome;
+  /** The recorded check's id. */
+  checkId: number;
   /** Fired rules, strongest first. Empty unless the outcome is attached or sent back. */
   firings: Firing[];
 }
@@ -38,6 +40,8 @@ export interface EngineOptions {
 
 export interface Engine {
   check(input: CheckInput): Promise<CheckResult>;
+  /** Records a check that was skipped without asking the matcher, and returns its id. */
+  skip(input: CheckInput): number;
 }
 
 class TimeoutError extends Error {
@@ -67,9 +71,9 @@ export function createEngine(options: EngineOptions): Engine {
     startedAt: number,
     outcome: Outcome,
     extra: { error?: string; inputTokens?: number | null; scores?: ScoreRow[]; firings?: ScoreRow[] } = {},
-  ): void {
+  ): number {
     const durationMs = Math.round(performance.now() - startedAt);
-    transaction(store, () => {
+    return transaction(store, () => {
       const { lastInsertRowid: checkId } = store
         .prepare(
           `INSERT INTO checks (created_at, session_id, cwd, check_type, text, duration_ms,
@@ -100,6 +104,7 @@ export function createEngine(options: EngineOptions): Engine {
       for (const f of extra.firings ?? []) {
         addFiring.run(checkId, f.rule.ruleId, f.rule.versionId, f.conditionId, f.score);
       }
+      return Number(checkId);
     });
   }
 
@@ -121,11 +126,15 @@ export function createEngine(options: EngineOptions): Engine {
   }
 
   return {
+    skip(input) {
+      return record(input, performance.now(), "skipped");
+    },
+
     async check(input) {
       const startedAt = performance.now();
       const failed = (error: string, inputTokens?: number | null): CheckResult => {
-        record(input, startedAt, "failed", { error, inputTokens });
-        return { outcome: "failed", firings: [] };
+        const checkId = record(input, startedAt, "failed", { error, inputTokens });
+        return { outcome: "failed", checkId, firings: [] };
       };
 
       const live = rules.liveRules(input.checkType);
@@ -163,9 +172,10 @@ export function createEngine(options: EngineOptions): Engine {
       const fired = [...best.values()].filter((row) => row.score >= cutoff).sort((a, b) => b.score - a.score);
 
       const outcome: Outcome = fired.length === 0 ? "nothing" : input.checkType === "message" ? "attached" : "sent_back";
-      record(input, startedAt, outcome, { inputTokens: result.inputTokens, scores, firings: fired });
+      const checkId = record(input, startedAt, outcome, { inputTokens: result.inputTokens, scores, firings: fired });
       return {
         outcome,
+        checkId,
         firings: fired.map((row) => ({
           ruleId: row.rule.ruleId,
           name: row.rule.name,
