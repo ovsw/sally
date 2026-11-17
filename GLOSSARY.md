@@ -1,0 +1,124 @@
+# Sally
+
+Sally is a salience engine for Claude Code: on every turn it decides which of the user's written rules apply and hands Claude only those. This glossary fixes the words used for that.
+
+## Language
+
+### Rules
+
+**Rule**:
+One or more conditions plus one instruction, with a check type and a scope. A rule lives only in Sally.
+_Avoid_: Guideline, policy, memory
+
+**Rules file**:
+A file Claude Code loads into every session, such as CLAUDE.md, global or per project.
+_Avoid_: Memory file, config, context file
+
+**Always-rule**:
+A rule that applies on every turn, and so stays in a rules file instead of Sally.
+_Avoid_: Global rule, core rule, base rule
+
+**Condition**:
+A short, concrete statement that is true or false of the text being checked.
+_Avoid_: Trigger, question, pattern
+
+**Instruction**:
+What Claude should do when a rule matches, given to Claude word for word.
+_Avoid_: Reminder (Claude has not seen the rule before; Sally is the only place it lives), action, prompt
+
+**Scope**:
+Where a rule applies: all projects, or a named set of projects.
+
+**Project**:
+The git repository a session runs in.
+_Avoid_: Repo, workspace, folder
+
+### Versions
+
+**Version**:
+One published, unchangeable state of a rule's instruction and conditions.
+
+**Live version**:
+The version of a rule that checks use.
+_Avoid_: Active version, current version, published rule
+
+**Draft**:
+The one unpublished working copy of a rule, which has no effect until published.
+_Avoid_: Pending version, unsaved changes
+
+### Checks
+
+**Check**:
+One run of Sally over one text.
+_Avoid_: Scan, evaluation, match run
+
+**Message check**:
+A check of the user's message, made before Claude starts work.
+
+**Reply check**:
+A check of Claude's final reply, made before the turn ends.
+
+**Score**:
+The probability, from 0 to 1, that a condition holds for the text being checked.
+_Avoid_: Confidence, match strength
+
+**Cutoff**:
+The score a condition must reach for its rule to match.
+_Avoid_: Threshold
+
+**Match**:
+A rule whose condition reached the cutoff in a check, and so was attached to the message or sent back on the reply.
+_Avoid_: Firing, hit, trigger, activation
+
+**Weak match**:
+A match that scored just over the cutoff.
+_Avoid_: Close match, borderline match
+
+**Attached**:
+How a match reaches Claude in a message check: its instruction goes with the user's message.
+
+**Sent back**:
+How a match reaches Claude in a reply check: Claude gets its instruction and one chance to revise the reply.
+
+**Outcome**:
+How a check ended: nothing (no rule matched), attached, sent back, skipped, or failed.
+_Avoid_: Result, status
+
+**Skipped**:
+The outcome of a check where Sally chose not to ask Jev: a bare slash command, or a reply that was already sent back once.
+
+**Failed**:
+The outcome of a check that could not get scores, so Sally cannot say whether any rule matched.
+
+**Sally's output**:
+The set of rules Sally found salient in one check, handed to Claude together; when no rule matches there is no output.
+_Avoid_: Reminder, bundle, attachment, injection
+
+### Judging matches
+
+**Flag**:
+A verdict on one match, wrong or right, given by the user or by Claude. A match with no flag counts as right.
+_Avoid_: Report, vote, rating
+
+**Attention reason**:
+Why a rule is on the Needs attention list, drawn from its pattern over many checks rather than from one match.
+_Avoid_: Automatic flag, warning, alert
+
+**Right match**:
+A match of a rule that did apply.
+_Avoid_: Correct match, true positive
+
+**Wrong match**:
+A match of a rule that did not apply.
+_Avoid_: False positive, misfire
+
+**Miss**:
+A rule that applied and did not match.
+_Avoid_: False negative
+
+**Near miss**:
+A score just under the cutoff.
+
+**Saved case**:
+A real message or reply kept with a rule, marked "should match" or "should not match".
+_Avoid_: Test case, example, fixture

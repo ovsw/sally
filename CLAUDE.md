@@ -3,7 +3,7 @@
 A salience engine for Claude Code. The spec is issue #1 in `ovsw/sally`; its
 sub-issues are the tickets. Read the spec's Vocabulary and Implementation
 Decisions before writing code, and use its words (rule, condition,
-instruction, check, firing, cutoff, cap, draft, live version).
+instruction, check, match, cutoff, draft, live version).
 
 - This repository is public. Never commit secrets, API keys, the database,
   real user messages, client names, or personal contact details. Evaluation
@@ -41,6 +41,14 @@ why in the body.
 
 ## Agent skills
 
-- Issue tracker: GitHub Issues in this repository. See `docs/agents/issue-tracker.md`.
-- Triage labels: `needs-triage`, `needs-info`, `ready-for-agent`,
-  `ready-for-human`, `wontfix`.
+### Issue tracker
+
+Issues, the spec and its tickets live as GitHub issues in `ovsw/sally`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

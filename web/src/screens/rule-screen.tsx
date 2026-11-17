@@ -1,0 +1,905 @@
+// The Rule screen: the live version beside the draft, then the version
+// history. The draft form follows the shadcnblocks block form-layouts-1
+// (vertical field layout).
+import {
+  ArrowLeft,
+  Check,
+  FilePen,
+  Loader2,
+  Plus,
+  Trash2,
+  Undo2,
+  Upload,
+  X,
+} from "lucide-react";
+import * as React from "react";
+
+import { RescoreDialog } from "@/components/rescore-dialog";
+import { RuleAnalyticsPanel } from "@/components/rule-analytics";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  deleteRule,
+  discardDraft,
+  getRule,
+  listProjects,
+  type Project,
+  publish,
+  type PublishedVersion,
+  rescoreDraft,
+  type RescoreResult,
+  type RuleDetail,
+  saveDraft,
+  startDraftFrom,
+  switchRule,
+  type Scope,
+  type VersionView,
+} from "@/lib/api";
+import { followLink, navigate } from "@/lib/router";
+
+const SAVE_DELAY_MS = 500;
+/** Typing in one field with pauses shorter than this is undone in one step. */
+const UNDO_GROUP_MS = 1000;
+const UNDO_LIMIT = 200;
+
+/**
+ * One undo step: the form as it was, whether it was a saved or pending draft,
+ * and the live version it stood beside.
+ */
+interface UndoStep {
+  content: VersionView;
+  hadDraft: boolean;
+  liveNumber: number | null;
+}
+
+type SaveState =
+  | { kind: "idle" }
+  | { kind: "pending" }
+  | { kind: "saving" }
+  | { kind: "saved" }
+  | { kind: "error"; message: string };
+
+function SaveStatus({ state, hasDraft }: { state: SaveState; hasDraft: boolean }) {
+  const text =
+    state.kind === "pending" || state.kind === "saving"
+      ? "Saving..."
+      : state.kind === "saved"
+        ? "Draft saved"
+        : state.kind === "error"
+          ? "Not saved"
+          : hasDraft
+            ? "Draft saved"
+            : "No draft";
+  return (
+    <span
+      className="flex items-center gap-1.5 text-sm text-muted-foreground"
+      aria-live="polite"
+    >
+      {state.kind === "pending" || state.kind === "saving" ? (
+        <Loader2 className="size-4 animate-spin" />
+      ) : state.kind === "error" ? (
+        <X className="size-4 text-destructive" />
+      ) : hasDraft ? (
+        <Check className="size-4" />
+      ) : null}
+      {text}
+    </span>
+  );
+}
+
+function LiveVersion({ rule }: { rule: RuleDetail }) {
+  const live = rule.live;
+  return (
+    <section className="rounded-md border">
+      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+        <h2 className="font-medium">
+          {rule.on ? "Live version" : "Live version (switched off)"}
+        </h2>
+        {live && <Badge variant="secondary">Version {live.number}</Badge>}
+      </div>
+      {live ? (
+        <dl className="space-y-5 px-4 py-4 text-sm">
+          <div className="space-y-1.5">
+            <dt className="font-medium">Name</dt>
+            <dd>{live.name}</dd>
+          </div>
+          <div className="space-y-1.5">
+            <dt className="font-medium">
+              {live.conditions.length === 1 ? "Condition" : "Conditions"}
+            </dt>
+            <dd>
+              <ul className="space-y-1.5">
+                {live.conditions.map((condition, i) => (
+                  <li key={i} className="rounded-md bg-muted/50 px-3 py-2">
+                    {condition}
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+          <div className="space-y-1.5">
+            <dt className="font-medium">Instruction</dt>
+            <dd className="rounded-md bg-muted/50 px-3 py-2 whitespace-pre-wrap">
+              {live.instruction}
+            </dd>
+          </div>
+          <div className="space-y-1.5">
+            <dt className="font-medium">Scope</dt>
+            <dd>
+              {live.scope.kind === "all" ? (
+                "All projects"
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {live.scope.projects.map((project) => (
+                    <Badge key={project} variant="secondary">
+                      {project}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </dd>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Published {new Date(live.publishedAt).toLocaleString()}
+          </p>
+        </dl>
+      ) : (
+        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+          Not published yet. The engine does not use this rule until you
+          publish its draft.
+        </p>
+      )}
+    </section>
+  );
+}
+
+interface ScopeFieldProps {
+  value: Scope;
+  onChange: (next: Scope) => void;
+  /** The projects Sally has seen; null while they load or when loading failed. */
+  projects: Project[] | null;
+  /** Why the projects could not be loaded, if they could not. */
+  projectsError: string | null;
+  onRetryProjects: () => void;
+}
+
+function ScopeField({ value, onChange, projects, projectsError, onRetryProjects }: ScopeFieldProps) {
+  const selected = value.kind === "projects" ? value.projects : [];
+  // A project already in the scope stays listed even if the list has not loaded.
+  const names = [...new Set([...(projects ?? []).map((p) => p.name), ...selected])].sort(
+    (a, b) => a.localeCompare(b),
+  );
+  const toggle = (name: string, checked: boolean) =>
+    onChange({
+      kind: "projects",
+      projects: checked
+        ? [...selected, name]
+        : selected.filter((project) => project !== name),
+    });
+
+  return (
+    <Field>
+      <FieldLabel htmlFor="draft-scope">Scope</FieldLabel>
+      <Select
+        value={value.kind}
+        onValueChange={(kind) =>
+          onChange(kind === "all" ? { kind: "all" } : { kind: "projects", projects: selected })
+        }
+      >
+        <SelectTrigger id="draft-scope" className="w-full bg-background">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All projects</SelectItem>
+          <SelectItem value="projects">Only some projects</SelectItem>
+        </SelectContent>
+      </Select>
+      {value.kind === "projects" && projectsError && (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-destructive">
+          <span>Could not load the projects: {projectsError}</span>
+          <Button type="button" variant="outline" size="sm" onClick={onRetryProjects}>
+            Retry
+          </Button>
+        </div>
+      )}
+      {value.kind === "projects" &&
+        (names.length === 0 ? (
+          !projectsError && (
+            <p className="text-sm text-muted-foreground">
+              {projects === null
+                ? "Loading projects..."
+                : "Sally has not seen any project yet. A project appears here after its first check."}
+            </p>
+          )
+        ) : (
+          <div className="space-y-3 rounded-md border bg-background p-3">
+            {names.map((name, index) => (
+              <Field key={name} orientation="horizontal">
+                <Checkbox
+                  id={`draft-project-${index}`}
+                  checked={selected.includes(name)}
+                  onCheckedChange={(checked) => toggle(name, checked === true)}
+                />
+                <FieldLabel htmlFor={`draft-project-${index}`} className="font-normal">
+                  {name}
+                </FieldLabel>
+              </Field>
+            ))}
+          </div>
+        ))}
+      <FieldDescription>
+        A project is a git repository, named by its remote, so every worktree
+        of it counts as one project. Rules outside the session&apos;s project are
+        never checked.
+      </FieldDescription>
+    </Field>
+  );
+}
+
+interface DraftFormProps {
+  value: VersionView;
+  /** `field` names the field being typed in; null for a change made in one step. */
+  onChange: (next: VersionView, field: string | null) => void;
+  error: string | null;
+  checkType: RuleDetail["checkType"];
+  projects: Project[] | null;
+  projectsError: string | null;
+  onRetryProjects: () => void;
+}
+
+function DraftForm({
+  value,
+  onChange,
+  error,
+  checkType,
+  projects,
+  projectsError,
+  onRetryProjects,
+}: DraftFormProps) {
+  const setCondition = (index: number, text: string) =>
+    onChange(
+      {
+        ...value,
+        conditions: value.conditions.map((c, i) => (i === index ? text : c)),
+      },
+      `condition-${index}`,
+    );
+  const removeCondition = (index: number) =>
+    onChange(
+      {
+        ...value,
+        conditions: value.conditions.filter((_, i) => i !== index),
+      },
+      null,
+    );
+  const addCondition = () =>
+    onChange({ ...value, conditions: [...value.conditions, ""] }, null);
+
+  return (
+    <FieldGroup>
+      <Field>
+        <FieldLabel htmlFor="draft-name">Name</FieldLabel>
+        <Input
+          id="draft-name"
+          className="bg-background"
+          value={value.name}
+          onChange={(e) => onChange({ ...value, name: e.target.value }, "name")}
+        />
+      </Field>
+      <Field>
+        <FieldLabel>Conditions</FieldLabel>
+        <div className="space-y-2">
+          {value.conditions.map((condition, index) => (
+            <div key={index} className="flex items-start gap-2">
+              <Input
+                className="bg-background"
+                aria-label={`Condition ${index + 1}`}
+                value={condition}
+                onChange={(e) => setCondition(index, e.target.value)}
+                placeholder={
+                  checkType === "message"
+                    ? "The message asks for..."
+                    : "The reply reports..."
+                }
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="shrink-0"
+                aria-label={`Remove condition ${index + 1}`}
+                onClick={() => removeCondition(index)}
+              >
+                <X />
+              </Button>
+            </div>
+          ))}
+          <Button type="button" variant="outline" size="sm" onClick={addCondition}>
+            <Plus />
+            Add condition
+          </Button>
+        </div>
+        <FieldDescription>
+          The rule matches when any one condition holds. Write each as a short,
+          concrete statement about the{" "}
+          {checkType === "message" ? "user's message" : "final reply"}.
+        </FieldDescription>
+      </Field>
+      <Field>
+        <FieldLabel htmlFor="draft-instruction">Instruction</FieldLabel>
+        <Textarea
+          id="draft-instruction"
+          className="min-h-[140px] bg-background"
+          value={value.instruction}
+          onChange={(e) =>
+            onChange({ ...value, instruction: e.target.value }, "instruction")
+          }
+        />
+        <FieldDescription>
+          Claude receives this word for word. Worth having only when it is not
+          already implied by the text that triggers it.
+        </FieldDescription>
+      </Field>
+      <ScopeField
+        value={value.scope}
+        onChange={(scope) => onChange({ ...value, scope }, null)}
+        projects={projects}
+        projectsError={projectsError}
+        onRetryProjects={onRetryProjects}
+      />
+      {error && <FieldError>{error}</FieldError>}
+    </FieldGroup>
+  );
+}
+
+const contentOf = (rule: RuleDetail): VersionView => {
+  const source = rule.draft ?? rule.live;
+  return {
+    name: source?.name ?? rule.name,
+    instruction: source?.instruction ?? "",
+    conditions: source?.conditions.length ? [...source.conditions] : [""],
+    scope:
+      source?.scope.kind === "projects"
+        ? { kind: "projects", projects: [...source.scope.projects] }
+        : { kind: "all" },
+  };
+};
+
+function VersionHistory({
+  rule,
+  busy,
+  onStartDraft,
+}: {
+  rule: RuleDetail;
+  busy: boolean;
+  onStartDraft: (version: PublishedVersion) => void;
+}) {
+  return (
+    <section className="rounded-md border">
+      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+        <h2 className="font-medium">Version history</h2>
+        <span className="text-xs text-muted-foreground">
+          Published versions never change
+        </span>
+      </div>
+      {rule.versions.length === 0 ? (
+        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+          No published versions yet.
+        </p>
+      ) : (
+        <ol className="divide-y">
+          {rule.versions.map((version) => (
+            <li
+              key={version.number}
+              className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between"
+            >
+              <div className="min-w-0 space-y-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">Version {version.number}</span>
+                  {version.number === rule.live?.number && (
+                    <Badge variant="secondary">{rule.on ? "Live" : "Latest"}</Badge>
+                  )}
+                  <span className="text-xs text-muted-foreground">
+                    Published {new Date(version.publishedAt).toLocaleString()}
+                  </span>
+                </div>
+                {version.name !== rule.name && (
+                  <p className="text-muted-foreground">Named "{version.name}"</p>
+                )}
+                <ul className="list-disc space-y-1 pl-5">
+                  {version.conditions.map((condition, i) => (
+                    <li key={i}>{condition}</li>
+                  ))}
+                </ul>
+                <p className="whitespace-pre-wrap text-muted-foreground">
+                  {version.instruction}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="self-start"
+                disabled={busy}
+                onClick={() => onStartDraft(version)}
+              >
+                <FilePen />
+                Start a draft from this
+              </Button>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+export function RuleScreen({ id }: { id: number }) {
+  const [rule, setRuleState] = React.useState<RuleDetail | null>(null);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [draft, setDraft] = React.useState<VersionView | null>(null);
+  const [projects, setProjects] = React.useState<Project[] | null>(null);
+  const [projectsError, setProjectsError] = React.useState<string | null>(null);
+  const [projectsAttempt, setProjectsAttempt] = React.useState(0);
+  const [save, setSave] = React.useState<SaveState>({ kind: "idle" });
+  const [action, setAction] = React.useState<string | null>(null);
+  /** The draft's re-score against the saved cases, shown before publishing. */
+  const [rescore, setRescore] = React.useState<Exclude<RescoreResult, { status: "no_cases" }> | null>(
+    null,
+  );
+  const [actionError, setActionError] = React.useState<string | null>(null);
+  const [undoSteps, setUndoSteps] = React.useState(0);
+  const timer = React.useRef<number | undefined>(undefined);
+  const latest = React.useRef<VersionView | null>(null);
+  const inFlight = React.useRef<Promise<boolean>>(Promise.resolve(true));
+  const ruleRef = React.useRef<RuleDetail | null>(null);
+  const undoStack = React.useRef<UndoStep[]>([]);
+  const lastTyped = React.useRef<{ field: string; at: number } | null>(null);
+  /** Counts edits to the form, so a re-score knows whether the draft changed after it. */
+  const edits = React.useRef(0);
+  /** The edit count the shown re-score was made at. */
+  const scoredAt = React.useRef(0);
+
+  const setRule = React.useCallback((next: RuleDetail) => {
+    ruleRef.current = next;
+    setRuleState(next);
+  }, []);
+
+  React.useEffect(() => {
+    let stale = false;
+    undoStack.current = [];
+    setUndoSteps(0);
+    getRule(id)
+      .then((loaded) => {
+        if (stale) return;
+        setRule(loaded);
+        setDraft(contentOf(loaded));
+      })
+      .catch((e: unknown) => !stale && setLoadError(errorText(e)));
+    return () => {
+      stale = true;
+    };
+  }, [id, setRule]);
+
+  React.useEffect(() => {
+    let stale = false;
+    listProjects()
+      .then((loaded) => !stale && setProjects(loaded))
+      // Without the list, the projects already in the scope still show,
+      // next to the error and a way to try again.
+      .catch((e: unknown) => !stale && setProjectsError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      stale = true;
+    };
+  }, [projectsAttempt]);
+
+  const retryProjects = React.useCallback(() => {
+    setProjectsError(null);
+    setProjectsAttempt((n) => n + 1);
+  }, []);
+
+  /**
+   * Saves the latest edits now; saves run one after another. Resolves to
+   * whether the last save succeeded.
+   */
+  const flush = React.useCallback((): Promise<boolean> => {
+    window.clearTimeout(timer.current);
+    timer.current = undefined;
+    const content = latest.current;
+    if (!content) return inFlight.current;
+    latest.current = null;
+    inFlight.current = inFlight.current.then(async () => {
+      setSave({ kind: "saving" });
+      try {
+        const saved = await saveDraft(id, content);
+        setRule(saved);
+        setSave(latest.current ? { kind: "pending" } : { kind: "saved" });
+        return true;
+      } catch (e) {
+        setSave({ kind: "error", message: errorText(e) });
+        return false;
+      }
+    });
+    return inFlight.current;
+  }, [id, setRule]);
+
+  /**
+   * Holds back edits not yet sent, waits for the saves already sent, then runs
+   * `replace`, which replaces the draft. If `replace` fails, the held-back
+   * edits are scheduled to save again, so the form and the draft still agree.
+   */
+  const replacingDraft = async (replace: () => Promise<void>) => {
+    window.clearTimeout(timer.current);
+    timer.current = undefined;
+    const held = latest.current;
+    latest.current = null;
+    await inFlight.current;
+    try {
+      await replace();
+    } catch (e) {
+      if (held && !latest.current) {
+        latest.current = held;
+        setSave({ kind: "pending" });
+        timer.current = window.setTimeout(() => void flush(), SAVE_DELAY_MS);
+      }
+      throw e;
+    }
+  };
+
+  // Edits still waiting when the screen closes are saved straight away. When
+  // the page itself goes (tab closed, reload), the save is sent at once with
+  // keepalive so the browser lets it finish.
+  React.useEffect(() => {
+    const onPageHide = () => {
+      const content = latest.current;
+      if (!content) return;
+      window.clearTimeout(timer.current);
+      timer.current = undefined;
+      latest.current = null;
+      saveDraft(id, content, true).catch(() => undefined);
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      if (latest.current) void flush();
+    };
+  }, [id, flush]);
+
+  const busySaving = save.kind === "pending" || save.kind === "saving";
+  const showingDraft = (rule?.hasDraft ?? false) || busySaving;
+
+  const undoStepNow = (): UndoStep => ({
+    content: draft!,
+    hadDraft: showingDraft,
+    liveNumber: ruleRef.current?.live?.number ?? null,
+  });
+
+  const pushUndo = (step: UndoStep) => {
+    undoStack.current.push(step);
+    if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift();
+    setUndoSteps(undoStack.current.length);
+  };
+
+  /** Puts `next` in the form and saves it into the draft after a pause. */
+  const saveSoon = (next: VersionView) => {
+    setDraft(next);
+    setActionError(null);
+    edits.current += 1;
+    latest.current = next;
+    setSave({ kind: "pending" });
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => void flush(), SAVE_DELAY_MS);
+  };
+
+  const edit = (next: VersionView, field: string | null) => {
+    if (draft) {
+      const now = Date.now();
+      const last = lastTyped.current;
+      const sameRun = field !== null && last?.field === field && now - last.at < UNDO_GROUP_MS;
+      if (!sameRun) pushUndo(undoStepNow());
+      lastTyped.current = field === null ? null : { field, at: now };
+    }
+    saveSoon(next);
+  };
+
+  /** Runs one action on the rule, showing it as busy and any refusal as an error. */
+  const act = async (name: string, run: () => Promise<void>) => {
+    setAction(name);
+    setActionError(null);
+    try {
+      await run();
+    } catch (e) {
+      setActionError(errorText(e));
+    } finally {
+      setAction(null);
+    }
+  };
+
+  /** Drops the draft on the server, if it has one, and shows the live version in the form. */
+  const dropDraft = () =>
+    replacingDraft(async () => {
+      const current = ruleRef.current!;
+      const updated = current.hasDraft ? await discardDraft(id) : current;
+      setRule(updated);
+      setDraft(contentOf(updated));
+      setSave({ kind: "idle" });
+    });
+
+  const undo = () =>
+    act("undo", async () => {
+      const step = undoStack.current.pop();
+      setUndoSteps(undoStack.current.length);
+      lastTyped.current = null;
+      if (!step) return;
+      // A step from before a publish holds content the live version no
+      // longer has, so it comes back as a draft.
+      const live = ruleRef.current?.live ?? null;
+      if (step.hadDraft || !live || live.number !== step.liveNumber) {
+        saveSoon(step.content);
+      } else {
+        await dropDraft();
+      }
+    });
+
+  const discard = () =>
+    act("discard", async () => {
+      const before = undoStepNow();
+      await dropDraft();
+      pushUndo(before);
+      lastTyped.current = null;
+    });
+
+  const startFrom = (version: PublishedVersion) =>
+    act("start-draft", async () => {
+      const before = undoStepNow();
+      await replacingDraft(async () => {
+        const updated = await startDraftFrom(id, version.number);
+        setRule(updated);
+        setDraft(contentOf(updated));
+        setSave({ kind: "saved" });
+      });
+      pushUndo(before);
+      lastTyped.current = null;
+    });
+
+  const publishNow = async () => {
+    const result = await publish(id);
+    setRule(result.rule);
+    // Edits typed while publishing stay in the form and are saved as the
+    // next draft.
+    if (!latest.current) {
+      setDraft(contentOf(result.rule));
+      setSave({ kind: "idle" });
+    }
+  };
+
+  /**
+   * Publishing first scores the draft against the rule's saved cases and
+   * shows the result; a rule with none publishes straight away.
+   */
+  const doPublish = () =>
+    act("publish", async () => {
+      // A draft the server refused must not be published as the old draft.
+      if (!(await flush())) return;
+      const at = edits.current;
+      const result = await rescoreDraft(id);
+      if (result.status === "no_cases") return publishNow();
+      scoredAt.current = at;
+      setRescore(result);
+    });
+
+  const publishAnyway = () => {
+    setRescore(null);
+    // The form stays editable while the draft is scored, so the shown result
+    // may be for an older draft. Score the current one again instead of
+    // publishing what the user has not seen scored.
+    if (edits.current !== scoredAt.current) {
+      void doPublish();
+      return;
+    }
+    void act("publish", async () => {
+      if (!(await flush())) return;
+      await publishNow();
+    });
+  };
+
+  const toggle = (on: boolean) =>
+    act("switch", async () => {
+      // In line with the saves, so a save answered earlier cannot show the
+      // rule's old on or off after this.
+      const before = inFlight.current;
+      const switched = before.then(() => switchRule(id, on));
+      inFlight.current = switched.then(
+        () => before,
+        () => before,
+      );
+      setRule(await switched);
+    });
+
+  const remove = () =>
+    act("delete", async () => {
+      await replacingDraft(async () => {
+        await deleteRule(id);
+      });
+      navigate("/rules");
+    });
+
+  if (loadError) {
+    return (
+      <div className="space-y-4">
+        <BackLink />
+        <p role="alert" className="text-sm text-destructive">
+          {loadError}
+        </p>
+      </div>
+    );
+  }
+  if (!rule || !draft) {
+    return <p className="text-sm text-muted-foreground">Loading...</p>;
+  }
+
+  const acting = action !== null;
+  // While the draft is being replaced, edits would be lost, so the form waits.
+  const replacing =
+    action === "start-draft" || action === "discard" || action === "undo" || action === "delete";
+  const canPublish = (rule.hasDraft || busySaving) && save.kind !== "error" && !acting;
+  const canDiscard = rule.live !== null && showingDraft && !acting;
+
+  return (
+    <div className="w-full space-y-6">
+      <BackLink />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-bold tracking-tight">{rule.name}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">
+              {rule.checkType === "message" ? "Message check" : "Reply check"}
+            </Badge>
+            {rule.state === "live" ? (
+              <Badge>Live</Badge>
+            ) : rule.state === "off" ? (
+              <Badge variant="secondary">Off</Badge>
+            ) : (
+              <Badge variant="outline">Draft only</Badge>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <SaveStatus state={save} hasDraft={rule.hasDraft} />
+          <label className="flex items-center gap-2 text-sm">
+            <Switch
+              checked={rule.on}
+              disabled={acting}
+              onCheckedChange={(on) => void toggle(on)}
+              aria-label="Rule on"
+            />
+            {rule.on ? "On" : "Off"}
+          </label>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" disabled={acting}>
+                <Trash2 />
+                Delete
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete "{rule.name}"?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  The rule, all its versions and its draft are deleted for good.
+                  To pause it and keep its history, switch it off instead.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" onClick={() => void remove()}>
+                  Delete rule
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <Button onClick={() => void doPublish()} disabled={!canPublish}>
+            {action === "publish" ? <Loader2 className="animate-spin" /> : <Upload />}
+            Publish
+          </Button>
+        </div>
+      </div>
+      {actionError && (
+        <p role="alert" className="text-sm text-destructive">
+          {actionError}
+        </p>
+      )}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <LiveVersion rule={rule} />
+        <section className="rounded-md border">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
+            <div className="flex items-center gap-2">
+              <h2 className="font-medium">Draft</h2>
+              <span className="text-xs text-muted-foreground">
+                {showingDraft ? "Edits save automatically" : "Editing starts a draft"}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void undo()}
+                disabled={undoSteps === 0 || acting}
+              >
+                <Undo2 />
+                Undo
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void discard()}
+                disabled={!canDiscard}
+              >
+                <X />
+                Discard draft
+              </Button>
+            </div>
+          </div>
+          <fieldset disabled={replacing} className="min-w-0 px-4 py-4">
+            <DraftForm
+              value={draft}
+              onChange={edit}
+              checkType={rule.draft?.checkType ?? rule.checkType}
+              projects={projects}
+              projectsError={projectsError}
+              onRetryProjects={retryProjects}
+              error={save.kind === "error" ? save.message : null}
+            />
+          </fieldset>
+        </section>
+      </div>
+      <RescoreDialog result={rescore} onPublish={publishAnyway} onBack={() => setRescore(null)} />
+      <VersionHistory rule={rule} busy={acting} onStartDraft={(v) => void startFrom(v)} />
+      {/* Reloads after a publish, so the new version shows. */}
+      <RuleAnalyticsPanel key={rule.live?.number ?? 0} id={id} />
+    </div>
+  );
+}
+
+function BackLink() {
+  return (
+    <a
+      href="/rules"
+      onClick={followLink}
+      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+    >
+      <ArrowLeft className="size-4" />
+      Rules
+    </a>
+  );
+}
