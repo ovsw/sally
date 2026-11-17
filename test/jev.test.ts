@@ -59,6 +59,14 @@ describe("Jev matcher", () => {
     });
   });
 
+  it("never asks for Jev's long-context mode: the request holds only the model, the state and the questions", async () => {
+    const jev = await fakeJev(() => ({
+      body: JSON.stringify({ answers: { c1: { noul: 0.5 }, c2: { noul: 0.5 } }, usage: { input_tokens: 1 } }),
+    }));
+    await createJevMatcher({ apiKey: "k", url: jev.url }).match("x".repeat(100_000), conditions, signal());
+    expect(Object.keys(jev.received[0]!.body as object).sort()).toEqual(["model", "questions", "state"]);
+  });
+
   it("ignores answers for IDs that were not sent", async () => {
     const jev = await fakeJev(() => ({
       body: JSON.stringify({

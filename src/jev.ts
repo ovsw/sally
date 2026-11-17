@@ -14,7 +14,9 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * The matcher that calls TypeSafe's Jev: the text is the state and each
- * condition is one Noul question, so Jev sees nothing but those.
+ * condition is one Noul question, so Jev sees nothing but those. Long-context
+ * mode is never asked for: the engine keeps each request inside Jev's normal
+ * limits instead (see limits.ts).
  */
 export function createJevMatcher({ apiKey, url = JEV_URL, model = JEV_MODEL }: JevOptions): Matcher {
   return {

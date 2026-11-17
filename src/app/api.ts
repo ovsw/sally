@@ -10,6 +10,7 @@ import {
   type RulesService,
   type RuleState,
   type Scope,
+  type Settings,
 } from "../rules.ts";
 
 /** A request the API refuses, with the HTTP status to answer with. */
@@ -78,6 +79,27 @@ function optionalScope(body: Record<string, unknown>, key: string): Scope | unde
   throw new HttpError(400, `"${key}" must be all projects or a list of projects.`);
 }
 
+const SETTING_NAMES: (keyof Settings)[] = [
+  "cutoff",
+  "cap",
+  "timeLimitMs",
+  "recentChecks",
+  "busyShare",
+  "closeMargin",
+  "quietChecks",
+];
+
+/** The settings given in the body; each must be a number. Unknown keys are refused. */
+function settingsFrom(body: Record<string, unknown>): Partial<Settings> {
+  const changes: Partial<Settings> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (!SETTING_NAMES.includes(key as keyof Settings)) throw new HttpError(400, `"${key}" is not a setting.`);
+    if (typeof value !== "number") throw new HttpError(400, `"${key}" must be a number.`);
+    changes[key as keyof Settings] = value;
+  }
+  return changes;
+}
+
 function filterFrom(params: URLSearchParams): RuleFilter {
   const filter: RuleFilter = {};
   const search = params.get("search");
@@ -135,6 +157,9 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * - GET  /api/rules/:id/cases                            the rule's saved cases
  * - POST /api/firings/:id/flag                           the user marks a firing { verdict: wrong|correct }
  * - GET  /api/projects                                   the projects Sally has seen
+ * - GET  /api/settings                                   { settings, limitUse }: the settings, and how
+ *                                                        much of Jev's request limit recent checks used
+ * - PUT  /api/settings                                   change some settings; answers like GET
  * - GET  /api/activity?outcome=&checkType=&limit=        the most recent checks
  *
  * Every change answers with the rule as it now is, except a delete, which
@@ -151,6 +176,13 @@ export async function handleApi(
     const method = req.method ?? "GET";
     if (parts.length === 1 && parts[0] === "projects" && method === "GET") {
       return send(res, 200, { projects: rules.projects() });
+    }
+    if (parts.length === 1 && parts[0] === "settings" && method === "GET") {
+      return send(res, 200, { settings: rules.settings(), limitUse: rules.limitUse() });
+    }
+    if (parts.length === 1 && parts[0] === "settings" && method === "PUT") {
+      const settings = rules.updateSettings(settingsFrom(await readJson(req)));
+      return send(res, 200, { settings, limitUse: rules.limitUse() });
     }
     if (parts.length === 1 && parts[0] === "activity" && method === "GET") {
       return send(res, 200, { checks: rules.activity(activityFilterFrom(url.searchParams)) });

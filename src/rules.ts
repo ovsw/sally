@@ -1,6 +1,7 @@
 import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
 import { RuleError, RuleNotFoundError } from "./errors.ts";
 import { createFlags, type Flags } from "./flags.ts";
+import { conditionFits, REQUEST_TOKEN_LIMIT, REQUEST_WARNING_SHARE } from "./limits.ts";
 import { type Store, transaction } from "./store.ts";
 
 export type CheckType = "message" | "reply";
@@ -118,23 +119,69 @@ export interface Settings {
   cap: number;
   /** How long a check may wait for the matcher before giving up. */
   timeLimitMs: number;
+  // The attention thresholds: when a rule is listed as needing attention.
+  /** How many of the latest checks count as recent. */
+  recentChecks: number;
+  /** A rule firing on at least this share of recent checks, 0 to 1, is listed as firing often. */
+  busyShare: number;
+  /** A firing scoring no more than this above the cutoff, 0 to 1, sits close to it. */
+  closeMargin: number;
+  /** A rule with no firings over this many checks of its type is listed as never firing. */
+  quietChecks: number;
 }
 
-export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({ cutoff: 0.6, cap: 3, timeLimitMs: 3000 });
+export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
+  cutoff: 0.6,
+  cap: 3,
+  timeLimitMs: 3000,
+  recentChecks: 100,
+  busyShare: 0.3,
+  closeMargin: 0.05,
+  quietChecks: 200,
+});
 
 /** Each setting's key in the settings table. */
-const SETTING_KEYS: Record<keyof Settings, string> = { cutoff: "cutoff", cap: "cap", timeLimitMs: "time_limit_ms" };
+const SETTING_KEYS: Record<keyof Settings, string> = {
+  cutoff: "cutoff",
+  cap: "cap",
+  timeLimitMs: "time_limit_ms",
+  recentChecks: "recent_checks",
+  busyShare: "busy_share",
+  closeMargin: "close_margin",
+  quietChecks: "quiet_checks",
+};
 const SETTINGS = Object.keys(SETTING_KEYS) as (keyof Settings)[];
 const SETTING_RANGES: Record<keyof Settings, string> = {
   cutoff: "The cutoff is a score from 0 to 1.",
   cap: "The cap is a whole number of at least 1.",
   timeLimitMs: "The time limit is a whole number of milliseconds, at least 1.",
+  recentChecks: "The number of recent checks is a whole number of at least 1.",
+  busyShare: "The share of recent checks is a number above 0, up to 1.",
+  closeMargin: "The margin above the cutoff is a number from 0 to 1.",
+  quietChecks: "The number of checks without a firing is a whole number of at least 1.",
 };
 
 function validSetting(key: keyof Settings, value: number): boolean {
   if (!Number.isFinite(value)) return false;
-  if (key === "cutoff") return value >= 0 && value <= 1;
+  if (key === "cutoff" || key === "closeMargin") return value >= 0 && value <= 1;
+  if (key === "busyShare") return value > 0 && value <= 1;
   return Number.isInteger(value) && value >= 1;
+}
+
+/** How much of Jev's per-request limit recent checks have used. */
+export interface LimitUse {
+  /** Jev's per-request token limit. */
+  requestLimit: number;
+  /** The share of the limit from which the app warns. */
+  warningShare: number;
+  /** How many recent checks reported a token count. */
+  checks: number;
+  /** The most input tokens one request of those checks held; null with no such checks. */
+  largestRequest: number | null;
+  /** largestRequest as a share of the limit. */
+  share: number | null;
+  /** True from the warning share up. */
+  warning: boolean;
 }
 
 /** The rules service also answers the analytics queries (see analytics.ts) and keeps flags and saved cases (see flags.ts). */
@@ -175,6 +222,8 @@ export interface RulesService extends AnalyticsQueries, Flags {
   settings(): Settings;
   /** Stores the given settings and returns them all. Refuses a value out of range. */
   updateSettings(changes: Partial<Settings>): Settings;
+  /** How much of Jev's per-request limit the recent checks have used. */
+  limitUse(): LimitUse;
 }
 
 const now = () => new Date().toISOString();
@@ -184,7 +233,9 @@ const cleanConditions = (conditions: string[]) => conditions.map((c) => c.trim()
 /** What a version needs before it can be live. */
 function requireComplete(content: RuleContent): void {
   if (!content.instruction.trim()) throw new RuleError("A rule needs an instruction.");
-  if (cleanConditions(content.conditions).length === 0) throw new RuleError("A rule needs at least one condition.");
+  const conditions = cleanConditions(content.conditions);
+  if (conditions.length === 0) throw new RuleError("A rule needs at least one condition.");
+  if (!conditions.every(conditionFits)) throw new RuleError("A condition is too long for one Jev request.");
 }
 
 function requireCheckType(checkType: unknown): asserts checkType is CheckType {
@@ -606,6 +657,28 @@ export function createRulesService(db: Store): RulesService {
     },
 
     settings: readSettings,
+
+    limitUse() {
+      const { recentChecks } = readSettings();
+      // Checks recorded before the largest request was kept had only one request.
+      const row = db
+        .prepare(
+          `SELECT COUNT(tokens) AS checks, MAX(tokens) AS largest FROM (
+             SELECT COALESCE(request_tokens, input_tokens) AS tokens FROM checks
+             WHERE input_tokens IS NOT NULL ORDER BY id DESC LIMIT ?
+           )`,
+        )
+        .get(recentChecks) as { checks: number; largest: number | null };
+      const share = row.largest === null ? null : row.largest / REQUEST_TOKEN_LIMIT;
+      return {
+        requestLimit: REQUEST_TOKEN_LIMIT,
+        warningShare: REQUEST_WARNING_SHARE,
+        checks: row.checks,
+        largestRequest: row.largest,
+        share,
+        warning: share !== null && share >= REQUEST_WARNING_SHARE,
+      };
+    },
 
     updateSettings(changes) {
       const entries = SETTINGS.filter((key) => changes[key] !== undefined).map((key) => [key, changes[key]!] as const);
