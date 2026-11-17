@@ -5,6 +5,7 @@ const now = () => new Date().toISOString();
 /**
  * Records Claude's final reply for a turn, tied to the turn's message check:
  * the session's latest message check, unless an earlier turn already holds it.
+ * An older message check is never used: its turn ended without a reply.
  */
 export function recordReply(
   store: Store,
@@ -14,11 +15,11 @@ export function recordReply(
   if (turn.sessionId !== undefined) {
     const row = store
       .prepare(
-        `SELECT id FROM checks
-          WHERE check_type = 'message' AND session_id = ?
-            AND id NOT IN (SELECT message_check_id FROM turns
-                            WHERE session_id = ? AND message_check_id IS NOT NULL)
-          ORDER BY id DESC LIMIT 1`,
+        `SELECT id FROM (SELECT id FROM checks
+                          WHERE check_type = 'message' AND session_id = ?
+                          ORDER BY id DESC LIMIT 1)
+          WHERE id NOT IN (SELECT message_check_id FROM turns
+                            WHERE session_id = ? AND message_check_id IS NOT NULL)`,
       )
       .get(turn.sessionId, turn.sessionId) as { id: number } | undefined;
     messageCheckId = row?.id ?? null;

@@ -171,6 +171,25 @@ describe("recording every turn", () => {
       ["Third reply.", null],
     ]);
   });
+
+  it("does not tie a later turn to an earlier message whose turn ended with no reply", async () => {
+    replyRule();
+    const matcher = standInMatcher();
+
+    await runMessageHook(hookInput("Unanswered message"), { env: sandbox.env, matcher });
+    await runMessageHook(hookInput("Answered message"), { env: sandbox.env, matcher });
+    await runReplyHook(stopInput({ last_assistant_message: "Answer." }), { env: sandbox.env, matcher });
+    await runReplyHook(stopInput({ last_assistant_message: "Reply with no message check." }), {
+      env: sandbox.env,
+      matcher,
+    });
+
+    const answered = sandbox.query<{ id: number }>("SELECT id FROM checks WHERE text = 'Answered message'")[0]!.id;
+    expect(turns().map((t) => [t.reply, t.message_check_id])).toEqual([
+      ["Answer.", answered],
+      ["Reply with no message check.", null],
+    ]);
+  });
 });
 
 describe("reading the final reply", () => {
