@@ -1,4 +1,6 @@
 import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
+import { RuleError, RuleNotFoundError } from "./errors.ts";
+import { createFlags, type Flags } from "./flags.ts";
 import { type Store, transaction } from "./store.ts";
 
 export type CheckType = "message" | "reply";
@@ -104,9 +106,7 @@ export interface RuleFilter {
   hasDraft?: boolean;
 }
 
-export class RuleError extends Error {}
-
-export class RuleNotFoundError extends RuleError {}
+export { RuleError, RuleNotFoundError };
 
 /** The engine's settings. */
 export interface Settings {
@@ -135,8 +135,8 @@ function validSetting(key: keyof Settings, value: number): boolean {
   return Number.isInteger(value) && value >= 1;
 }
 
-/** The rules service also answers the analytics queries (see analytics.ts). */
-export interface RulesService extends AnalyticsQueries {
+/** The rules service also answers the analytics queries (see analytics.ts) and keeps flags and saved cases (see flags.ts). */
+export interface RulesService extends AnalyticsQueries, Flags {
   /** Creates a rule whose only version is a draft. It is not live until published. */
   createRule(rule: NewRule): { ruleId: number };
   /**
@@ -357,6 +357,7 @@ export function createRulesService(db: Store): RulesService {
 
   return {
     ...createAnalyticsQueries(db, requireRule),
+    ...createFlags(db, requireRule),
 
     createRule(rule) {
       const name = cleanName(rule.name);
