@@ -231,7 +231,7 @@ describe("reading the final reply", () => {
     replyRule();
     const matcher = standInMatcher();
     const filler = "x".repeat(10_000);
-    const finalReply = `The end. ${"y".repeat(400_000)}`;
+    const finalReply = `${"y".repeat(400_000)} The end.`;
     const path = transcript([
       ...Array.from({ length: 100 }, (_, i) => [user(`Message ${i}`), assistant(`msg_${i}`, text(filler))]).flat(),
       user("Last message"),
@@ -240,7 +240,10 @@ describe("reading the final reply", () => {
 
     await runReplyHook(stopInput({ transcript_path: path }), { env: sandbox.env, matcher });
 
-    expect(matcher.calls[0]!.text).toBe(finalReply);
+    // A reply this long is cut to its last part before checking.
+    const sent = matcher.calls[0]!.text;
+    expect(sent.endsWith("y The end.")).toBe(true);
+    expect(finalReply.endsWith(sent)).toBe(true);
   });
 
   it("does nothing when there is no reply text", async () => {

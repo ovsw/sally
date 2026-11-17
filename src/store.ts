@@ -133,6 +133,13 @@ const migrations: string[] = [
   -- A rule switched off keeps its versions and draft but is never sent to the matcher.
   ALTER TABLE rules ADD COLUMN switched_off INTEGER NOT NULL DEFAULT 0 CHECK (switched_off IN (0, 1));
   `,
+  `
+  -- Jev's limits: whether the text was cut to its last part to fit the
+  -- per-question limit, and the input tokens of the check's largest request
+  -- (input_tokens is the total when the conditions were split across requests).
+  ALTER TABLE checks ADD COLUMN cut INTEGER NOT NULL DEFAULT 0 CHECK (cut IN (0, 1));
+  ALTER TABLE checks ADD COLUMN request_tokens INTEGER;
+  `,
 ];
 
 /**

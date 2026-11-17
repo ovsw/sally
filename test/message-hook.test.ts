@@ -448,7 +448,10 @@ describe("email masking", () => {
     await runMessageHook(hookInput(`look at ${word} please`), { env: sandbox.env, matcher });
 
     expect(Date.now() - started).toBeLessThan(1000);
-    expect(matcher.calls[0]!.text).toBe(`look at ${word} please`);
+    // A message this long is cut to its last part before checking.
+    const sent = matcher.calls[0]!.text;
+    expect(sent.endsWith("a please")).toBe(true);
+    expect(`look at ${word} please`.endsWith(sent)).toBe(true);
   });
 
   it("still records the message as written on the local machine", async () => {

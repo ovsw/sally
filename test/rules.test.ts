@@ -314,13 +314,28 @@ describe("rules service", () => {
     });
   });
 
+  const defaults = {
+    cutoff: 0.6,
+    cap: 3,
+    timeLimitMs: 3000,
+    recentChecks: 100,
+    busyShare: 0.3,
+    closeMargin: 0.05,
+    quietChecks: 200,
+  };
+
   it("gives the default settings until they are changed, then the stored ones", () => {
     sandbox.withRules((rules) => {
-      expect(rules.settings()).toEqual({ cutoff: 0.6, cap: 3, timeLimitMs: 3000 });
-      expect(rules.updateSettings({ cap: 5 })).toEqual({ cutoff: 0.6, cap: 5, timeLimitMs: 3000 });
+      expect(rules.settings()).toEqual(defaults);
+      expect(rules.updateSettings({ cap: 5, busyShare: 0.5, quietChecks: 50 })).toEqual({
+        ...defaults,
+        cap: 5,
+        busyShare: 0.5,
+        quietChecks: 50,
+      });
     });
     sandbox.withRules((rules) => {
-      expect(rules.settings()).toEqual({ cutoff: 0.6, cap: 5, timeLimitMs: 3000 });
+      expect(rules.settings()).toEqual({ ...defaults, cap: 5, busyShare: 0.5, quietChecks: 50 });
     });
   });
 
@@ -331,10 +346,18 @@ describe("rules service", () => {
     [{ cap: 2.5 }],
     [{ timeLimitMs: 0 }],
     [{ timeLimitMs: Number.NaN }],
+    [{ recentChecks: 0 }],
+    [{ recentChecks: 10.5 }],
+    [{ busyShare: 0 }],
+    [{ busyShare: 1.5 }],
+    [{ closeMargin: -0.01 }],
+    [{ closeMargin: 2 }],
+    [{ quietChecks: 0 }],
+    [{ quietChecks: Number.POSITIVE_INFINITY }],
   ])("refuses the setting %o and stores nothing", (change) => {
     sandbox.withRules((rules) => {
       expect(() => rules.updateSettings({ cap: 4, ...change })).toThrow(RuleError);
-      expect(rules.settings()).toEqual({ cutoff: 0.6, cap: 3, timeLimitMs: 3000 });
+      expect(rules.settings()).toEqual(defaults);
     });
   });
 });

@@ -7,6 +7,7 @@ import {
   type RulesService,
   type RuleState,
   type Scope,
+  type Settings,
 } from "../rules.ts";
 
 /** A request the API refuses, with the HTTP status to answer with. */
@@ -75,6 +76,27 @@ function optionalScope(body: Record<string, unknown>, key: string): Scope | unde
   throw new HttpError(400, `"${key}" must be all projects or a list of projects.`);
 }
 
+const SETTING_NAMES: (keyof Settings)[] = [
+  "cutoff",
+  "cap",
+  "timeLimitMs",
+  "recentChecks",
+  "busyShare",
+  "closeMargin",
+  "quietChecks",
+];
+
+/** The settings given in the body; each must be a number. Unknown keys are refused. */
+function settingsFrom(body: Record<string, unknown>): Partial<Settings> {
+  const changes: Partial<Settings> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (!SETTING_NAMES.includes(key as keyof Settings)) throw new HttpError(400, `"${key}" is not a setting.`);
+    if (typeof value !== "number") throw new HttpError(400, `"${key}" must be a number.`);
+    changes[key as keyof Settings] = value;
+  }
+  return changes;
+}
+
 function filterFrom(params: URLSearchParams): RuleFilter {
   const filter: RuleFilter = {};
   const search = params.get("search");
@@ -111,6 +133,9 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * - POST /api/rules/:id/off, POST /api/rules/:id/on      switch the rule off or on
  * - DELETE /api/rules/:id                                delete the rule
  * - GET  /api/projects                                   the projects Sally has seen
+ * - GET  /api/settings                                   { settings, limitUse }: the settings, and how
+ *                                                        much of Jev's request limit recent checks used
+ * - PUT  /api/settings                                   change some settings; answers like GET
  *
  * Every change answers with the rule as it now is, except a delete, which
  * answers { deleted: true }. Refusals answer with { error } and a 4xx status.
@@ -126,6 +151,13 @@ export async function handleApi(
     const method = req.method ?? "GET";
     if (parts.length === 1 && parts[0] === "projects" && method === "GET") {
       return send(res, 200, { projects: rules.projects() });
+    }
+    if (parts.length === 1 && parts[0] === "settings" && method === "GET") {
+      return send(res, 200, { settings: rules.settings(), limitUse: rules.limitUse() });
+    }
+    if (parts.length === 1 && parts[0] === "settings" && method === "PUT") {
+      const settings = rules.updateSettings(settingsFrom(await readJson(req)));
+      return send(res, 200, { settings, limitUse: rules.limitUse() });
     }
     if (parts[0] !== "rules") throw new HttpError(404, "Not found.");
     const id = parts[1] === undefined ? undefined : Number(parts[1]);
