@@ -33,14 +33,24 @@ agentic workflows today.
 ### The obstacle
 
 Deciding whether a rule applies at the current point in a chat is slow and
-costly for most models. Models that reason step by step, such as Claude and
-ChatGPT, are a poor fit for it.
+costly for most models. System Two models, such as Claude and ChatGPT, are a
+poor fit for it.
 
-### Fast decision models to the rescue
+The two names come from psychology, where they describe two ways of
+thinking:
 
-A different kind of model is good at exactly this:
+- **System One** is fast and automatic: a gut reaction. A System One model
+  answers a narrow question, such as "does this condition hold?", with a
+  score, in a fraction of a second.
+- **System Two** is slow and deliberate: working a problem through step by
+  step. A System Two model reasons and writes its answer out one token at a
+  time.
 
-| | Fast decision model (Jev) | Reasoning model (Claude, ChatGPT) |
+### System One models to the rescue
+
+System One models are good at exactly this task:
+
+| | System One (for example Jev) | System Two (for example Claude, ChatGPT) |
 | :- | :- | :- |
 | **Core function** | Fast classification, scoring and routing. | Deep reasoning, writing, coding and conversation. |
 | **Output** | Structured values and calibrated probabilities. | Free-form text or code, written token by token. |
@@ -59,7 +69,7 @@ A **rule** in Sally has two parts:
 
 On every turn:
 
-1. Sally asks Jev, a fast decision model from TypeSafe, how likely each
+1. Sally asks Jev, a System One model from TypeSafe, how likely each
    condition is to hold.
 2. Jev returns a **score** from 0 to 1 for each one.
 3. If a score reaches the **cutoff** (0.6 by default), the rule **matches**,
