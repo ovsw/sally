@@ -1,4 +1,5 @@
 import type { Outcome } from "./engine.ts";
+import type { FlagView } from "./flags.ts";
 import type { CheckType } from "./rules.ts";
 import type { Store } from "./store.ts";
 
@@ -70,8 +71,11 @@ export interface RuleCheckView {
 }
 
 export interface RuleFiringView extends RuleCheckView {
+  firingId: number;
   /** True when the cap dropped it, so it was not attached or sent back. */
   dropped: boolean;
+  /** The firing's flag, wrong or correct, and who raised it; null when unflagged. */
+  flag: FlagView | null;
 }
 
 /** One published version's own performance. */
@@ -82,6 +86,8 @@ export interface VersionPerformance {
   checks: number;
   /** Times this version fired and was attached or sent back. */
   firings: number;
+  /** This version's firings flagged as wrong matches. */
+  wrongMatches: number;
 }
 
 /** How a rule has behaved, across all its versions. */
@@ -92,6 +98,8 @@ export interface RuleAnalytics {
   firings: number;
   /** Times the rule fired but the cap dropped it. */
   dropped: number;
+  /** Firings flagged as wrong matches. */
+  wrongMatches: number;
   /** The most recent firings, newest first, including those the cap dropped. */
   recentFirings: RuleFiringView[];
   /** The most recent checks where the rule's best score sat just under the cutoff, newest first. */
@@ -105,7 +113,7 @@ export interface RuleAnalytics {
 export interface AnalyticsQueries {
   /** The most recent checks, newest first, with what each attached or sent back. */
   activity(filter?: ActivityFilter): ActivityCheck[];
-  /** How often the rule fired, on what, its near misses and each version's firing count. */
+  /** How often the rule fired, on what and with what flags, its near misses, and each version's firing and wrong-match counts. */
   ruleAnalytics(ruleId: number, options?: { limit?: number }): RuleAnalytics;
 }
 
@@ -224,21 +232,44 @@ function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalyt
     )
     .get(ruleId) as { firings: number; dropped: number };
 
+  const { wrongMatches } = db
+    .prepare(
+      `SELECT COUNT(*) AS wrongMatches FROM flags fl JOIN firings f ON f.id = fl.firing_id
+        WHERE f.rule_id = ? AND fl.verdict = 'wrong'`,
+    )
+    .get(ruleId) as { wrongMatches: number };
+
   const recentFirings = (
     db
       .prepare(
-        `SELECT f.check_id, c.created_at, p.name AS project, c.text, f.score, c.cutoff,
-                v.number AS version_number, cond.text AS condition, f.dropped
+        `SELECT f.id AS firing_id, f.check_id, c.created_at, p.name AS project, c.text, f.score, c.cutoff,
+                v.number AS version_number, cond.text AS condition, f.dropped,
+                fl.verdict, fl.raised_by, fl.created_at AS flagged_at
            FROM firings f
            JOIN checks c ON c.id = f.check_id
            LEFT JOIN projects p ON p.id = c.project_id
            LEFT JOIN versions v ON v.id = f.version_id
            LEFT JOIN conditions cond ON cond.id = f.condition_id
+           LEFT JOIN flags fl ON fl.firing_id = f.id
           WHERE f.rule_id = ?
           ORDER BY f.check_id DESC LIMIT ?`,
       )
-      .all(ruleId, limit) as (CheckViewRow & { dropped: number })[]
-  ).map((row) => ({ ...checkView(row), dropped: row.dropped === 1 }));
+      .all(ruleId, limit) as (CheckViewRow & {
+      firing_id: number;
+      dropped: number;
+      verdict: FlagView["verdict"] | null;
+      raised_by: FlagView["raisedBy"] | null;
+      flagged_at: string | null;
+    })[]
+  ).map((row) => ({
+    ...checkView(row),
+    firingId: row.firing_id,
+    dropped: row.dropped === 1,
+    flag:
+      row.verdict && row.raised_by && row.flagged_at
+        ? { verdict: row.verdict, raisedBy: row.raised_by, createdAt: row.flagged_at }
+        : null,
+  }));
 
   // The rule's best condition in each check it was scored in; a near miss
   // is a best score under that check's cutoff by no more than the margin.
@@ -267,18 +298,27 @@ function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalyt
         `SELECT v.number, v.published_at,
                 (SELECT COUNT(DISTINCT s.check_id) FROM scores s WHERE s.version_id = v.id) AS checks,
                 (SELECT COUNT(*) FROM firings f
-                  WHERE f.rule_id = v.rule_id AND f.version_id = v.id AND f.dropped = 0) AS firings
+                  WHERE f.rule_id = v.rule_id AND f.version_id = v.id AND f.dropped = 0) AS firings,
+                (SELECT COUNT(*) FROM flags fl JOIN firings f ON f.id = fl.firing_id
+                  WHERE f.rule_id = v.rule_id AND f.version_id = v.id AND fl.verdict = 'wrong') AS wrong_matches
            FROM versions v
           WHERE v.rule_id = ? AND v.number IS NOT NULL
           ORDER BY v.number DESC`,
       )
-      .all(ruleId) as { number: number; published_at: string; checks: number; firings: number }[]
-  ).map((row) => ({ number: row.number, publishedAt: row.published_at, checks: row.checks, firings: row.firings }));
+      .all(ruleId) as { number: number; published_at: string; checks: number; firings: number; wrong_matches: number }[]
+  ).map((row) => ({
+    number: row.number,
+    publishedAt: row.published_at,
+    checks: row.checks,
+    firings: row.firings,
+    wrongMatches: row.wrong_matches,
+  }));
 
   return {
     checks,
     firings: counts.firings,
     dropped: counts.dropped,
+    wrongMatches,
     recentFirings,
     nearMisses,
     nearMissMargin: NEAR_MISS_MARGIN,

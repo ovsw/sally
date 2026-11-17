@@ -141,6 +141,32 @@ const migrations: string[] = [
     CHECK (check_type IN ('message', 'reply'));
   UPDATE versions SET check_type = (SELECT check_type FROM rules WHERE rules.id = versions.rule_id);
   `,
+  `
+  -- A verdict on one firing: wrong (the rule did not apply) or correct, and who
+  -- raised it. A firing holds one flag; a later one replaces it, except that
+  -- the user's own flag is never replaced by Claude's or the automatic check's.
+  CREATE TABLE flags (
+    id          INTEGER PRIMARY KEY,
+    firing_id   INTEGER NOT NULL UNIQUE REFERENCES firings (id) ON DELETE CASCADE,
+    verdict     TEXT NOT NULL CHECK (verdict IN ('wrong', 'correct')),
+    raised_by   TEXT NOT NULL CHECK (raised_by IN ('claude', 'user', 'automatic')),
+    created_at  TEXT NOT NULL
+  );
+
+  -- A real message or reply kept with a rule, with the outcome it should have.
+  -- flag_id is where it came from; a case goes with the flag that made it.
+  CREATE TABLE saved_cases (
+    id          INTEGER PRIMARY KEY,
+    rule_id     INTEGER NOT NULL REFERENCES rules (id) ON DELETE CASCADE,
+    check_type  TEXT NOT NULL CHECK (check_type IN ('message', 'reply')),
+    text        TEXT NOT NULL,
+    expected    TEXT NOT NULL CHECK (expected IN ('should_fire', 'should_not_fire')),
+    flag_id     INTEGER REFERENCES flags (id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX saved_cases_by_rule ON saved_cases (rule_id);
+  CREATE INDEX checks_by_session ON checks (session_id);
+  `,
 ];
 
 /**

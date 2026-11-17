@@ -36,6 +36,14 @@ async function main(args: string[]): Promise<number> {
       return 1;
     }
   }
+  if (group === "wrong-match") {
+    // Loaded only here, so the hooks never pay for it.
+    const { runWrongMatch } = await import("./wrong-match.ts");
+    const result = runWrongMatch(args.slice(1), process.env);
+    process.stdout.write(result.stdout);
+    process.stderr.write(result.stderr);
+    return result.code;
+  }
   if (group === "app") {
     // Loaded only here, so the hooks never load web app code.
     const { runApp } = await import("./app/command.ts");
@@ -52,7 +60,7 @@ async function main(args: string[]): Promise<number> {
     });
   }
   process.stderr.write(
-    "Usage: sally hook message|reply\n       sally install\n       sally uninstall\n       sally rules list|show|create|edit\n       sally app [--port N]\n",
+    'Usage: sally hook message|reply\n       sally install\n       sally uninstall\n       sally rules list|show|create|edit\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n',
   );
   return 1;
 }

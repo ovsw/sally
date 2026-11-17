@@ -183,16 +183,54 @@ export interface RuleCheckView {
   condition: string | null;
 }
 
+export type Verdict = "wrong" | "correct";
+export type RaisedBy = "claude" | "user" | "automatic";
+
+/** A verdict on one firing and who raised it. */
+export interface Flag {
+  verdict: Verdict;
+  raisedBy: RaisedBy;
+  createdAt: string;
+}
+
+export interface RuleFiring extends RuleCheckView {
+  firingId: number;
+  /** The cap dropped it, so it was not attached or sent back. */
+  dropped: boolean;
+  flag: Flag | null;
+}
+
 export interface RuleAnalytics {
   checks: number;
   firings: number;
   dropped: number;
-  recentFirings: (RuleCheckView & { dropped: boolean })[];
+  wrongMatches: number;
+  recentFirings: RuleFiring[];
   nearMisses: RuleCheckView[];
   nearMissMargin: number;
-  versions: { number: number; publishedAt: string; checks: number; firings: number }[];
+  versions: { number: number; publishedAt: string; checks: number; firings: number; wrongMatches: number }[];
 }
 
 export function getRuleAnalytics(id: number): Promise<RuleAnalytics> {
   return call("GET", `/api/rules/${id}/analytics`);
+}
+
+/** The user marks a firing wrong or correct; it becomes a saved case for its rule. */
+export function flagFiring(firingId: number, verdict: Verdict): Promise<{ flag: Flag; recorded: boolean }> {
+  return call("POST", `/api/firings/${firingId}/flag`, { verdict });
+}
+
+/** A real message or reply kept with a rule, with the outcome it should have. */
+export interface SavedCase {
+  id: number;
+  ruleId: number;
+  checkType: CheckType;
+  text: string;
+  expected: "should_fire" | "should_not_fire";
+  createdAt: string;
+  source: { verdict: Verdict; raisedBy: RaisedBy; checkId: number; versionNumber: number | null } | null;
+}
+
+export function listSavedCases(ruleId: number): Promise<SavedCase[]> {
+  return call<{ cases: SavedCase[] }>("GET", `/api/rules/${ruleId}/cases`).then((r) => r.cases);
 }

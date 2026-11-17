@@ -1,4 +1,6 @@
 import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
+import { RuleError, RuleNotFoundError } from "./errors.ts";
+import { createFlags, type Flags } from "./flags.ts";
 import { type Store, transaction } from "./store.ts";
 
 export type CheckType = "message" | "reply";
@@ -106,9 +108,7 @@ export interface RuleFilter {
   hasDraft?: boolean;
 }
 
-export class RuleError extends Error {}
-
-export class RuleNotFoundError extends RuleError {}
+export { RuleError, RuleNotFoundError };
 
 /** The engine's settings. */
 export interface Settings {
@@ -137,8 +137,8 @@ function validSetting(key: keyof Settings, value: number): boolean {
   return Number.isInteger(value) && value >= 1;
 }
 
-/** The rules service also answers the analytics queries (see analytics.ts). */
-export interface RulesService extends AnalyticsQueries {
+/** The rules service also answers the analytics queries (see analytics.ts) and keeps flags and saved cases (see flags.ts). */
+export interface RulesService extends AnalyticsQueries, Flags {
   /** Creates a rule whose only version is a draft. It is not live until published. */
   createRule(rule: NewRule): { ruleId: number };
   /**
@@ -364,6 +364,7 @@ export function createRulesService(db: Store): RulesService {
 
   return {
     ...createAnalyticsQueries(db, requireRule),
+    ...createFlags(db, requireRule),
 
     createRule(rule) {
       const name = cleanName(rule.name);
@@ -374,10 +375,22 @@ export function createRulesService(db: Store): RulesService {
       requireCompleteScope(scope);
       return transaction(db, () => {
         requireFreeName(name);
-        const { lastInsertRowid } = db
-          .prepare("INSERT INTO rules (name, check_type, created_at) VALUES (?, ?, ?)")
-          .run(name, rule.checkType, now());
-        const ruleId = Number(lastInsertRowid);
+        // A deleted rule's firings and scores stay, so a new rule never takes an
+        // id they still name; otherwise SQLite reuses the highest free id.
+        const { next } = db
+          .prepare(
+            `SELECT MAX(COALESCE((SELECT MAX(id) FROM rules), 0),
+                        COALESCE((SELECT MAX(rule_id) FROM firings), 0),
+                        COALESCE((SELECT MAX(rule_id) FROM scores), 0)) + 1 AS next`,
+          )
+          .get() as { next: number };
+        db.prepare("INSERT INTO rules (id, name, check_type, created_at) VALUES (?, ?, ?, ?)").run(
+          next,
+          name,
+          rule.checkType,
+          now(),
+        );
+        const ruleId = Number(next);
         insertDraft(ruleId, {
           name,
           checkType: rule.checkType,

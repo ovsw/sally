@@ -249,6 +249,7 @@ describe("rule analytics", () => {
       checks: 0,
       firings: 0,
       dropped: 0,
+      wrongMatches: 0,
       recentFirings: [],
       nearMisses: [],
       nearMissMargin: 0.1,
