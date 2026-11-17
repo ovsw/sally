@@ -246,3 +246,51 @@ describe("creating, editing and publishing a rule", () => {
     expect((await app.call("POST", `/api/rules/${first.id}/publish`, {})).status).toBe(400);
   });
 });
+
+describe("a rule's scope", () => {
+  /** Records a project by running a check in a plain folder; returns its name. */
+  async function see(name: string): Promise<string> {
+    const cwd = join(sandbox.root, name);
+    mkdirSync(cwd, { recursive: true });
+    await runMessageHook(hookInput("hello there", { cwd }), { env: sandbox.env, matcher: standInMatcher() });
+    return cwd;
+  }
+
+  it("lists the projects Sally has seen, to pick from", async () => {
+    expect(await app.json("GET", "/api/projects")).toEqual({ projects: [] });
+    const project = await see("a-project");
+
+    const { projects } = await app.json<{ projects: { name: string; firstSeenAt: string }[] }>("GET", "/api/projects");
+
+    expect(projects).toMatchObject([{ name: project }]);
+  });
+
+  it("edits the scope in the draft and puts it live on publish", async () => {
+    const project = await see("a-project");
+    const rule = await create();
+    expect(rule.draft).toMatchObject({ scope: { kind: "all" } });
+    await app.json("POST", `/api/rules/${rule.id}/publish`, {});
+
+    const saved = await app.json<RuleDetail>("PUT", `/api/rules/${rule.id}/draft`, {
+      instruction: newRule.instruction,
+      conditions: newRule.conditions,
+      scope: { kind: "projects", projects: [project] },
+    });
+    expect(saved).toMatchObject({ live: { scope: { kind: "all" } }, draft: { scope: { kind: "projects", projects: [project] } } });
+
+    const published = await app.json<{ rule: RuleDetail }>("POST", `/api/rules/${rule.id}/publish`, {});
+    expect(published.rule.live).toMatchObject({ scope: { kind: "projects", projects: [project] } });
+  });
+
+  it("refuses a malformed scope and a project Sally has not seen", async () => {
+    const rule = await create();
+    const save = (scope: unknown) =>
+      app.call("PUT", `/api/rules/${rule.id}/draft`, { instruction: "X.", conditions: ["Y."], scope });
+
+    expect((await save("all")).status).toBe(400);
+    expect((await save({ kind: "projects", projects: [1] })).status).toBe(400);
+    const unseen = await save({ kind: "projects", projects: ["never/seen"] });
+    expect(unseen.status).toBe(400);
+    expect(await unseen.json()).toEqual({ error: 'Sally has not seen a project named "never/seen".' });
+  });
+});

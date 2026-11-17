@@ -1,4 +1,5 @@
 import { MalformedAnswerError, type Matcher, type MatcherCondition } from "./matcher.ts";
+import { resolveProject } from "./project.ts";
 import type { CheckType, LiveRule, RulesService } from "./rules.ts";
 import { type Store, transaction } from "./store.ts";
 import { maskEmails, messageText } from "./text.ts";
@@ -61,6 +62,8 @@ interface CheckRecord {
   input: CheckInput;
   /** The text the check judged: the message after any slash command. */
   text: string;
+  /** The project the session's folder belongs to; undefined without a folder. */
+  project: string | undefined;
   startedAt: number;
   cutoff: number;
   cap: number;
@@ -82,16 +85,26 @@ export function createEngine(options: EngineOptions): Engine {
     const { input } = check;
     const durationMs = Math.round(performance.now() - check.startedAt);
     return transaction(store, () => {
+      const createdAt = new Date().toISOString();
+      let projectId: number | null = null;
+      if (check.project !== undefined) {
+        // A project is recorded the first time a check runs in it.
+        store
+          .prepare("INSERT INTO projects (name, first_seen_at) VALUES (?, ?) ON CONFLICT (name) DO NOTHING")
+          .run(check.project, createdAt);
+        projectId = (store.prepare("SELECT id FROM projects WHERE name = ?").get(check.project) as { id: number }).id;
+      }
       const { lastInsertRowid: checkId } = store
         .prepare(
-          `INSERT INTO checks (created_at, session_id, cwd, check_type, text, duration_ms,
+          `INSERT INTO checks (created_at, session_id, cwd, project_id, check_type, text, duration_ms,
                                input_tokens, cutoff, cap, outcome, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
-          new Date().toISOString(),
+          createdAt,
           input.sessionId ?? null,
           input.cwd ?? null,
+          projectId,
           input.checkType,
           check.text,
           durationMs,
@@ -118,6 +131,8 @@ export function createEngine(options: EngineOptions): Engine {
     });
   }
 
+  const projectOf = (input: CheckInput) => (input.cwd ? resolveProject(input.cwd) : undefined);
+
   async function score(text: string, conditions: MatcherCondition[], timeLimitMs: number) {
     if (!matcher) throw new Error("missing API key");
     const controller = new AbortController();
@@ -137,27 +152,30 @@ export function createEngine(options: EngineOptions): Engine {
 
   return {
     skip(input) {
+      const startedAt = performance.now();
       const { cutoff, cap } = rules.settings();
-      return record({ input, text: input.text, startedAt: performance.now(), cutoff, cap }, "skipped");
+      return record({ input, text: input.text, project: projectOf(input), startedAt, cutoff, cap }, "skipped");
     },
 
     async check(input) {
       const startedAt = performance.now();
       const { cutoff, cap, timeLimitMs } = rules.settings();
+      const project = projectOf(input);
 
       // A message that starts with a slash command is judged only on what follows the command name.
       const judged = input.checkType === "message" ? messageText(input.text) : { kind: "check" as const, text: input.text };
       if (judged.kind === "skip") {
-        const checkId = record({ input, text: input.text, startedAt, cutoff, cap }, "skipped");
+        const checkId = record({ input, text: input.text, project, startedAt, cutoff, cap }, "skipped");
         return { outcome: "skipped", checkId, firings: [] };
       }
-      const check: CheckRecord = { input, text: judged.text, startedAt, cutoff, cap };
+      const check: CheckRecord = { input, text: judged.text, project, startedAt, cutoff, cap };
       const failed = (error: string, inputTokens?: number | null): CheckResult => {
         const checkId = record(check, "failed", { error, inputTokens });
         return { outcome: "failed", checkId, firings: [] };
       };
 
-      const live = rules.liveRules(input.checkType);
+      // Only the rules in scope for this project reach the matcher.
+      const live = rules.liveRules(input.checkType, project);
       if (live.length === 0) return failed("no live rules");
 
       const sent = new Map<string, { rule: LiveRule; conditionId: number }>();
