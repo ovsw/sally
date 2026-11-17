@@ -69,10 +69,22 @@ describe("rules service", () => {
         live: { checkType: "message" },
         draft: { checkType: "reply" },
       });
+      // A later edit that does not mention the check type keeps the draft's.
+      rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: ["Condition A."] });
+      expect(rules.getRule(ruleId).draft).toMatchObject({ checkType: "reply", instruction: "Do Y." });
       rules.publish(ruleId);
       expect(rules.liveRules("message")).toEqual([]);
       expect(rules.liveRules("reply")).toMatchObject([{ ruleId, versionNumber: 2 }]);
       expect(rules.listRules({ checkType: "reply" })).toMatchObject([{ id: ruleId }]);
+    });
+  });
+
+  it("files a never-published rule under its draft's check type", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      rules.saveDraft(ruleId, { checkType: "reply", instruction: "Do X.", conditions: ["Condition A."] });
+      expect(rules.listRules({ checkType: "reply" })).toMatchObject([{ id: ruleId, state: "draft" }]);
+      expect(rules.liveRules("reply")).toEqual([]);
     });
   });
 

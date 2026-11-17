@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { RuleDetail, RuleSummary } from "../src/rules.ts";
+import { startApp } from "./support/app.ts";
 import { createSandbox, type Sandbox } from "./support/sandbox.ts";
 
 const cli = join(import.meta.dirname, "..", "src", "cli.ts");
@@ -196,6 +198,74 @@ describe("preparing drafts", () => {
       stderr: 'A rule named "Brief" already exists.\n',
     });
     sandbox.withRules((rules) => expect(rules.listRules({ hasDraft: true })).toEqual([]));
+  });
+});
+
+describe("drafts in the app", () => {
+  it("shows a rule created and edited here in the app, with the draft's check type", async () => {
+    const created = sallyJson(
+      "create",
+      "--name",
+      "Links",
+      "--check-type",
+      "message",
+      "--instruction",
+      "Give a local link.",
+      "--condition",
+      "The reply is visual.",
+    );
+    sallyJson(
+      "edit",
+      "Links",
+      "--check-type",
+      "reply",
+      "--instruction",
+      "Give the localhost link.",
+      "--condition",
+      "The reply reports a visual change.",
+    );
+    const app = await startApp(sandbox);
+    try {
+      const { rules } = await app.json<{ rules: RuleSummary[] }>("GET", "/api/rules?checkType=reply&hasDraft=true");
+      expect(rules).toEqual([{ id: created.id, name: "Links", checkType: "reply", state: "draft", hasDraft: true }]);
+      const rule = await app.json<RuleDetail>("GET", `/api/rules/${created.id}`);
+      expect(rule).toMatchObject({
+        live: null,
+        draft: {
+          name: "Links",
+          checkType: "reply",
+          instruction: "Give the localhost link.",
+          conditions: ["The reply reports a visual change."],
+        },
+      });
+      // The user publishes it in the app.
+      const published = await app.json<{ versionNumber: number; rule: RuleDetail }>(
+        "POST",
+        `/api/rules/${created.id}/publish`,
+        {},
+      );
+      expect(published).toMatchObject({ versionNumber: 1, rule: { state: "live", live: { checkType: "reply" } } });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("shows an agent's edit of a live rule as the draft beside the live version in the app", async () => {
+    const ruleId = sandbox.liveRule({ name: "Links", instruction: "Give a local link.", conditions: ["The reply is visual."] });
+    sallyJson("edit", "Links", "--name", "Local links", "--check-type", "reply");
+    const app = await startApp(sandbox);
+    try {
+      expect(await app.json<RuleDetail>("GET", `/api/rules/${ruleId}`)).toMatchObject({
+        name: "Links",
+        checkType: "message",
+        state: "live",
+        hasDraft: true,
+        live: { number: 1, name: "Links", checkType: "message", instruction: "Give a local link." },
+        draft: { name: "Local links", checkType: "reply", instruction: "Give a local link." },
+      });
+    } finally {
+      await app.close();
+    }
   });
 });
 

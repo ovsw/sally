@@ -22,10 +22,26 @@ tracked in this repository's issues.
 `XDG_CONFIG_HOME` and `XDG_DATA_HOME` move these folders as usual;
 `SALLY_CONFIG_DIR` and `SALLY_DATA_DIR` override them outright.
 
+## The web app
+
+```sh
+sally app            # or: node src/cli.ts app [--port N]
+```
+
+It prints its address (`http://127.0.0.1:4517` by default; `--port` or
+`SALLY_PORT` changes it) and listens on this machine only. Browse and search
+your rules, create one, and edit it: edits save into a draft automatically
+and change nothing until you publish. The engine uses a published rule from
+the next check on.
+
+The command builds the app into `dist/web` when the build is missing or older
+than its sources.
+
 ## Commands for agents
 
 An agent can read your rules and prepare drafts; it cannot publish, switch off
-or delete a rule. Those stay with you in the web app. Output is JSON.
+or delete a rule. Those stay with you in the web app, where the agent's drafts
+show up like your own. Output is JSON.
 
 ```sh
 sally rules list [--search TEXT] [--check-type message|reply] [--state live|draft]
@@ -40,8 +56,8 @@ sally rules edit RULE [--name NAME] [--check-type message|reply] \
 
 ## Development
 
-Requires Node 24 or later and pnpm. Sally runs its TypeScript directly with
-Node's type stripping, so there is no build step.
+Requires Node 24 or later and pnpm. The command line runs its TypeScript
+directly with Node's type stripping; only the web app is built (`pnpm build`).
 
 ```sh
 pnpm install
@@ -49,5 +65,15 @@ pnpm check   # typecheck, lint and tests
 ```
 
 The user-prompt-submit hook runs `sally hook message`.
+
+The web app is React with shadcn/ui, in `web/`. `pnpm dev:web` serves it with
+hot reload and sends `/api` to a running `sally app`. Layouts and components
+come from shadcn blocks through the `@shadcnblocks` registry set up in
+`components.json`; adding one needs `SHADCNBLOCKS_API_KEY` in the environment
+(for example in `.env.local`, which is never committed):
+
+```sh
+pnpm dlx shadcn@latest add @shadcnblocks/<block>
+```
 
 No guarantees. MIT licensed.

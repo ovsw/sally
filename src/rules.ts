@@ -12,10 +12,7 @@ export interface NewRule extends RuleContent {
   checkType: CheckType;
 }
 
-/**
- * What a draft holds. Without a name or a check type, the draft keeps the one
- * it has.
- */
+/** What a draft holds. Without a name or check type, the draft keeps the one it has. */
 export interface DraftContent extends RuleContent {
   name?: string;
   checkType?: CheckType;
@@ -39,10 +36,7 @@ export interface LiveRule {
 /** A rule is live once published; until then it has only its draft. */
 export type RuleState = "live" | "draft";
 
-/**
- * One row of the rules list. `name` and `checkType` are the ones in force (the
- * live version's, if any).
- */
+/** One row of the rules list. `name` is the name in force (the live one, if any). */
 export interface RuleSummary {
   id: number;
   name: string;
@@ -167,8 +161,6 @@ interface VersionRow {
   published_at: string | null;
 }
 
-const VERSION_COLUMNS = "id, number, name, check_type, instruction, created_at, published_at";
-
 export function createRulesService(db: Store): RulesService {
   function insertDraft(ruleId: number, content: Required<DraftContent>): void {
     const { lastInsertRowid } = db
@@ -182,14 +174,14 @@ export function createRulesService(db: Store): RulesService {
 
   function draft(ruleId: number): VersionRow | undefined {
     return db
-      .prepare(`SELECT ${VERSION_COLUMNS} FROM versions WHERE rule_id = ? AND number IS NULL`)
+      .prepare("SELECT id, number, name, check_type, instruction, created_at, published_at FROM versions WHERE rule_id = ? AND number IS NULL")
       .get(ruleId) as VersionRow | undefined;
   }
 
   function live(ruleId: number): VersionRow | undefined {
     return db
       .prepare(
-        `SELECT ${VERSION_COLUMNS} FROM versions
+        `SELECT id, number, name, check_type, instruction, created_at, published_at FROM versions
           WHERE rule_id = ? AND number IS NOT NULL ORDER BY number DESC LIMIT 1`,
       )
       .get(ruleId) as VersionRow | undefined;
@@ -256,12 +248,12 @@ export function createRulesService(db: Store): RulesService {
     },
 
     saveDraft(ruleId, content) {
-      if (content.checkType !== undefined) requireCheckType(content.checkType);
       transaction(db, () => {
         const rule = requireRule(ruleId);
         const existing = draft(ruleId);
         const name = content.name === undefined ? (existing?.name ?? rule.name) : cleanName(content.name);
         const checkType = content.checkType ?? existing?.check_type ?? rule.check_type;
+        requireCheckType(checkType);
         requireFreeName(name, ruleId);
         if (existing) db.prepare("DELETE FROM versions WHERE id = ?").run(existing.id);
         insertDraft(ruleId, { name, checkType, instruction: content.instruction, conditions: content.conditions });
