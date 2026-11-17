@@ -90,6 +90,17 @@ const migrations: string[] = [
   );
   CREATE INDEX turns_by_session ON turns (session_id);
   `,
+  `
+  -- Engine settings by key; a key with no row takes its default.
+  CREATE TABLE settings (
+    key    TEXT PRIMARY KEY,
+    value  REAL NOT NULL
+  );
+
+  -- The cap in force for each check, and whether the cap dropped a firing.
+  ALTER TABLE checks ADD COLUMN cap INTEGER;
+  ALTER TABLE firings ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0 CHECK (dropped IN (0, 1));
+  `,
 ];
 
 /**

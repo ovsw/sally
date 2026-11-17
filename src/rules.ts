@@ -29,6 +29,33 @@ export interface LiveRule {
 
 export class RuleError extends Error {}
 
+/** The engine's settings. */
+export interface Settings {
+  /** The score a condition must reach for its rule to fire, 0 to 1. */
+  cutoff: number;
+  /** The most rules attached in one check. */
+  cap: number;
+  /** How long a check may wait for the matcher before giving up. */
+  timeLimitMs: number;
+}
+
+export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({ cutoff: 0.6, cap: 3, timeLimitMs: 3000 });
+
+/** Each setting's key in the settings table. */
+const SETTING_KEYS: Record<keyof Settings, string> = { cutoff: "cutoff", cap: "cap", timeLimitMs: "time_limit_ms" };
+const SETTINGS = Object.keys(SETTING_KEYS) as (keyof Settings)[];
+const SETTING_RANGES: Record<keyof Settings, string> = {
+  cutoff: "The cutoff is a score from 0 to 1.",
+  cap: "The cap is a whole number of at least 1.",
+  timeLimitMs: "The time limit is a whole number of milliseconds, at least 1.",
+};
+
+function validSetting(key: keyof Settings, value: number): boolean {
+  if (!Number.isFinite(value)) return false;
+  if (key === "cutoff") return value >= 0 && value <= 1;
+  return Number.isInteger(value) && value >= 1;
+}
+
 export interface RulesService {
   /** Creates a rule whose only version is a draft. It is not live until published. */
   createRule(rule: NewRule): { ruleId: number };
@@ -38,6 +65,10 @@ export interface RulesService {
   publish(ruleId: number): { versionNumber: number };
   /** The live version of every rule of this check type, read fresh from the database. */
   liveRules(checkType: CheckType): LiveRule[];
+  /** The stored settings, each falling back to its default. */
+  settings(): Settings;
+  /** Stores the given settings and returns them all. Refuses a value out of range. */
+  updateSettings(changes: Partial<Settings>): Settings;
 }
 
 const now = () => new Date().toISOString();
@@ -63,6 +94,17 @@ export function createRulesService(db: Store): RulesService {
       | { id: number }
       | undefined;
     return row?.id;
+  }
+
+  function readSettings(): Settings {
+    const rows = db.prepare("SELECT key, value FROM settings").all() as { key: string; value: number }[];
+    const stored = new Map(rows.map((row) => [row.key, row.value]));
+    const result = { ...DEFAULT_SETTINGS };
+    for (const key of SETTINGS) {
+      const value = stored.get(SETTING_KEYS[key]);
+      if (value !== undefined && validSetting(key, value)) result[key] = value;
+    }
+    return result;
   }
 
   function requireRule(ruleId: number): void {
@@ -154,6 +196,22 @@ export function createRulesService(db: Store): RulesService {
         rule.conditions.push({ id: row.conditionId, text: row.conditionText });
       }
       return [...byRule.values()];
+    },
+
+    settings: readSettings,
+
+    updateSettings(changes) {
+      const entries = SETTINGS.filter((key) => changes[key] !== undefined).map((key) => [key, changes[key]!] as const);
+      for (const [key, value] of entries) {
+        if (!validSetting(key, value)) throw new RuleError(SETTING_RANGES[key]);
+      }
+      transaction(db, () => {
+        const save = db.prepare(
+          "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        );
+        for (const [key, value] of entries) save.run(SETTING_KEYS[key], value);
+      });
+      return readSettings();
     },
   };
 }

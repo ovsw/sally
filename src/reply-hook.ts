@@ -12,7 +12,6 @@ export interface ReplyHookOptions {
   env: Env;
   /** Replaces the Jev matcher built from the API key; tests pass a stand-in. */
   matcher?: Matcher;
-  timeLimitMs?: number;
 }
 
 interface StopInput {
@@ -63,7 +62,6 @@ export async function runReplyHook(stdin: string, options: ReplyHookOptions): Pr
         store,
         rules: createRulesService(store),
         matcher: options.matcher ?? (apiKey ? createJevMatcher({ apiKey }) : undefined),
-        timeLimitMs: options.timeLimitMs,
       });
 
       // The once-per-turn guard: a reply already sent back is never sent back again.

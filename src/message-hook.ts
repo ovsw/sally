@@ -8,17 +8,23 @@ import { openStore } from "./store.ts";
 export const ATTACHED_HEADER =
   "Sally: the rules below are the user's own written rules, and they apply to this message.";
 
+/** The last line of the attached text: how Claude reports a rule that does not apply. */
+export const REPORT_LINE =
+  'If one of these rules does not apply to this message, say so by running: sally wrong-match "<rule name>"';
+
 export interface MessageHookOptions {
   env: Env;
   /** Replaces the Jev matcher built from the API key; tests pass a stand-in. */
   matcher?: Matcher;
-  timeLimitMs?: number;
 }
 
-/** The text attached to the user's message: the fixed header, then each rule's name and instruction. */
+/**
+ * The text attached to the user's message: the fixed header, then each
+ * rule's name and instruction, then how to report a rule that does not apply.
+ */
 export function formatAttached(firings: Firing[]): string {
   const rules = firings.map((f) => `Rule: ${f.name}\n${f.instruction}`);
-  return [ATTACHED_HEADER, ...rules].join("\n\n");
+  return [ATTACHED_HEADER, ...rules, REPORT_LINE].join("\n\n");
 }
 
 /**
@@ -38,7 +44,6 @@ export async function runMessageHook(stdin: string, options: MessageHookOptions)
         store,
         rules: createRulesService(store),
         matcher: options.matcher ?? (apiKey ? createJevMatcher({ apiKey }) : undefined),
-        timeLimitMs: options.timeLimitMs,
       });
       const result = await engine.check({
         checkType: "message",
