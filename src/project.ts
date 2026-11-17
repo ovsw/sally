@@ -57,8 +57,8 @@ export function normalizeRemote(url: string): string | undefined {
 export function resolveProject(cwd: string): string {
   const folder = resolve(cwd);
   // --local reads only the repository's own config (shared by its worktrees)
-  // and refuses outside a repository.
-  const remotes = git(folder, ["config", "--local", "--get-regexp", "^remote\\..*\\.url$"]);
+  // and refuses outside a repository; --includes follows its include.path files.
+  const remotes = git(folder, ["config", "--local", "--includes", "--get-regexp", "^remote\\..*\\.url$"]);
   if (remotes.ok) {
     const urls = new Map<string, string>();
     for (const line of remotes.out.split("\n")) {

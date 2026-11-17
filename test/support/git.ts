@@ -31,6 +31,11 @@ export function gitRepo(path: string, remotes: Record<string, string> = {}): str
   return path;
 }
 
+/** Sets a value in the repository's own config. */
+export function gitConfig(repo: string, key: string, value: string): void {
+  git(repo, "config", "--local", key, value);
+}
+
 /** Adds a worktree of `repo` at `path`, on a new branch. Returns its path. */
 export function gitWorktree(repo: string, path: string, branch = "other"): string {
   git(repo, "worktree", "add", "--quiet", "-b", branch, path);

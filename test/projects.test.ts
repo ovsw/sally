@@ -1,9 +1,9 @@
-import { realpathSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runMessageHook } from "../src/message-hook.ts";
 import { runReplyHook } from "../src/reply-hook.ts";
-import { folder, gitRepo, gitWorktree } from "./support/git.ts";
+import { folder, gitConfig, gitRepo, gitWorktree } from "./support/git.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { type StandIn, standInMatcher } from "./support/stand-in-matcher.ts";
 
@@ -62,6 +62,17 @@ describe("the project of a check", () => {
     await messageIn(gitRepo(join(sandbox.root, "fork-only"), { upstream: "git@github.com:owner/other.git" }));
 
     expect(checkProjects()).toEqual(["owner/main", "owner/other"]);
+  });
+
+  it("finds a remote set in a file the repository's config includes", async () => {
+    const repo = gitRepo(join(sandbox.root, "repo"));
+    const included = join(sandbox.root, "remotes.gitconfig");
+    writeFileSync(included, '[remote "origin"]\n\turl = git@github.com:owner/repo.git\n');
+    gitConfig(repo, "include.path", included);
+
+    await messageIn(repo);
+
+    expect(checkProjects()).toEqual(["owner/repo"]);
   });
 
   it("is the folder path outside any repository", async () => {
