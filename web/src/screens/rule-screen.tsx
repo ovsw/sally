@@ -67,10 +67,14 @@ const SAVE_DELAY_MS = 500;
 const UNDO_GROUP_MS = 1000;
 const UNDO_LIMIT = 200;
 
-/** One undo step: the form as it was, and whether it was a saved or pending draft. */
+/**
+ * One undo step: the form as it was, whether it was a saved or pending draft,
+ * and the live version it stood beside.
+ */
 interface UndoStep {
   content: VersionView;
   hadDraft: boolean;
+  liveNumber: number | null;
 }
 
 type SaveState =
@@ -537,12 +541,27 @@ export function RuleScreen({ id }: { id: number }) {
     return inFlight.current;
   }, [id, setRule]);
 
-  /** Drops edits not yet sent and waits for the saves already sent. */
-  const settle = async () => {
+  /**
+   * Holds back edits not yet sent, waits for the saves already sent, then runs
+   * `replace`, which replaces the draft. If `replace` fails, the held-back
+   * edits are scheduled to save again, so the form and the draft still agree.
+   */
+  const replacingDraft = async (replace: () => Promise<void>) => {
     window.clearTimeout(timer.current);
     timer.current = undefined;
+    const held = latest.current;
     latest.current = null;
     await inFlight.current;
+    try {
+      await replace();
+    } catch (e) {
+      if (held && !latest.current) {
+        latest.current = held;
+        setSave({ kind: "pending" });
+        timer.current = window.setTimeout(() => void flush(), SAVE_DELAY_MS);
+      }
+      throw e;
+    }
   };
 
   // Edits still waiting when the screen closes are saved straight away. When
@@ -567,6 +586,12 @@ export function RuleScreen({ id }: { id: number }) {
   const busySaving = save.kind === "pending" || save.kind === "saving";
   const showingDraft = (rule?.hasDraft ?? false) || busySaving;
 
+  const undoStepNow = (): UndoStep => ({
+    content: draft!,
+    hadDraft: showingDraft,
+    liveNumber: ruleRef.current?.live?.number ?? null,
+  });
+
   const pushUndo = (step: UndoStep) => {
     undoStack.current.push(step);
     if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift();
@@ -588,7 +613,7 @@ export function RuleScreen({ id }: { id: number }) {
       const now = Date.now();
       const last = lastTyped.current;
       const sameRun = field !== null && last?.field === field && now - last.at < UNDO_GROUP_MS;
-      if (!sameRun) pushUndo({ content: draft, hadDraft: showingDraft });
+      if (!sameRun) pushUndo(undoStepNow());
       lastTyped.current = field === null ? null : { field, at: now };
     }
     saveSoon(next);
@@ -608,14 +633,14 @@ export function RuleScreen({ id }: { id: number }) {
   };
 
   /** Drops the draft on the server, if it has one, and shows the live version in the form. */
-  const dropDraft = async () => {
-    await settle();
-    const current = ruleRef.current!;
-    const updated = current.hasDraft ? await discardDraft(id) : current;
-    setRule(updated);
-    setDraft(contentOf(updated));
-    setSave({ kind: "idle" });
-  };
+  const dropDraft = () =>
+    replacingDraft(async () => {
+      const current = ruleRef.current!;
+      const updated = current.hasDraft ? await discardDraft(id) : current;
+      setRule(updated);
+      setDraft(contentOf(updated));
+      setSave({ kind: "idle" });
+    });
 
   const undo = () =>
     act("undo", async () => {
@@ -623,7 +648,10 @@ export function RuleScreen({ id }: { id: number }) {
       setUndoSteps(undoStack.current.length);
       lastTyped.current = null;
       if (!step) return;
-      if (step.hadDraft || !ruleRef.current?.live) {
+      // A step from before a publish holds content the live version no
+      // longer has, so it comes back as a draft.
+      const live = ruleRef.current?.live ?? null;
+      if (step.hadDraft || !live || live.number !== step.liveNumber) {
         saveSoon(step.content);
       } else {
         await dropDraft();
@@ -632,7 +660,7 @@ export function RuleScreen({ id }: { id: number }) {
 
   const discard = () =>
     act("discard", async () => {
-      const before = { content: draft!, hadDraft: showingDraft };
+      const before = undoStepNow();
       await dropDraft();
       pushUndo(before);
       lastTyped.current = null;
@@ -640,12 +668,13 @@ export function RuleScreen({ id }: { id: number }) {
 
   const startFrom = (version: PublishedVersion) =>
     act("start-draft", async () => {
-      const before = { content: draft!, hadDraft: showingDraft };
-      await settle();
-      const updated = await startDraftFrom(id, version.number);
-      setRule(updated);
-      setDraft(contentOf(updated));
-      setSave({ kind: "saved" });
+      const before = undoStepNow();
+      await replacingDraft(async () => {
+        const updated = await startDraftFrom(id, version.number);
+        setRule(updated);
+        setDraft(contentOf(updated));
+        setSave({ kind: "saved" });
+      });
       pushUndo(before);
       lastTyped.current = null;
     });
@@ -666,13 +695,22 @@ export function RuleScreen({ id }: { id: number }) {
 
   const toggle = (on: boolean) =>
     act("switch", async () => {
-      setRule(await switchRule(id, on));
+      // In line with the saves, so a save answered earlier cannot show the
+      // rule's old on or off after this.
+      const before = inFlight.current;
+      const switched = before.then(() => switchRule(id, on));
+      inFlight.current = switched.then(
+        () => before,
+        () => before,
+      );
+      setRule(await switched);
     });
 
   const remove = () =>
     act("delete", async () => {
-      await settle();
-      await deleteRule(id);
+      await replacingDraft(async () => {
+        await deleteRule(id);
+      });
       navigate("/rules");
     });
 
@@ -691,6 +729,9 @@ export function RuleScreen({ id }: { id: number }) {
   }
 
   const acting = action !== null;
+  // While the draft is being replaced, edits would be lost, so the form waits.
+  const replacing =
+    action === "start-draft" || action === "discard" || action === "undo" || action === "delete";
   const canPublish = (rule.hasDraft || busySaving) && save.kind !== "error" && !acting;
   const canDiscard = rule.live !== null && showingDraft && !acting;
 
@@ -789,7 +830,7 @@ export function RuleScreen({ id }: { id: number }) {
               </Button>
             </div>
           </div>
-          <div className="px-4 py-4">
+          <fieldset disabled={replacing} className="min-w-0 px-4 py-4">
             <DraftForm
               value={draft}
               onChange={edit}
@@ -799,7 +840,7 @@ export function RuleScreen({ id }: { id: number }) {
               onRetryProjects={retryProjects}
               error={save.kind === "error" ? save.message : null}
             />
-          </div>
+          </fieldset>
         </section>
       </div>
       <VersionHistory rule={rule} busy={acting} onStartDraft={(v) => void startFrom(v)} />
