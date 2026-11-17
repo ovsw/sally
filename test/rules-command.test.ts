@@ -48,8 +48,8 @@ describe("reading rules", () => {
           .ruleId,
     );
     expect(sallyJson("list")).toEqual([
-      { id: draftId, name: "Brief", checkType: "reply", state: "draft", hasDraft: true },
-      { id: linksId, name: "Links", checkType: "message", state: "live", hasDraft: true },
+      { id: draftId, name: "Brief", checkType: "reply", state: "draft", on: true, hasDraft: true },
+      { id: linksId, name: "Links", checkType: "message", state: "live", on: true, hasDraft: true },
     ]);
   });
 
@@ -227,7 +227,7 @@ describe("drafts in the app", () => {
     const app = await startApp(sandbox);
     try {
       const { rules } = await app.json<{ rules: RuleSummary[] }>("GET", "/api/rules?checkType=reply&hasDraft=true");
-      expect(rules).toEqual([{ id: created.id, name: "Links", checkType: "reply", state: "draft", hasDraft: true }]);
+      expect(rules).toEqual([{ id: created.id, name: "Links", checkType: "reply", state: "draft", on: true, hasDraft: true }]);
       const rule = await app.json<RuleDetail>("GET", `/api/rules/${created.id}`);
       expect(rule).toMatchObject({
         live: null,

@@ -10,6 +10,20 @@ again when it finishes its reply. When nothing applies, Sally stays silent.
 Status: early. The message check works end to end; the rest of the spec is
 tracked in this repository's issues.
 
+## Install
+
+```sh
+node src/cli.ts install     # from this checkout
+node src/cli.ts uninstall   # backs it out
+```
+
+Install registers the message hook (`UserPromptSubmit`) and the reply hook
+(`Stop`) in `~/.claude/settings.json`, pointing at this checkout, and adds one
+line to `~/.claude/CLAUDE.md` saying that Sally's reminders are your rules and
+carry the same authority as that file. Running it again changes nothing.
+Uninstall removes exactly those entries. Both leave everything else in the two
+files as it was, and both follow `CLAUDE_CONFIG_DIR` when it is set.
+
 ## Where things live
 
 - **API key**: the `TYPESAFE_API_KEY` environment variable, or the file
@@ -64,7 +78,8 @@ pnpm install
 pnpm check   # typecheck, lint and tests
 ```
 
-The user-prompt-submit hook runs `sally hook message`.
+The user-prompt-submit hook runs `sally hook message`; the stop hook runs
+`sally hook reply`.
 
 The web app is React with shadcn/ui, in `web/`. `pnpm dev:web` serves it with
 hot reload and sends `/api` to a running `sally app`. Layouts and components

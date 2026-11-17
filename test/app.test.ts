@@ -99,9 +99,9 @@ describe("the rules list", () => {
     await create({ name: "New rule" });
 
     expect(await list()).toEqual([
-      { id: edited.id, name: "Edited rule", checkType: "reply", state: "live", hasDraft: true },
-      { id: live.id, name: "Live rule", checkType: "message", state: "live", hasDraft: false },
-      { id: expect.any(Number), name: "New rule", checkType: "message", state: "draft", hasDraft: true },
+      { id: edited.id, name: "Edited rule", checkType: "reply", state: "live", on: true, hasDraft: true },
+      { id: live.id, name: "Live rule", checkType: "message", state: "live", on: true, hasDraft: false },
+      { id: expect.any(Number), name: "New rule", checkType: "message", state: "draft", on: true, hasDraft: true },
     ]);
   });
 
@@ -244,5 +244,153 @@ describe("creating, editing and publishing a rule", () => {
 
     await app.json("POST", `/api/rules/${first.id}/publish`, {});
     expect((await app.call("POST", `/api/rules/${first.id}/publish`, {})).status).toBe(400);
+  });
+});
+
+describe("history and the rest of a rule's life", () => {
+  const publish = (id: number) => app.json("POST", `/api/rules/${id}/publish`, {});
+  const reword = (id: number, instruction: string, conditions = newRule.conditions) =>
+    app.json<RuleDetail>("PUT", `/api/rules/${id}/draft`, { instruction, conditions });
+  const sentToJev = async () => {
+    const matcher = standInMatcher({ "The message asks for a visual change.": 0.9 });
+    const output = await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
+    return { output, conditions: matcher.calls.flatMap((call) => call.conditions.map((c) => c.text)) };
+  };
+
+  it("lists every published version with its date", async () => {
+    const rule = await create();
+    await publish(rule.id);
+    await reword(rule.id, "Second wording.");
+    await publish(rule.id);
+    await reword(rule.id, "A draft, not a version.");
+
+    const detail = await app.json<RuleDetail>("GET", `/api/rules/${rule.id}`);
+    expect(detail.versions).toEqual([
+      expect.objectContaining({ number: 2, instruction: "Second wording.", publishedAt: expect.any(String) }),
+      expect.objectContaining({ number: 1, instruction: newRule.instruction, publishedAt: expect.any(String) }),
+    ]);
+  });
+
+  it("starts a draft from an old version", async () => {
+    const rule = await create();
+    await publish(rule.id);
+    await reword(rule.id, "Second wording.");
+    await publish(rule.id);
+
+    const detail = await app.json<RuleDetail>("POST", `/api/rules/${rule.id}/versions/1/draft`, {});
+    expect(detail).toMatchObject({ live: { number: 2 }, draft: { instruction: newRule.instruction } });
+    expect((await app.call("POST", `/api/rules/${rule.id}/versions/7/draft`, {})).status).toBe(404);
+  });
+
+  it("discards a draft", async () => {
+    const rule = await create();
+    await publish(rule.id);
+    await reword(rule.id, "Second wording.");
+
+    const detail = await app.json<RuleDetail>("DELETE", `/api/rules/${rule.id}/draft`);
+    expect(detail).toMatchObject({ hasDraft: false, draft: null, live: { instruction: newRule.instruction } });
+    expect((await app.call("DELETE", `/api/rules/${rule.id}/draft`)).status).toBe(400);
+  });
+
+  it("switches a rule off, so it is never sent to Jev, and on again with its history", async () => {
+    const rule = await create();
+    await publish(rule.id);
+    await reword(rule.id, "Second wording.");
+    await publish(rule.id);
+    expect((await sentToJev()).conditions).toEqual(newRule.conditions);
+
+    const off = await app.json<RuleDetail>("POST", `/api/rules/${rule.id}/off`, {});
+    expect(off).toMatchObject({ state: "off", on: false });
+    await create({ name: "Never published" });
+    expect(await names("?state=off")).toEqual([newRule.name]);
+    expect(await names("?state=live&state=off")).toEqual([newRule.name]);
+    expect(await names("?state=draft&state=off")).toEqual([newRule.name, "Never published"]);
+    expect(await sentToJev()).toEqual({ output: "", conditions: [] });
+
+    const on = await app.json<RuleDetail>("POST", `/api/rules/${rule.id}/on`, {});
+    expect(on).toMatchObject({ state: "live", on: true });
+    expect(on.versions.map((v) => v.number)).toEqual([2, 1]);
+    const { output } = await sentToJev();
+    expect(JSON.parse(output).hookSpecificOutput.additionalContext).toContain("Second wording.");
+  });
+
+  it("deletes a rule", async () => {
+    const rule = await create();
+    await publish(rule.id);
+
+    expect(await app.json("DELETE", `/api/rules/${rule.id}`)).toEqual({ deleted: true });
+    expect((await app.call("GET", `/api/rules/${rule.id}`)).status).toBe(404);
+    expect(await list()).toEqual([]);
+    expect(await sentToJev()).toEqual({ output: "", conditions: [] });
+    expect((await app.call("DELETE", `/api/rules/${rule.id}`)).status).toBe(404);
+  });
+});
+
+describe("a rule's scope", () => {
+  /** Records a project by running a check in a plain folder; returns its name. */
+  async function see(name: string): Promise<string> {
+    const cwd = join(sandbox.root, name);
+    mkdirSync(cwd, { recursive: true });
+    await runMessageHook(hookInput("hello there", { cwd }), { env: sandbox.env, matcher: standInMatcher() });
+    return cwd;
+  }
+
+  it("lists the projects Sally has seen, to pick from", async () => {
+    expect(await app.json("GET", "/api/projects")).toEqual({ projects: [] });
+    const project = await see("a-project");
+
+    const { projects } = await app.json<{ projects: { name: string; firstSeenAt: string }[] }>("GET", "/api/projects");
+
+    expect(projects).toMatchObject([{ name: project }]);
+  });
+
+  it("edits the scope in the draft and puts it live on publish", async () => {
+    const project = await see("a-project");
+    const rule = await create();
+    expect(rule.draft).toMatchObject({ scope: { kind: "all" } });
+    await app.json("POST", `/api/rules/${rule.id}/publish`, {});
+
+    const saved = await app.json<RuleDetail>("PUT", `/api/rules/${rule.id}/draft`, {
+      instruction: newRule.instruction,
+      conditions: newRule.conditions,
+      scope: { kind: "projects", projects: [project] },
+    });
+    expect(saved).toMatchObject({ live: { scope: { kind: "all" } }, draft: { scope: { kind: "projects", projects: [project] } } });
+
+    const published = await app.json<{ rule: RuleDetail }>("POST", `/api/rules/${rule.id}/publish`, {});
+    expect(published.rule.live).toMatchObject({ scope: { kind: "projects", projects: [project] } });
+  });
+
+  it("refuses a malformed scope and a project Sally has not seen", async () => {
+    const rule = await create();
+    const save = (scope: unknown) =>
+      app.call("PUT", `/api/rules/${rule.id}/draft`, { instruction: "X.", conditions: ["Y."], scope });
+
+    expect((await save("all")).status).toBe(400);
+    expect((await save({ kind: "projects", projects: [1] })).status).toBe(400);
+    const unseen = await save({ kind: "projects", projects: ["never/seen"] });
+    expect(unseen.status).toBe(400);
+    expect(await unseen.json()).toEqual({ error: 'Sally has not seen a project named "never/seen".' });
+  });
+});
+
+describe("activity and analytics over HTTP", () => {
+  it("serves recent checks and a rule's analytics, and refuses an unknown outcome", async () => {
+    const created = await create();
+    await app.json("POST", `/api/rules/${created.id}/publish`, {});
+    const matcher = standInMatcher({ "The message asks for a visual change.": 0.9 });
+    await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
+
+    const { checks } = await app.json<{ checks: { text: string; outcome: string }[] }>(
+      "GET",
+      "/api/activity?outcome=attached&checkType=message&limit=10",
+    );
+    expect(checks).toMatchObject([{ text: "Make the header smaller", outcome: "attached" }]);
+    expect((await app.call("GET", "/api/activity?outcome=maybe")).status).toBe(400);
+    expect((await app.call("GET", "/api/activity?limit=lots")).status).toBe(400);
+
+    const analytics = await app.json("GET", `/api/rules/${created.id}/analytics`);
+    expect(analytics).toMatchObject({ checks: 1, firings: 1, versions: [{ number: 1, firings: 1 }] });
+    expect((await app.call("GET", "/api/rules/999/analytics")).status).toBe(404);
   });
 });
