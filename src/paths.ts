@@ -27,6 +27,21 @@ export function configDir(env: Env): string {
   return join(base, "sally");
 }
 
+/** Claude Code's own config folder: CLAUDE_CONFIG_DIR when set, otherwise ~/.claude. */
+export function claudeDir(env: Env): string {
+  return xdgBase(env.CLAUDE_CONFIG_DIR) ?? join(home(env), ".claude");
+}
+
+/** The user's Claude Code settings file, where the hooks are registered. */
+export function claudeSettingsPath(env: Env): string {
+  return join(claudeDir(env), "settings.json");
+}
+
+/** The user's global rules file, loaded into every Claude Code session. */
+export function globalRulesPath(env: Env): string {
+  return join(claudeDir(env), "CLAUDE.md");
+}
+
 export function databasePath(env: Env): string {
   return join(dataDir(env), "sally.db");
 }

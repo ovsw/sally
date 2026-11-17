@@ -23,7 +23,20 @@ async function main(args: string[]): Promise<number> {
     }
     return 0;
   }
-  process.stderr.write("Usage: sally hook message|reply\n");
+  if ((group === "install" || group === "uninstall") && name === undefined) {
+    // Loaded only here, so the hooks never pay for it.
+    const setup = await import("./install.ts");
+    try {
+      const { changes } = setup[group]({ env: process.env });
+      const done = group === "install" ? "Sally is already installed." : "Sally is not installed.";
+      process.stdout.write((changes.length > 0 ? changes.join("\n") : done) + "\n");
+      return 0;
+    } catch (error) {
+      process.stderr.write((error instanceof Error ? error.message : String(error)) + "\n");
+      return 1;
+    }
+  }
+  process.stderr.write("Usage: sally hook message|reply\n       sally install\n       sally uninstall\n");
   return 1;
 }
 
