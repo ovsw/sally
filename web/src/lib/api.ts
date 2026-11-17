@@ -196,3 +196,26 @@ export interface RuleAnalytics {
 export function getRuleAnalytics(id: number): Promise<RuleAnalytics> {
   return call("GET", `/api/rules/${id}/analytics`);
 }
+
+/** Why a rule needs attention, worst first. */
+export type AttentionKind = "wrong_matches" | "fires_often" | "close_to_cutoff" | "never_fires";
+
+export interface AttentionReason {
+  kind: AttentionKind;
+  /** Why, in a sentence. */
+  summary: string;
+}
+
+/** A rule on the Needs attention list, with every reason it is there. */
+export interface AttentionEntry {
+  ruleId: number;
+  name: string;
+  checkType: CheckType;
+  versionNumber: number;
+  reasons: AttentionReason[];
+}
+
+/** The rules that need attention, worst first. */
+export function listAttention(): Promise<AttentionEntry[]> {
+  return call<{ rules: AttentionEntry[] }>("GET", "/api/attention").then((r) => r.rules);
+}

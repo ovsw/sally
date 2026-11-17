@@ -1,4 +1,5 @@
 import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
+import { type AttentionEntry, attentionList } from "./attention.ts";
 import { type Store, transaction } from "./store.ts";
 
 export type CheckType = "message" | "reply";
@@ -118,22 +119,52 @@ export interface Settings {
   cap: number;
   /** How long a check may wait for the matcher before giving up. */
   timeLimitMs: number;
+  // The attention thresholds: when a rule is listed as needing attention.
+  /** How many of the latest checks count as recent. */
+  recentChecks: number;
+  /** A rule firing on at least this share of recent checks, 0 to 1, is listed as firing often. */
+  busyShare: number;
+  /** A firing scoring no more than this above the cutoff, 0 to 1, sits close to it. */
+  closeMargin: number;
+  /** A rule with no firings over this many checks of its type is listed as never firing. */
+  quietChecks: number;
 }
 
-export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({ cutoff: 0.6, cap: 3, timeLimitMs: 3000 });
+export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
+  cutoff: 0.6,
+  cap: 3,
+  timeLimitMs: 3000,
+  recentChecks: 100,
+  busyShare: 0.3,
+  closeMargin: 0.05,
+  quietChecks: 200,
+});
 
 /** Each setting's key in the settings table. */
-const SETTING_KEYS: Record<keyof Settings, string> = { cutoff: "cutoff", cap: "cap", timeLimitMs: "time_limit_ms" };
+const SETTING_KEYS: Record<keyof Settings, string> = {
+  cutoff: "cutoff",
+  cap: "cap",
+  timeLimitMs: "time_limit_ms",
+  recentChecks: "recent_checks",
+  busyShare: "busy_share",
+  closeMargin: "close_margin",
+  quietChecks: "quiet_checks",
+};
 const SETTINGS = Object.keys(SETTING_KEYS) as (keyof Settings)[];
 const SETTING_RANGES: Record<keyof Settings, string> = {
   cutoff: "The cutoff is a score from 0 to 1.",
   cap: "The cap is a whole number of at least 1.",
   timeLimitMs: "The time limit is a whole number of milliseconds, at least 1.",
+  recentChecks: "The number of recent checks is a whole number of at least 1.",
+  busyShare: "The share of recent checks is a number above 0, up to 1.",
+  closeMargin: "The margin above the cutoff is a number from 0 to 1.",
+  quietChecks: "The number of checks without a firing is a whole number of at least 1.",
 };
 
 function validSetting(key: keyof Settings, value: number): boolean {
   if (!Number.isFinite(value)) return false;
-  if (key === "cutoff") return value >= 0 && value <= 1;
+  if (key === "cutoff" || key === "closeMargin") return value >= 0 && value <= 1;
+  if (key === "busyShare") return value > 0 && value <= 1;
   return Number.isInteger(value) && value >= 1;
 }
 
@@ -175,6 +206,8 @@ export interface RulesService extends AnalyticsQueries {
   settings(): Settings;
   /** Stores the given settings and returns them all. Refuses a value out of range. */
   updateSettings(changes: Partial<Settings>): Settings;
+  /** The rules that need attention under the stored thresholds, worst first, each with why (see attention.ts). */
+  attention(): AttentionEntry[];
 }
 
 const now = () => new Date().toISOString();
@@ -606,6 +639,10 @@ export function createRulesService(db: Store): RulesService {
         for (const [key, value] of entries) save.run(SETTING_KEYS[key], value);
       });
       return readSettings();
+    },
+
+    attention() {
+      return attentionList(db, readSettings());
     },
   };
 }

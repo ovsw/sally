@@ -133,6 +133,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * - GET  /api/rules/:id/analytics                        how the rule has behaved
  * - GET  /api/projects                                   the projects Sally has seen
  * - GET  /api/activity?outcome=&checkType=&limit=        the most recent checks
+ * - GET  /api/attention                                  the rules that need attention, and why
  *
  * Every change answers with the rule as it now is, except a delete, which
  * answers { deleted: true }. Refusals answer with { error } and a 4xx status.
@@ -151,6 +152,9 @@ export async function handleApi(
     }
     if (parts.length === 1 && parts[0] === "activity" && method === "GET") {
       return send(res, 200, { checks: rules.activity(activityFilterFrom(url.searchParams)) });
+    }
+    if (parts.length === 1 && parts[0] === "attention" && method === "GET") {
+      return send(res, 200, { rules: rules.attention() });
     }
     if (parts[0] !== "rules") throw new HttpError(404, "Not found.");
     const id = parts[1] === undefined ? undefined : Number(parts[1]);
