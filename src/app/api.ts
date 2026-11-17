@@ -1,5 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { type CheckType, type RuleFilter, RuleError, RuleNotFoundError, type RulesService, type Scope } from "../rules.ts";
+import {
+  type CheckType,
+  type RuleFilter,
+  RuleError,
+  RuleNotFoundError,
+  type RulesService,
+  type RuleState,
+  type Scope,
+} from "../rules.ts";
 
 /** A request the API refuses, with the HTTP status to answer with. */
 class HttpError extends Error {
@@ -74,9 +82,11 @@ function filterFrom(params: URLSearchParams): RuleFilter {
   const checkType = params.get("checkType");
   if (checkType === "message" || checkType === "reply") filter.checkType = checkType;
   else if (checkType) throw new HttpError(400, "checkType is message or reply.");
-  const state = params.get("state");
-  if (state === "live" || state === "draft") filter.state = state;
-  else if (state) throw new HttpError(400, "state is live or draft.");
+  const states = params.getAll("state").filter(Boolean);
+  if (!states.every((state) => state === "live" || state === "draft" || state === "off")) {
+    throw new HttpError(400, "state is live, draft or off.");
+  }
+  if (states.length) filter.state = states as RuleState[];
   const hasDraft = params.get("hasDraft");
   if (hasDraft === "true" || hasDraft === "false") filter.hasDraft = hasDraft === "true";
   else if (hasDraft) throw new HttpError(400, "hasDraft is true or false.");
@@ -91,14 +101,19 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 /**
  * The rules service over HTTP, under /api:
  *
- * - GET  /api/rules?search=&checkType=&state=&hasDraft=  the rules list
+ * - GET  /api/rules?search=&checkType=&state=&hasDraft=  the rules list (state may repeat)
  * - POST /api/rules                                      create a rule (a draft only)
  * - GET  /api/rules/:id                                  a rule, live version and draft
  * - PUT  /api/rules/:id/draft                            save the draft
  * - POST /api/rules/:id/publish                          publish the draft
+ * - DELETE /api/rules/:id/draft                          discard the draft
+ * - POST /api/rules/:id/versions/:number/draft           start a draft from a published version
+ * - POST /api/rules/:id/off, POST /api/rules/:id/on      switch the rule off or on
+ * - DELETE /api/rules/:id                                delete the rule
  * - GET  /api/projects                                   the projects Sally has seen
  *
- * Refusals answer with { error } and a 4xx status.
+ * Every change answers with the rule as it now is, except a delete, which
+ * answers { deleted: true }. Refusals answer with { error } and a 4xx status.
  */
 export async function handleApi(
   rules: RulesService,
@@ -147,6 +162,27 @@ export async function handleApi(
       await readJson(req);
       const { versionNumber } = rules.publish(id);
       return send(res, 200, { versionNumber, rule: rules.getRule(id) });
+    }
+    if (id !== undefined && parts.length === 3 && parts[2] === "draft" && method === "DELETE") {
+      rules.discardDraft(id);
+      return send(res, 200, rules.getRule(id));
+    }
+    if (id !== undefined && parts.length === 5 && parts[2] === "versions" && parts[4] === "draft" && method === "POST") {
+      const versionNumber = Number(parts[3]);
+      if (!Number.isSafeInteger(versionNumber)) throw new HttpError(404, "Not found.");
+      await readJson(req);
+      rules.startDraftFrom(id, versionNumber);
+      return send(res, 200, rules.getRule(id));
+    }
+    if (id !== undefined && parts.length === 3 && (parts[2] === "off" || parts[2] === "on") && method === "POST") {
+      await readJson(req);
+      if (parts[2] === "off") rules.switchOff(id);
+      else rules.switchOn(id);
+      return send(res, 200, rules.getRule(id));
+    }
+    if (id !== undefined && parts.length === 2 && method === "DELETE") {
+      rules.deleteRule(id);
+      return send(res, 200, { deleted: true });
     }
     throw new HttpError(404, "Not found.");
   } catch (error) {
