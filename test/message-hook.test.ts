@@ -380,6 +380,24 @@ describe("a failed message check", () => {
     expect(checks()).toMatchObject([{ outcome: "attached", error: null }]);
   });
 
+  it("records the tokens of both tries when the first answer could not be read", async () => {
+    sandbox.liveRule({ name: "Rule", instruction: "Do the thing.", conditions: ["Condition A."] });
+    let tries = 0;
+    const matcher = standInMatcher(
+      {},
+      {
+        answer: async (conditions) =>
+          ++tries === 1
+            ? { scores: {}, inputTokens: 5 }
+            : { scores: Object.fromEntries(conditions.map((c) => [c.id, 0.9])), inputTokens: 7 },
+      },
+    );
+
+    await runMessageHook(hookInput("hello there"), { env: sandbox.env, matcher });
+
+    expect(checks()).toMatchObject([{ outcome: "attached", input_tokens: 12, request_tokens: 7 }]);
+  });
+
   it("lets the message through in silence when stopping on a failed check is switched off", async () => {
     sandbox.withRules((rules) => rules.updateSettings({ stopOnFailure: false }));
     sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });

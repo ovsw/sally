@@ -57,6 +57,19 @@ class MissingApiKeyError extends Error {
   }
 }
 
+/**
+ * The tokens of two tries of one check together. A try that never got an
+ * answer used none; a count Jev did not report stays unknown.
+ */
+function addTokens(first: Tokens | undefined, second: Tokens | undefined): Tokens | undefined {
+  if (!first || !second) return first ?? second;
+  if (first.input === null || second.input === null) return { input: null, largestRequest: null };
+  return {
+    input: first.input + second.input,
+    largestRequest: Math.max(first.largestRequest ?? 0, second.largestRequest ?? 0),
+  };
+}
+
 /** A failed try, with the tokens Jev reported if it got that far. */
 class FailedTry extends Error {
   readonly reason: unknown;
@@ -279,6 +292,7 @@ export function createEngine(options: EngineOptions): Engine {
       // is tried once more, with the full time limit again. A missing API key is not retried.
       let result;
       let firstError: string | undefined;
+      let firstTokens: Tokens | undefined;
       for (;;) {
         try {
           result = await tryScoring();
@@ -287,14 +301,19 @@ export function createEngine(options: EngineOptions): Engine {
           const failedTry = error as FailedTry;
           if (firstError === undefined && !(failedTry.reason instanceof MissingApiKeyError)) {
             firstError = failedTry.message;
+            firstTokens = failedTry.tokens;
             continue;
           }
           const retried = firstError === undefined ? "" : ` (second try; the first failed: ${firstError})`;
-          const checkId = record(check, "failed", { error: failedTry.message + retried, tokens: failedTry.tokens });
+          const checkId = record(check, "failed", {
+            error: failedTry.message + retried,
+            tokens: addTokens(firstTokens, failedTry.tokens),
+          });
           return { outcome: "failed", checkId, matches: [], failure: failureInWords(failedTry.reason) };
         }
       }
       const { scores } = result;
+      const tokens = addTokens(firstTokens, result.tokens);
 
       // A rule matches when any one of its conditions reaches the cutoff; its best condition stands for it.
       const best = new Map<number, ScoreRow>();
@@ -308,7 +327,7 @@ export function createEngine(options: EngineOptions): Engine {
         .sort((a, b) => b.score - a.score || a.rule.ruleId - b.rule.ruleId);
 
       const outcome: Outcome = matched.length === 0 ? "nothing" : input.checkType === "message" ? "attached" : "sent_back";
-      const checkId = record(check, outcome, { tokens: result.tokens, scores, matches: matched });
+      const checkId = record(check, outcome, { tokens, scores, matches: matched });
       return {
         outcome,
         checkId,
