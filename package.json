@@ -18,6 +18,7 @@
     "test": "vitest run",
     "build": "vite build",
     "dev:web": "vite",
+    "evaluate": "node src/cli.ts evaluate",
     "check": "pnpm typecheck && pnpm lint && pnpm test"
   },
   "devDependencies": {

@@ -85,6 +85,20 @@ flag records who raised it and keeps the text as a saved case for the rule:
 a wrong match should not fire, a correct one should. A firing holds one flag;
 a new one replaces it, but never your own.
 
+## Evaluation
+
+```sh
+sally evaluate FILE [--scale]
+```
+
+Runs a file of saved messages and replies, each with the rules expected to
+fire, through the engine with the real Jev, and reports right matches, wrong
+matches and misses, with timing and tokens. `--scale` pads the rule set to
+several hundred conditions and leads with the wrong-match rate. It needs an
+API key and costs a little, so it runs only on request, never in CI. The file
+format is in [docs/evaluation.md](docs/evaluation.md); a file built from real
+messages stays outside the repository.
+
 ## Development
 
 Requires Node 24 or later and pnpm. The command line runs its TypeScript
