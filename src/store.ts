@@ -234,6 +234,17 @@ const migrations: string[] = [
   -- in its own settings and not only by the default.
   INSERT INTO settings (key, value) VALUES ('stop_on_failure', 1) ON CONFLICT (key) DO NOTHING;
   `,
+  `
+  -- An attention reason the user looked at and judged fine. It is kept against
+  -- the version it was about, so a newly published version is judged afresh.
+  -- Wrong matches are not cleared this way: they go when the rule is fixed.
+  CREATE TABLE cleared_reasons (
+    version_id  INTEGER NOT NULL REFERENCES versions (id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL CHECK (kind IN ('matches_often', 'weak_matches', 'never_matches')),
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (version_id, kind)
+  );
+  `,
 ];
 
 /**

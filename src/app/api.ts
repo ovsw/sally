@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { type ActivityFilter, OUTCOMES } from "../analytics.ts";
+import type { AttentionKind } from "../attention.ts";
 import type { Outcome } from "../engine.ts";
 import { type Verdict, VERDICTS } from "../flags.ts";
 import {
@@ -169,6 +170,8 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * - PUT  /api/settings                                   change some settings; answers like GET
  * - GET  /api/activity?outcome=&checkType=&limit=        the most recent checks
  * - GET  /api/attention                                  the rules that need attention, and why
+ * - POST /api/rules/:id/looks-fine                       the user judged one attention reason fine { reason };
+ *                                                        answers like GET /api/attention
  *
  * Every change answers with the rule as it now is, except a delete, which
  * answers { deleted: true }, a flag, which answers with the match's flag,
@@ -270,6 +273,13 @@ export async function handleApi(
       if (parts[2] === "off") rules.switchOff(id);
       else rules.switchOn(id);
       return send(res, 200, rules.getRule(id));
+    }
+    if (id !== undefined && parts.length === 3 && parts[2] === "looks-fine" && method === "POST") {
+      const body = await readJson(req);
+      const version = body["version"];
+      if (version !== undefined && typeof version !== "number") throw new HttpError(400, '"version" must be a number.');
+      rules.clearAttentionReason(id, text(body, "reason") as AttentionKind, version);
+      return send(res, 200, { rules: rules.attention() });
     }
     if (id !== undefined && parts.length === 2 && method === "DELETE") {
       rules.deleteRule(id);
