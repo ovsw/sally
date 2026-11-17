@@ -8,6 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
 import {
   getSettings,
   type LimitUse,
@@ -23,11 +25,12 @@ import {
   updateSettings,
 } from "@/lib/api";
 
-type Key = keyof Settings;
+/** The settings that are numbers; stopOnFailure is the one switch. */
+type NumberKey = Exclude<keyof Settings, "stopOnFailure">;
 
-/** One setting's field. A share is shown as a percentage and stored from 0 to 1. */
+/** One number setting's field. A share is shown as a percentage and stored from 0 to 1. */
 interface FieldSpec {
-  key: Key;
+  key: NumberKey;
   label: string;
   description: string;
   step: string;
@@ -51,9 +54,10 @@ const matching: FieldSpec[] = [
     key: "timeLimitMs",
     label: "Time limit",
     description:
-      "How long a check waits for Jev before letting the turn through unchanged.",
+      "How long a check waits for Jev before giving up, at most 10,000 ms. A check that gets no answer is tried once more, then it has failed.",
     step: "1",
     min: "1",
+    max: "10000",
     unit: "ms",
   },
 ];
@@ -101,10 +105,10 @@ const attention: FieldSpec[] = [
 
 const allFields = [...matching, ...attention];
 
-type FormValues = Record<Key, string>;
+type FormValues = Record<NumberKey, string> & { stopOnFailure: boolean };
 
-const toForm = (settings: Settings): FormValues =>
-  Object.fromEntries(
+const toForm = (settings: Settings): FormValues => ({
+  ...(Object.fromEntries(
     allFields.map((f) => [
       f.key,
       String(
@@ -113,7 +117,9 @@ const toForm = (settings: Settings): FormValues =>
           : settings[f.key],
       ),
     ]),
-  ) as FormValues;
+  ) as Record<NumberKey, string>),
+  stopOnFailure: settings.stopOnFailure,
+});
 
 /** The settings the form changes, or the first field that is not a number. */
 function changesFrom(
@@ -130,6 +136,9 @@ function changesFrom(
     if (text === "" || !Number.isFinite(number)) return { invalid: f };
     const value = f.percent ? number / 100 : number;
     if (value !== saved[f.key]) changes[f.key] = value;
+  }
+  if (form.stopOnFailure !== saved.stopOnFailure) {
+    changes.stopOnFailure = form.stopOnFailure;
   }
   return { changes };
 }
@@ -257,7 +266,7 @@ export function SettingsScreen() {
     result !== null &&
     ("invalid" in result || Object.keys(result.changes).length > 0);
 
-  const change = (key: Key) => (value: string) => {
+  const change = (key: keyof Settings) => (value: string | boolean) => {
     setForm((current) => current && { ...current, [key]: value });
     setState({ kind: "idle" });
   };
@@ -309,7 +318,8 @@ export function SettingsScreen() {
               <FieldSet>
                 <FieldLegend>Matching</FieldLegend>
                 <FieldDescription>
-                  When a rule matches, and how long a check may take.
+                  When a rule matches, how long a check may take, and what
+                  happens when a check fails.
                 </FieldDescription>
                 <FieldGroup className="gap-6">
                   {matching.map((spec) => (
@@ -320,6 +330,24 @@ export function SettingsScreen() {
                       onChange={change(spec.key)}
                     />
                   ))}
+                  <Field orientation="horizontal">
+                    <FieldContent>
+                      <FieldLabel htmlFor="setting-stopOnFailure">
+                        Stop the turn when a check fails
+                      </FieldLabel>
+                      <FieldDescription>
+                        On: a message Sally could not check is not sent to
+                        Claude, and you can send it again; a reply it could not
+                        check comes with a warning. Off: the turn goes through
+                        without your rules.
+                      </FieldDescription>
+                    </FieldContent>
+                    <Switch
+                      id="setting-stopOnFailure"
+                      checked={form.stopOnFailure}
+                      onCheckedChange={change("stopOnFailure")}
+                    />
+                  </Field>
                 </FieldGroup>
               </FieldSet>
               <FieldSet>

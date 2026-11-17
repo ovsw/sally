@@ -8,4 +8,4 @@ We considered keeping each conditional rule in the rules file as well, with Sall
 
 - What Sally hands Claude is an instruction, not a reminder: Claude has not seen the rule before.
 - A rule has one home, so it cannot drift between two copies.
-- A check that fails leaves the turn without the rules that would have matched. There is no copy in a rules file to fall back on, so how a failed check is handled matters more.
+- A check that fails leaves the turn without the rules that would have matched. There is no copy in a rules file to fall back on, so how a failed check is handled matters more: Sally stops the turn on a failed check unless the user switches that off.

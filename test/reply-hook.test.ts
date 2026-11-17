@@ -254,36 +254,75 @@ describe("reading the final reply", () => {
 
     expect(await runReplyHook(stopInput({ transcript_path: path }), { env: sandbox.env, matcher })).toBe("");
     expect(await runReplyHook(stopInput(), { env: sandbox.env, matcher })).toBe("");
-    expect(await runReplyHook("not json", { env: sandbox.env, matcher })).toBe("");
     expect(matcher.calls).toEqual([]);
   });
 });
 
-describe("failing open", () => {
-  const letsThrough = async (options: Parameters<typeof runReplyHook>[1], error: string) => {
+describe("a failed reply check", () => {
+  const RETRIED = (first: string) => ` (second try; the first failed: ${first})`;
+
+  /** Runs the hook on a reply whose check fails, and returns what the user is shown. */
+  const warning = async (options: Parameters<typeof runReplyHook>[1], error: string): Promise<string> => {
     replyRule();
-    const output = await runReplyHook(stopInput({ last_assistant_message: "All done." }), options);
-    expect(output).toBe("");
+    const output = JSON.parse(await runReplyHook(stopInput({ last_assistant_message: "All done." }), options));
+    // A warning for the user only: nothing makes Claude continue.
+    expect(Object.keys(output)).toEqual(["systemMessage"]);
     expect(checks()).toMatchObject([{ check_type: "reply", outcome: "failed", error }]);
     expect(turns()).toMatchObject([{ reply: "All done." }]);
+    return output.systemMessage as string;
   };
 
-  it("lets the reply through when the matcher errors", async () => {
-    await letsThrough(
-      { env: sandbox.env, matcher: standInMatcher({}, { answer: () => Promise.reject(new Error("Jev returned HTTP 503")) }) },
-      "Jev returned HTTP 503",
+  it("warns the user that the reply was not checked when the matcher errors", async () => {
+    const matcher = standInMatcher({}, { answer: () => Promise.reject(new Error("Jev returned HTTP 503")) });
+    expect(await warning({ env: sandbox.env, matcher }, "Jev returned HTTP 503" + RETRIED("Jev returned HTTP 503"))).toBe(
+      "Sally could not check this reply against your rules: Jev returned HTTP 503. The reply was not checked.",
     );
+    expect(matcher.calls).toHaveLength(2);
   });
 
-  it("lets the reply through on a timeout", async () => {
+  it("warns the user on a timeout", async () => {
     sandbox.withRules((rules) => rules.updateSettings({ timeLimitMs: 10 }));
-    await letsThrough(
-      { env: sandbox.env, matcher: standInMatcher({}, { answer: () => new Promise(() => {}) }) },
-      "timeout after 10 ms",
+    const matcher = standInMatcher({}, { answer: () => new Promise(() => {}) });
+    expect(await warning({ env: sandbox.env, matcher }, "timeout after 10 ms" + RETRIED("timeout after 10 ms"))).toBe(
+      "Sally could not check this reply against your rules: Jev did not answer in time. The reply was not checked.",
     );
   });
 
-  it("lets the reply through with no API key", async () => {
-    await letsThrough({ env: sandbox.env }, "missing API key");
+  it("warns the user with no API key, without a second try", async () => {
+    expect(await warning({ env: sandbox.env }, "missing API key")).toBe(
+      "Sally could not check this reply against your rules: no Jev API key is set. The reply was not checked.",
+    );
+  });
+
+  it("sends the reply back when the second try succeeds", async () => {
+    replyRule();
+    let tries = 0;
+    const matcher = standInMatcher({}, {
+      answer: async (conditions) => {
+        if (++tries === 1) throw new Error("fetch failed");
+        return { scores: Object.fromEntries(conditions.map((c) => [c.id, 0.9])), inputTokens: 42 };
+      },
+    });
+    const output = JSON.parse(await runReplyHook(stopInput({ last_assistant_message: "All done." }), { env: sandbox.env, matcher }));
+    expect(output.decision).toBe("block");
+    expect(checks()).toMatchObject([{ outcome: "sent_back", error: null }]);
+  });
+
+  it("lets the reply through in silence when stopping on a failed check is switched off", async () => {
+    sandbox.withRules((rules) => rules.updateSettings({ stopOnFailure: false }));
+    replyRule();
+    const matcher = standInMatcher({}, { answer: () => Promise.reject(new Error("fetch failed")) });
+    expect(await runReplyHook(stopInput({ last_assistant_message: "All done." }), { env: sandbox.env, matcher })).toBe("");
+    expect(checks()).toMatchObject([{ outcome: "failed" }]);
+  });
+
+  it("lets the reply through with a warning when Sally cannot open its database", async () => {
+    // The data directory is a file, so the database inside it cannot be opened.
+    const blocked = join(sandbox.root, "not-a-directory");
+    writeFileSync(blocked, "");
+    const env = { ...sandbox.env, SALLY_DATA_DIR: join(blocked, "inside") };
+    const output = JSON.parse(await runReplyHook(stopInput({ last_assistant_message: "All done." }), { env, matcher: standInMatcher() }));
+    expect(Object.keys(output)).toEqual(["systemMessage"]);
+    expect(output.systemMessage).toMatch(/^Sally is not working, so this reply was not checked against your rules: /);
   });
 });

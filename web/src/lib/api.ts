@@ -136,6 +136,8 @@ export function listProjects(): Promise<Project[]> {
 export interface Settings {
   cutoff: number;
   timeLimitMs: number;
+  /** Whether a failed check stops the turn. */
+  stopOnFailure: boolean;
   recentChecks: number;
   busyShare: number;
   closeMargin: number;

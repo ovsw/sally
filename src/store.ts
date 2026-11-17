@@ -228,6 +228,12 @@ const migrations: string[] = [
   ALTER TABLE new_saved_cases RENAME TO saved_cases;
   CREATE INDEX saved_cases_by_rule ON saved_cases (rule_id);
   `,
+  `
+  -- A failed check now stops the turn. The setting is written down as on (1)
+  -- in every database, so that what an existing installation does is stated
+  -- in its own settings and not only by the default.
+  INSERT INTO settings (key, value) VALUES ('stop_on_failure', 1) ON CONFLICT (key) DO NOTHING;
+  `,
 ];
 
 /**

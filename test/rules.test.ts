@@ -360,6 +360,7 @@ describe("rules service", () => {
   const defaults = {
     cutoff: 0.6,
     timeLimitMs: 10_000,
+    stopOnFailure: true,
     recentChecks: 100,
     busyShare: 0.3,
     closeMargin: 0.05,
@@ -381,10 +382,22 @@ describe("rules service", () => {
     });
   });
 
+  it("stops the turn on a failed check until that is switched off, and again when switched back on", () => {
+    sandbox.withRules((rules) => {
+      expect(rules.settings().stopOnFailure).toBe(true);
+      expect(rules.updateSettings({ stopOnFailure: false })).toEqual({ ...defaults, stopOnFailure: false });
+    });
+    sandbox.withRules((rules) => {
+      expect(rules.settings().stopOnFailure).toBe(false);
+      expect(rules.updateSettings({ stopOnFailure: true }).stopOnFailure).toBe(true);
+    });
+  });
+
   it.each([
     [{ cutoff: 1.2 }],
     [{ cutoff: -0.1 }],
     [{ timeLimitMs: 0 }],
+    [{ timeLimitMs: 10_001 }],
     [{ timeLimitMs: Number.NaN }],
     [{ recentChecks: 0 }],
     [{ recentChecks: 10.5 }],
@@ -394,6 +407,8 @@ describe("rules service", () => {
     [{ closeMargin: 2 }],
     [{ quietChecks: 0 }],
     [{ quietChecks: Number.POSITIVE_INFINITY }],
+    [{ stopOnFailure: 1 as unknown as boolean }],
+    [{ cutoff: true as unknown as number }],
   ])("refuses the setting %o and stores nothing", (change) => {
     sandbox.withRules((rules) => {
       expect(() => rules.updateSettings({ timeLimitMs: 4000, ...change })).toThrow(RuleError);
