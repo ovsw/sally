@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AUTHORITY_LINE, hookEntry, skillPath } from "../src/install.ts";
@@ -61,6 +61,39 @@ function keyTester(goodKeys: string[], failure: () => Error = () => new Error("J
   return { triedKeys, matcherFor };
 }
 
+const LOCKFILE = "lockfileVersion: '9.0'\n";
+
+/** A Sally folder in the sandbox, with a lockfile, and with its dependencies downloaded when `downloaded`. */
+function sallyFolder(downloaded: boolean, installedLockfile = LOCKFILE): string {
+  const dir = join(sandbox.root, "sally checkout");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "sally", packageManager: "pnpm@11.28.12" }));
+  writeFileSync(join(dir, "pnpm-lock.yaml"), LOCKFILE);
+  if (downloaded) {
+    mkdirSync(join(dir, "node_modules", ".pnpm"), { recursive: true });
+    writeFileSync(join(dir, "node_modules", ".pnpm", "lock.yaml"), installedLockfile);
+  }
+  return dir;
+}
+
+/** A stand-in for the download: records what it was asked to run, and leaves what pnpm leaves when it works. */
+function downloader(works: boolean) {
+  const runs: { command: string; dir: string }[] = [];
+  const downloadDependencies = (command: string, dir: string) => {
+    runs.push({ command, dir });
+    if (works) {
+      mkdirSync(join(dir, "node_modules", ".pnpm"), { recursive: true });
+      writeFileSync(join(dir, "node_modules", ".pnpm", "lock.yaml"), read(join(dir, "pnpm-lock.yaml")));
+    }
+    return works;
+  };
+  return { runs, downloadDependencies };
+}
+
+const noDownload = () => {
+  throw new Error("install downloaded the dependencies");
+};
+
 async function guided(
   prompt: Prompt,
   options: Partial<InstallCommandOptions> & { env?: Env; args?: string[] } = {},
@@ -72,6 +105,8 @@ async function guided(
     openPrompt: () => prompt,
     matcherFor: keyTester(["good-key"]).matcherFor,
     claudeVersion: () => undefined,
+    sallyDir: options.sallyDir ?? sallyFolder(true),
+    downloadDependencies: noDownload,
     ...options,
     env: { ...sandbox.env, ...options.env },
     stdout: (text) => (stdout += text),
@@ -111,7 +146,7 @@ describe("guided install in a terminal", () => {
     expect(result.stdout).toMatch(/Next step: import your rules/);
     expect(result.stdout).toContain("/sally-import");
     expect(existsSync(skillPath(sandbox.env))).toBe(true);
-    expect(result.stdout).toContain("sally app");
+    expect(result.stdout).toContain('run "node src/cli.ts app" in Sally\'s folder');
     expect(result.stdout.trimEnd().split("\n").at(-2)).toMatch(/^Next step: import/);
   });
 
@@ -227,6 +262,88 @@ describe("install that asks nothing", () => {
     expect(read(rulesPath)).toBe(AUTHORITY_LINE + "\n");
     expect(existsSync(skillPath(sandbox.env))).toBe(true);
   });
+});
+
+describe("the dependencies the web app needs", () => {
+  it("downloads them first when they are missing, saying so", async () => {
+    const dir = sallyFolder(false);
+    const download = downloader(true);
+
+    const result = await guided(scriptedPrompt(["good-key"]), { sallyDir: dir, ...download });
+
+    expect(result.code).toBe(0);
+    expect(download.runs).toEqual([{ command: expect.stringMatching(/ install --frozen-lockfile$/), dir }]);
+    expect(result.stdout.split("\n").slice(0, 2)).toEqual([
+      expect.stringMatching(/^Downloading the dependencies Sally's web app needs .*This can take a minute/),
+      "Downloaded the dependencies.",
+    ]);
+    expect(result.stderr).toBe("");
+  });
+
+  it("downloads them with --yes too, and asks nothing", async () => {
+    const download = downloader(true);
+
+    const result = await guided(scriptedPrompt([]), { args: ["--yes"], openPrompt: noPrompt, sallyDir: sallyFolder(false), ...download });
+
+    expect(result.code).toBe(0);
+    expect(download.runs).toHaveLength(1);
+    expect(result.stdout).toMatch(/^Downloading the dependencies/);
+    expect(read(rulesPath)).toBe(AUTHORITY_LINE + "\n");
+  });
+
+  it("skips the download when they are there and in step with the lockfile", async () => {
+    const download = downloader(true);
+
+    const result = await guided(scriptedPrompt(["good-key"]), { sallyDir: sallyFolder(true), ...download });
+
+    expect(download.runs).toEqual([]);
+    expect(result.stdout).not.toContain("Downloading");
+  });
+
+  it("downloads again when the lockfile has changed since they were downloaded", async () => {
+    const download = downloader(true);
+
+    await guided(scriptedPrompt(["good-key"]), { sallyDir: sallyFolder(true, "lockfileVersion: '6.0'\n"), ...download });
+
+    expect(download.runs).toHaveLength(1);
+  });
+
+  it("uses pnpm when it is on the PATH, and otherwise pnpm through npx at package.json's major version", async () => {
+    const bin = join(sandbox.root, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "pnpm"), "");
+    writeFileSync(join(bin, "pnpm.cmd"), "");
+    const withPnpm = downloader(true);
+    const withoutPnpm = downloader(true);
+
+    const dir = sallyFolder(false);
+
+    await guided(scriptedPrompt(["good-key"]), { env: { PATH: bin }, sallyDir: dir, ...withPnpm });
+    rmSync(join(dir, "node_modules"), { recursive: true });
+    await guided(scriptedPrompt([]), { env: { PATH: join(sandbox.root, "empty") }, sallyDir: dir, ...withoutPnpm });
+
+    expect(withPnpm.runs[0]!.command).toBe("pnpm install --frozen-lockfile");
+    expect(withoutPnpm.runs[0]!.command).toBe("npx --yes pnpm@11 install --frozen-lockfile");
+  });
+
+  for (const args of [[], ["--yes"]]) {
+    it(`does everything else when the download fails, and ends with the command to retry${args.length ? " (--yes)" : ""}`, async () => {
+      const dir = sallyFolder(false);
+      const download = downloader(false);
+
+      const result = await guided(scriptedPrompt(["good-key"]), { args, sallyDir: dir, ...download });
+
+      expect(result.code).toBe(0);
+      expect(JSON.parse(read(settingsPath))).toEqual({
+        hooks: { UserPromptSubmit: [{ hooks: [hookEntry("message")] }], Stop: [{ hooks: [hookEntry("reply")] }] },
+      });
+      expect(existsSync(skillPath(sandbox.env))).toBe(true);
+      expect(read(rulesPath)).toBe(AUTHORITY_LINE + "\n");
+      const last = result.stderr.trimEnd().split("\n").at(-1);
+      expect(last).toMatch(/^The web app needs Sally's dependencies, and downloading them failed/);
+      expect(last).toContain(`To retry, in Sally's folder, ${dir}, run: ${download.runs[0]!.command}`);
+    });
+  }
 });
 
 it("tells the user plainly when Node is too old, and changes nothing", async () => {

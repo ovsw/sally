@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
-import { claudeDir, claudeSettingsPath, type Env, globalRulesPath } from "./paths.ts";
+import { claudeDir, claudeSettingsPath, CLI_PATH, cliCommand, type Env, globalRulesPath } from "./paths.ts";
 
 /** The one line install adds to the global rules file. */
 export const AUTHORITY_LINE =
@@ -20,8 +20,6 @@ export const AUTHORITY_LINE =
 
 const HOOK_EVENTS = { UserPromptSubmit: "message", Stop: "reply" } as const;
 type HookEvent = keyof typeof HOOK_EVENTS;
-
-const CLI_PATH = join(import.meta.dirname, "cli.ts");
 
 /**
  * The oldest Claude Code that runs a hook given as a program plus arguments
@@ -73,14 +71,14 @@ metadata:
   installed-by: sally
 ---
 
-<!-- Installed by Sally. "sally uninstall" removes it. Change the instructions in Sally's checkout, not here. -->
+<!-- Installed by Sally. \`${cliCommand(cliPath)} sally-uninstall\` removes it. Change the instructions in Sally's checkout, not here. -->
 
 Read Sally's import instructions at \`${skillInstructionsPath(cliPath)}\` and follow them step by step.
 
-Wherever they say \`sally\`, run Sally's command line from its checkout, since \`sally\` may not be on the PATH:
+Wherever they write \`node "<cli>"\`, run Sally's command line by its absolute path, which works from any folder:
 
 \`\`\`
-node "${cliPath}"
+${cliCommand(cliPath)}
 \`\`\`
 `;
 }
@@ -309,7 +307,7 @@ function writeRules(path: string, content: string, changes: string[], rerun: str
     if (changes.length === 0) throw error;
     const reason = error instanceof Error ? error.message : String(error);
     throw new SetupError(
-      `Could not write ${path}: ${reason}\nAlready done:\n${changes.join("\n")}\nFix the problem and run "sally ${rerun}" again to finish.`,
+      `Could not write ${path}: ${reason}\nAlready done:\n${changes.join("\n")}\nFix the problem and run "node src/cli.ts ${rerun}" again in Sally's folder to finish.`,
     );
   }
 }
@@ -357,7 +355,7 @@ export function install({ env, cliPath, claudeVersion = readClaudeVersion }: Set
     let text = rules;
     if (text !== "" && !text.endsWith("\n")) text += "\n";
     if (text !== "") text += "\n";
-    writeRules(rulesPath, text + AUTHORITY_LINE + "\n", changes, "install");
+    writeRules(rulesPath, text + AUTHORITY_LINE + "\n", changes, "sally-install");
     changes.push(`Added Sally's authority line to ${rulesPath}`);
   }
   return {
@@ -386,7 +384,7 @@ function installSkill(env: Env, cliPath: string, changes: string[]): { warnings:
     return { warnings: [notOurs(folder, "; Sally's import skill is not installed")], installed: false };
   }
   if (ours && readFileSync(path, "utf8") === content) return { warnings: [], installed: true };
-  writeRules(path, content, changes, "install");
+  writeRules(path, content, changes, "sally-install");
   changes.push(`${ours ? "Updated" : "Installed"} the import skill (/${SKILL_NAME}) at ${path}`);
   return { warnings: [], installed: true };
 }
@@ -439,7 +437,7 @@ export function uninstall({ env, cliPath }: SetupOptions): SetupResult {
     lines.splice(at, 1);
     // Take out the blank line install put before it.
     if (at > 0 && lines[at - 1]?.trim() === "") lines.splice(at - 1, 1);
-    writeRules(rulesPath, lines.join("\n"), changes, "uninstall");
+    writeRules(rulesPath, lines.join("\n"), changes, "sally-uninstall");
     changes.push(`Removed Sally's authority line from ${rulesPath}`);
   }
   return { changes, warnings };

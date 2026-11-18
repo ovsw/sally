@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { dependenciesPresent, dependencyAdvice, SALLY_DIR } from "../dependencies.ts";
 import { createJevMatcher } from "../jev.ts";
 import { databasePath, type Env, readApiKey } from "../paths.ts";
 import { createImportService } from "../import.ts";
@@ -27,7 +28,7 @@ function modifiedSince(path: string, time: number): boolean {
 }
 
 /** Builds the web app into dist/web when the build is missing or older than its sources. */
-async function ensureBuilt(log: (line: string) => void): Promise<string> {
+async function ensureBuilt(log: (line: string) => void, env: Env): Promise<string> {
   const webDir = join(packageRoot, "dist", "web");
   let builtAt = 0;
   try {
@@ -38,8 +39,16 @@ async function ensureBuilt(log: (line: string) => void): Promise<string> {
   const sources = ["web", "vite.config.ts", "components.json", "package.json"].map((p) => join(packageRoot, p));
   if (builtAt === 0 || sources.some((source) => modifiedSince(source, builtAt))) {
     log("Building the web app...");
-    const { build } = await import("vite");
-    await build({ configFile: join(packageRoot, "vite.config.ts"), logLevel: "warn" });
+    try {
+      const { build } = await import("vite");
+      await build({ configFile: join(packageRoot, "vite.config.ts"), logLevel: "warn" });
+    } catch (error) {
+      if (dependenciesPresent(SALLY_DIR)) throw error;
+      throw new Error(
+        `The web app needs Sally's dependencies, which are missing or out of date. ${dependencyAdvice(SALLY_DIR, env)}`,
+        { cause: error },
+      );
+    }
   }
   return webDir;
 }
@@ -54,14 +63,14 @@ function parsePort(args: string[], env: Env): number {
 }
 
 /**
- * `sally app [--port N]`: serves the web app and its API on this machine only
+ * `node src/cli.ts app [--port N]`: serves the web app and its API on this machine only
  * and prints the address. SALLY_WEB_DIR serves an already built app from
  * elsewhere instead of building dist/web.
  */
 export async function runApp(args: string[], env: Env): Promise<void> {
   const port = parsePort(args, env);
   const log = (line: string) => process.stdout.write(line + "\n");
-  const webDir = env.SALLY_WEB_DIR || (await ensureBuilt(log));
+  const webDir = env.SALLY_WEB_DIR || (await ensureBuilt(log, env));
   const store = openStore(databasePath(env));
   // Jev re-scores a draft against its saved cases before publishing.
   const apiKey = readApiKey(env);

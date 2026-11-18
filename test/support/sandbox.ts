@@ -18,6 +18,8 @@ export interface Sandbox {
   /**
    * The environment for a child process: the sandbox's folders, PATH, and on
    * Windows the system folder Node needs, and nothing else from the real one.
+   * It skips the download of the dependencies in sally-install, so no test
+   * downloads anything.
    */
   childEnv(extra?: Env): Env;
   /** Runs `fn` with the rules service on the sandbox database. */
@@ -53,7 +55,7 @@ export function createSandbox(): Sandbox {
     env,
     childEnv(extra = {}) {
       const system = process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {};
-      return { PATH: process.env.PATH, ...system, ...env, ...extra };
+      return { PATH: process.env.PATH, ...system, ...env, SALLY_SKIP_DEPENDENCIES: "1", ...extra };
     },
     withRules,
     withImports(fn) {
