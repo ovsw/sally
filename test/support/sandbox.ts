@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,6 +14,11 @@ import { openStore } from "../../src/store.ts";
 export interface Sandbox {
   root: string;
   env: Env;
+  /**
+   * The environment for a child process: the sandbox's folders, PATH, and on
+   * Windows the system folder Node needs, and nothing else from the real one.
+   */
+  childEnv(extra?: Env): Env;
   /** Runs `fn` with the rules service on the sandbox database. */
   withRules<T>(fn: (rules: RulesService) => T): T;
   /** Adds a rule and publishes it; returns its id. */
@@ -24,7 +29,9 @@ export interface Sandbox {
 }
 
 export function createSandbox(): Sandbox {
-  const root = mkdtempSync(join(tmpdir(), "sally-test-"));
+  // The native real path: on Windows the temporary folder can come back in its
+  // short 8.3 form, which git and Node then report differently.
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "sally-test-")));
   const env: Env = {
     HOME: root,
     SALLY_DATA_DIR: join(root, "data"),
@@ -41,6 +48,10 @@ export function createSandbox(): Sandbox {
   return {
     root,
     env,
+    childEnv(extra = {}) {
+      const system = process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {};
+      return { PATH: process.env.PATH, ...system, ...env, ...extra };
+    },
     withRules,
     liveRule(rule) {
       return withRules((rules) => {
@@ -63,7 +74,8 @@ export function createSandbox(): Sandbox {
       }
     },
     cleanup() {
-      rmSync(root, { recursive: true, force: true });
+      // Retries: Windows refuses to delete a file for a moment after it is closed.
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     },
   };
 }

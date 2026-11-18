@@ -18,7 +18,7 @@ afterEach(() => sandbox.cleanup());
 function sally(...args: string[]) {
   const result = spawnSync(process.execPath, [cli, "rules", ...args], {
     encoding: "utf8",
-    env: { PATH: process.env.PATH, ...sandbox.env },
+    env: sandbox.childEnv(),
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }

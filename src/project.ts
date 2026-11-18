@@ -75,5 +75,7 @@ export function resolveProject(cwd: string): string {
   const common = git(folder, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (!common.ok) return folder;
   const dir = common.out.trim();
-  return dir.endsWith("/.git") ? dirname(dir) : dir || folder;
+  if (!dir) return folder;
+  // Git writes forward slashes on every system; resolve gives the system's own form.
+  return resolve(dir.endsWith("/.git") ? dirname(dir) : dir);
 }

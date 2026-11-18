@@ -23,18 +23,16 @@ async function main(args: string[]): Promise<number> {
     }
     return 0;
   }
-  if ((group === "install" || group === "uninstall") && name === undefined) {
+  if (group === "install" || group === "uninstall") {
     // Loaded only here, so the hooks never pay for it.
-    const setup = await import("./install.ts");
-    try {
-      const { changes } = setup[group]({ env: process.env });
-      const done = group === "install" ? "Sally is already installed." : "Sally is not installed.";
-      process.stdout.write((changes.length > 0 ? changes.join("\n") : done) + "\n");
-      return 0;
-    } catch (error) {
-      process.stderr.write((error instanceof Error ? error.message : String(error)) + "\n");
-      return 1;
-    }
+    const { runInstall, runUninstall } = await import("./install-command.ts");
+    const io = {
+      env: process.env,
+      stdout: (text: string) => process.stdout.write(text),
+      stderr: (text: string) => process.stderr.write(text),
+    };
+    if (group === "uninstall") return runUninstall(args.slice(1), io);
+    return runInstall(args.slice(1), { ...io, isTerminal: process.stdin.isTTY === true });
   }
   if (group === "wrong-match") {
     // Loaded only here, so the hooks never pay for it.
@@ -77,7 +75,7 @@ async function main(args: string[]): Promise<number> {
     });
   }
   process.stderr.write(
-    'Usage: sally hook message|reply\n       sally install\n       sally uninstall\n       sally rules list|show|create|edit\n       sally settings stop-on-failure [on|off]\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n       sally evaluate FILE [--scale]\n',
+    'Usage: sally hook message|reply\n       sally install [--yes]\n       sally uninstall\n       sally rules list|show|create|edit\n       sally settings stop-on-failure [on|off]\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n       sally evaluate FILE [--scale]\n',
   );
   return 1;
 }

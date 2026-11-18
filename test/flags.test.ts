@@ -38,11 +38,7 @@ const reply = (text: string, matcher: StandIn, sessionId = "session-1") =>
 const wrongMatch = (args: string[], sessionId: string | null = "session-1") =>
   spawnSync(process.execPath, [cli, "wrong-match", ...args], {
     encoding: "utf8",
-    env: {
-      PATH: process.env.PATH,
-      ...sandbox.env,
-      ...(sessionId === null ? {} : { CLAUDE_CODE_SESSION_ID: sessionId }),
-    },
+    env: sandbox.childEnv(sessionId === null ? {} : { CLAUDE_CODE_SESSION_ID: sessionId }),
   });
 
 const analytics = (ruleId: number): RuleAnalytics => sandbox.withRules((rules) => rules.ruleAnalytics(ruleId));

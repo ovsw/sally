@@ -254,10 +254,16 @@ const migrations: string[] = [
 export function openStore(path: string): Store {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
-  db.exec("PRAGMA busy_timeout = 5000");
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
-  migrate(db);
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA foreign_keys = ON");
+    migrate(db);
+  } catch (error) {
+    // Do not keep a file open that turned out not to be a usable database.
+    db.close();
+    throw error;
+  }
   return db;
 }
 
