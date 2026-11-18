@@ -393,6 +393,35 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     };
   }
 
+  function ruleDetail(ruleId: number): RuleDetail {
+    const rule = requireRule(ruleId);
+    const versions = published(ruleId).map(publishedView);
+    const draftRow = draft(ruleId);
+    const on = rule.switched_off === 0;
+    return {
+      id: ruleId,
+      name: rule.name,
+      checkType: rule.check_type,
+      published: versions.length > 0,
+      // A rule always has a published version or a draft.
+      scope: versions[0]?.scope ?? scopeOf(draftRow!.id),
+      on,
+      hasDraft: draftRow !== undefined,
+      live: versions[0] ?? null,
+      versions,
+      draft: draftRow
+        ? {
+            savedAt: draftRow.created_at,
+            name: draftRow.name,
+            checkType: draftRow.check_type,
+            instruction: draftRow.instruction,
+            conditions: conditionsOf(draftRow.id),
+            scope: scopeOf(draftRow.id),
+          }
+        : null,
+    };
+  }
+
   function scopeOf(versionId: number): Scope {
     const { all_projects } = db.prepare("SELECT all_projects FROM versions WHERE id = ?").get(versionId) as {
       all_projects: number;
@@ -747,32 +776,9 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     },
 
     getRule(ruleId) {
-      const rule = requireRule(ruleId);
-      const versions = published(ruleId).map(publishedView);
-      const draftRow = draft(ruleId);
-      const on = rule.switched_off === 0;
-      return {
-        id: ruleId,
-        name: rule.name,
-        checkType: rule.check_type,
-        published: versions.length > 0,
-        // A rule always has a published version or a draft.
-        scope: versions[0]?.scope ?? scopeOf(draftRow!.id),
-        on,
-        hasDraft: draftRow !== undefined,
-        live: versions[0] ?? null,
-        versions,
-        draft: draftRow
-          ? {
-              savedAt: draftRow.created_at,
-              name: draftRow.name,
-              checkType: draftRow.check_type,
-              instruction: draftRow.instruction,
-              conditions: conditionsOf(draftRow.id),
-              scope: scopeOf(draftRow.id),
-            }
-          : null,
-      };
+      // In one transaction, so a publish in between cannot leave it with neither
+      // a published version nor a draft.
+      return transaction(db, () => ruleDetail(ruleId));
     },
 
     projects() {

@@ -291,8 +291,8 @@ is set.
 
 - **API key**: the `TYPESAFE_API_KEY` environment variable, or the file
   `~/.config/sally/api_key`, which install writes readable only by you.
-  Without a key
-  every check fails as soon as you have a published rule switched on: see
+  Without a key, every check that needs Jev fails: any check with a published
+  rule switched on for it. See
   [When a check fails](#when-a-check-fails).
 - **Database**: `~/.local/share/sally/sally.db` (SQLite). It holds your rules
   and every check, including the full text of your messages, so it never

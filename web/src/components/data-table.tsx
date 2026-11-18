@@ -121,6 +121,8 @@ export function useDataTable<TData>(options: UseDataTableOptions<TData>) {
       columnVisibility,
       rowSelection,
     },
+    // A refresh of the same rows keeps the page; a new filter, search or sort starts over (below).
+    autoResetPageIndex: false,
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onRowSelectionChange: setRowSelection,
@@ -137,6 +139,17 @@ export function useDataTable<TData>(options: UseDataTableOptions<TData>) {
     // "Reset" in the View menu goes back to these, not to every column shown.
     initialState: { columnVisibility: initialVisibility },
   });
+
+  React.useEffect(() => {
+    table.setPageIndex(0);
+  }, [table, sorting, columnFilters, globalFilter]);
+
+  // Rows removed from under the last page: show the page that is now last.
+  const { pageIndex } = table.getState().pagination;
+  const pageCount = table.getPageCount();
+  React.useEffect(() => {
+    if (pageIndex > 0 && pageIndex >= pageCount) table.setPageIndex(Math.max(0, pageCount - 1));
+  }, [table, pageIndex, pageCount]);
 
   return {
     table,

@@ -382,17 +382,33 @@ export function RuleScreen({ id }: { id: number }) {
   /** The edit count the shown re-score was made at. */
   const scoredAt = React.useRef(0);
 
+  /** The on or off last asked for here, until the server has answered it. */
+  const switching = React.useRef<{ on: boolean; click: number } | null>(null);
+  const switchClicks = React.useRef(0);
+  /** On or off as the server last said. */
+  const confirmedOn = React.useRef<boolean | null>(null);
+  /** Switched from the list before this rule had loaded. */
+  const switchedEarly = React.useRef<boolean | null>(null);
+
   const setRule = React.useCallback((next: RuleDetail) => {
-    ruleRef.current = next;
-    setRuleState(next);
-    announceRuleChange({ rule: next });
+    confirmedOn.current = next.on;
+    // A save answered while a switch is under way still shows the switch's position.
+    const shown = switching.current ? { ...next, on: switching.current.on } : next;
+    ruleRef.current = shown;
+    setRuleState(shown);
+    announceRuleChange({ rule: shown });
   }, []);
   // Switched on or off from the list: only that changes here, so a draft
   // being saved is not disturbed.
   useRuleChanges((change) => {
     const current = ruleRef.current;
-    if (!("rule" in change) || change.rule === current || change.rule.id !== id || !current) return;
-    if (change.rule.on === current.on) return;
+    if (!("rule" in change) || change.rule === current || change.rule.id !== id) return;
+    if (!current) {
+      switchedEarly.current = change.rule.on;
+      return;
+    }
+    confirmedOn.current = change.rule.on;
+    if (switching.current || change.rule.on === current.on) return;
     const next = { ...current, on: change.rule.on };
     ruleRef.current = next;
     setRuleState(next);
@@ -404,9 +420,13 @@ export function RuleScreen({ id }: { id: number }) {
     let stale = false;
     undoStack.current = [];
     setUndoSteps(0);
+    switchedEarly.current = null;
     getRule(id)
-      .then((loaded) => {
+      .then((answer) => {
         if (stale) return;
+        // The answer may predate a switch made from the list meanwhile.
+        const early = switchedEarly.current;
+        const loaded = early === null ? answer : { ...answer, on: early };
         setRule(loaded);
         setDraft(contentOf(loaded));
       })
@@ -576,15 +596,21 @@ export function RuleScreen({ id }: { id: number }) {
 
   // The switch moves at once and goes back only if the server refuses.
   const toggle = async (on: boolean) => {
-    const was = ruleRef.current!.on;
+    const click = ++switchClicks.current;
+    switching.current = { on, click };
     showAhead({ ...ruleRef.current!, on });
     setActionError(null);
+    const last = () => switching.current?.click === click;
     try {
-      // In line with the saves, so a save answered earlier cannot show the
-      // rule's old on or off after this.
-      setRule(await saver.inLine(() => switchRule(id, on)));
+      // In line with the saves and earlier switches, so the last click is what is stored.
+      const next = await saver.inLine(() => switchRule(id, on));
+      if (last()) switching.current = null;
+      setRule(next);
     } catch (e) {
-      showAhead({ ...ruleRef.current!, on: was });
+      if (last()) {
+        switching.current = null;
+        showAhead({ ...ruleRef.current!, on: confirmedOn.current ?? !on });
+      }
       setActionError(errorText(e));
     }
   };

@@ -117,7 +117,7 @@ function filterFrom(params: URLSearchParams): RuleFilter {
   for (const key of ["published", "on", "hasDraft", "allProjects"] as const) {
     const value = params.get(key);
     if (value === "true" || value === "false") filter[key] = value === "true";
-    else if (value) throw new HttpError(400, `${key} is true or false.`);
+    else if (value !== null) throw new HttpError(400, `${key} is true or false.`);
   }
   return filter;
 }

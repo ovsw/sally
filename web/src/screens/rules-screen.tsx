@@ -113,15 +113,24 @@ const drafts = [
  * refuses.
  */
 function OnSwitch({ rule, onError }: { rule: RuleSummary; onError: (message: string) => void }) {
+  // The position asked for, shown until the server has answered the last click.
   const [wanted, setWanted] = React.useState<boolean | null>(null);
-  // The list has caught up: from here on it is the list that says.
-  if (wanted !== null && rule.on === wanted) setWanted(null);
+  const clicks = React.useRef(0);
+  const queue = React.useRef<Promise<unknown>>(Promise.resolve());
   const toggle = (on: boolean) => {
+    const click = ++clicks.current;
     setWanted(on);
-    switchRule(rule.id, on)
-      .then((next) => announceRuleChange({ rule: next }))
+    // One request at a time, in click order, so the last click is what is stored.
+    const request = queue.current.then(() => switchRule(rule.id, on));
+    queue.current = request.catch(() => undefined);
+    request
+      .then((next) => {
+        // The list takes the answer in the same render, so the switch does not bounce.
+        announceRuleChange({ rule: next });
+        if (click === clicks.current) setWanted(null);
+      })
       .catch((e: unknown) => {
-        setWanted(null);
+        if (click === clicks.current) setWanted(null);
         onError(errorText(e));
       });
   };
@@ -245,7 +254,16 @@ export function RulesScreen({ openId }: { openId?: number }) {
   const [error, setError] = React.useState<string | null>(null);
   // Counts rule changes made here or in the panel, so the list reloads.
   const [changes, setChanges] = React.useState(0);
-  useRuleChanges(() => setChanges((n) => n + 1));
+  useRuleChanges((change) => {
+    // Shown at once, then confirmed by a fresh list.
+    if ("rule" in change) {
+      const { id, name, checkType, published, scope, on, hasDraft } = change.rule;
+      setRules((rows) =>
+        rows.map((row) => (row.id === id ? { id, name, checkType, published, scope, on, hasDraft } : row)),
+      );
+    }
+    setChanges((n) => n + 1);
+  });
   const compact = openId !== undefined;
   const columns = React.useMemo(() => makeColumns(setError, compact), [compact]);
   const { table, globalFilter, columnFilters } = useDataTable({

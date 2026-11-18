@@ -126,6 +126,7 @@ describe("the rules list", () => {
     expect(await names("?search=nothing%20like%20this")).toEqual([]);
     expect((await app.call("GET", "/api/rules?published=sideways")).status).toBe(400);
     expect((await app.call("GET", "/api/rules?on=maybe")).status).toBe(400);
+    expect((await app.call("GET", "/api/rules?published=")).status).toBe(400);
   });
 });
 
