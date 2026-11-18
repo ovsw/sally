@@ -132,10 +132,18 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
 
   async function act(which: "publish" | "keep" | "skip") {
     setBusy(which);
-    // Edits are saved first, so what is published or kept is what the user sees.
-    const saved = which === "skip" ? (await saver.replacing(async () => undefined), true) : await saver.flush();
-    const run = { publish: publishProposedRule, keep: keepProposedRule, skip: skipProposedRule }[which];
-    if (saved) await decide(() => run(proposed.id));
+    if (which === "skip") {
+      // Skipping drops edits not yet sent; if the skip fails, they are saved again.
+      await saver
+        .replacing(async () => {
+          if (!(await decide(() => skipProposedRule(proposed.id)))) throw new Error("The skip failed.");
+        })
+        .catch(() => undefined);
+    } else if (await saver.flush()) {
+      // Edits are saved first, so what is published or kept is what the user sees.
+      const run = which === "publish" ? publishProposedRule : keepProposedRule;
+      await decide(() => run(proposed.id));
+    }
     setBusy(null);
   }
 
@@ -151,18 +159,21 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <FieldGroup>
-          <ConditionsField
-            conditions={content.conditions}
-            checkType={rule.checkType}
-            onChange={(conditions) => edit({ ...content, conditions })}
-          />
-          <InstructionField
-            id={`instruction-${proposed.id}`}
-            instruction={content.instruction}
-            onChange={(instruction) => edit({ ...content, instruction })}
-          />
-        </FieldGroup>
+        {/* Closed while a decision runs, so an edit cannot change what is being published. */}
+        <fieldset disabled={busy !== null} className="min-w-0">
+          <FieldGroup>
+            <ConditionsField
+              conditions={content.conditions}
+              checkType={rule.checkType}
+              onChange={(conditions) => edit({ ...content, conditions })}
+            />
+            <InstructionField
+              id={`instruction-${proposed.id}`}
+              instruction={content.instruction}
+              onChange={(instruction) => edit({ ...content, instruction })}
+            />
+          </FieldGroup>
+        </fieldset>
         {saver.state.kind === "error" && (
           <Alert variant="destructive" className="mt-4">
             <TriangleAlert />
@@ -501,10 +512,18 @@ export function ImportScreen({ id, position }: { id: number; position?: number }
     };
   }, [id]);
 
+  // Requests can be answered out of order; an answer older than the one shown is dropped.
+  const sent = React.useRef(0);
+  const applied = React.useRef(0);
   const decide = React.useCallback<Decide>(async (run) => {
     setActionError(null);
+    const order = ++sent.current;
     try {
-      setDetail(await run());
+      const answer = await run();
+      if (order >= applied.current) {
+        applied.current = order;
+        setDetail(answer);
+      }
       return true;
     } catch (e) {
       setActionError(errorText(e));

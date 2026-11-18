@@ -25,7 +25,11 @@ export interface DraftSaver {
   setState: (state: SaveState) => void;
   /** Saves `content` into the draft after a pause; a later call replaces it. */
   saveSoon: (content: VersionView) => void;
-  /** Saves the latest edits now. Resolves to whether the last save succeeded. */
+  /**
+   * Saves the latest edits now. Resolves to whether the last save succeeded.
+   * Edits whose save failed are kept, so a later flush sends them again,
+   * unless newer edits have come since.
+   */
   flush: () => Promise<boolean>;
   /**
    * Holds back edits not yet sent, waits for the saves already sent, then runs
@@ -44,6 +48,8 @@ export function useDraftSaver(ruleId: number, onSaved: (rule: RuleDetail) => voi
   const [state, setState] = React.useState<SaveState>({ kind: "idle" });
   const timer = React.useRef<number | undefined>(undefined);
   const latest = React.useRef<VersionView | null>(null);
+  // Counts edits, so a save that fails late can tell whether newer edits came.
+  const edits = React.useRef(0);
   const inFlight = React.useRef<Promise<boolean>>(Promise.resolve(true));
   const saved = React.useRef(onSaved);
   React.useEffect(() => {
@@ -56,6 +62,7 @@ export function useDraftSaver(ruleId: number, onSaved: (rule: RuleDetail) => voi
     const content = latest.current;
     if (!content) return inFlight.current;
     latest.current = null;
+    const edit = edits.current;
     inFlight.current = inFlight.current.then(async () => {
       setState({ kind: "saving" });
       try {
@@ -63,6 +70,7 @@ export function useDraftSaver(ruleId: number, onSaved: (rule: RuleDetail) => voi
         setState(latest.current ? { kind: "pending" } : { kind: "saved" });
         return true;
       } catch (e) {
+        if (edits.current === edit && !latest.current) latest.current = content;
         setState({ kind: "error", message: errorText(e) });
         return false;
       }
@@ -73,6 +81,7 @@ export function useDraftSaver(ruleId: number, onSaved: (rule: RuleDetail) => voi
   const saveSoon = React.useCallback(
     (content: VersionView) => {
       latest.current = content;
+      edits.current += 1;
       setState({ kind: "pending" });
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void flush(), SAVE_DELAY_MS);
@@ -87,10 +96,14 @@ export function useDraftSaver(ruleId: number, onSaved: (rule: RuleDetail) => voi
       const held = latest.current;
       latest.current = null;
       await inFlight.current;
+      // A save that failed meanwhile kept its edits; `replace` replaces them too.
+      const kept = timer.current === undefined ? latest.current : null;
+      if (kept) latest.current = null;
       try {
         await replace();
       } catch (e) {
-        if (held && !latest.current) saveSoon(held);
+        const back = held ?? kept;
+        if (back && !latest.current) saveSoon(back);
         throw e;
       }
     },
