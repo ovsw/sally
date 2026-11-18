@@ -46,17 +46,34 @@ export function databasePath(env: Env): string {
   return join(dataDir(env), "sally.db");
 }
 
+/** The private file in the config folder that may hold the Jev API key. */
+export function apiKeyPath(env: Env): string {
+  return join(configDir(env), "api_key");
+}
+
+/** Where a Jev API key was found. */
+export interface FoundApiKey {
+  key: string;
+  /** "env" for TYPESAFE_API_KEY, "file" for the key file. */
+  source: "env" | "file";
+}
+
+/** The Jev API key and where it came from: TYPESAFE_API_KEY first, then the key file. */
+export function findApiKey(env: Env): FoundApiKey | undefined {
+  const fromEnv = env.TYPESAFE_API_KEY?.trim();
+  if (fromEnv) return { key: fromEnv, source: "env" };
+  try {
+    const fromFile = readFileSync(apiKeyPath(env), "utf8").trim();
+    return fromFile ? { key: fromFile, source: "file" } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The Jev API key: from TYPESAFE_API_KEY, otherwise from the private file
  * `api_key` in the config folder. Undefined when neither holds one.
  */
 export function readApiKey(env: Env): string | undefined {
-  const fromEnv = env.TYPESAFE_API_KEY?.trim();
-  if (fromEnv) return fromEnv;
-  try {
-    const fromFile = readFileSync(join(configDir(env), "api_key"), "utf8").trim();
-    return fromFile || undefined;
-  } catch {
-    return undefined;
-  }
+  return findApiKey(env)?.key;
 }

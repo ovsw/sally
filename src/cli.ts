@@ -27,7 +27,8 @@ async function main(args: string[]): Promise<number> {
     // Loaded only here, so the hooks never pay for it.
     const setup = await import("./install.ts");
     try {
-      const { changes } = setup[group]({ env: process.env });
+      const { changes, warnings } = setup[group]({ env: process.env });
+      for (const warning of warnings) process.stderr.write(warning + "\n");
       const done = group === "install" ? "Sally is already installed." : "Sally is not installed.";
       process.stdout.write((changes.length > 0 ? changes.join("\n") : done) + "\n");
       return 0;
