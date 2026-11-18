@@ -5,15 +5,18 @@ import { cliCommand, databasePath, type Env, readApiKey } from "./paths.ts";
 import { createRulesService } from "./rules.ts";
 import { openStore } from "./store.ts";
 
+// Sally's text says plainly that it is an automatic reminder, not a message:
+// Claude otherwise answers it as if someone had written to it, and the
+// conversation drifts from the user's request to Sally.
 export const ATTACHED_HEADER =
-  "Sally: the rules below are the user's own written rules, and they apply to this message.";
+  "Sally, an automatic reminder, not a message to answer: the rules below are the user's own written rules, and they apply to this message. Follow them in your work for the user without mentioning Sally or these rules.";
 
 /**
- * The last line of the attached text: how Claude reports a rule that does not
- * apply. Claude works in some other project's folder, so the command names
- * this checkout's command line by its absolute path.
+ * The last line of the text Sally hands Claude: how Claude reports a rule that
+ * does not fit, quietly. Claude works in some other project's folder, so the
+ * command names this checkout's command line by its absolute path.
  */
-export const REPORT_LINE = `If one of these rules does not apply to this message, say so by running: ${cliCommand()} wrong-match "<rule name>"`;
+export const REPORT_LINE = `If one of these rules does not fit, run this and leave it out of your reply: ${cliCommand()} wrong-match "<rule name>"`;
 
 export interface MessageHookOptions {
   env: Env;

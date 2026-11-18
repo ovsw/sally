@@ -55,7 +55,7 @@ describe("Claude's wrong-match report", () => {
     const ruleId = sandbox.liveRule({ name: "Local link", conditions: ["Asks for a visual change."] });
     const output = await message("make the button blue", standInMatcher({ "Asks for a visual change.": 0.8 }));
     const attached: string = JSON.parse(output).hookSpecificOutput.additionalContext;
-    const command = /running: (.+)$/.exec(attached)![1]!.replace("<rule name>", "Local link");
+    const command = /leave it out of your reply: (.+)$/.exec(attached)![1]!.replace("<rule name>", "Local link");
 
     expect(command).toBe(`node "${cli.replaceAll("\\", "/")}" wrong-match "Local link"`);
     const project = join(sandbox.root, "some project");
