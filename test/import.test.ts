@@ -156,7 +156,7 @@ describe("adding passages", () => {
 
     expect(passage!.rules).toHaveLength(1);
     const [proposed] = passage!.rules;
-    expect(proposed).toMatchObject({ decision: null, rule: { name: "Links", state: "draft", live: null } });
+    expect(proposed).toMatchObject({ decision: null, rule: { name: "Links", published: false, live: null } });
     expect(proposed!.rule!.draft).toMatchObject({
       instruction: "Do the Links thing.",
       conditions: ["The message is about Links."],
@@ -164,8 +164,8 @@ describe("adding passages", () => {
       scope: { kind: "projects", projects: ["example/shop"] },
     });
     // The draft is an ordinary rule: the rules list shows it.
-    expect(sandbox.withRules((rules) => rules.listRules()).map((r) => [r.id, r.state])).toEqual([
-      [proposed!.ruleId, "draft"],
+    expect(sandbox.withRules((rules) => rules.listRules()).map((r) => [r.id, r.published])).toEqual([
+      [proposed!.ruleId, false],
     ]);
   });
 
@@ -232,7 +232,7 @@ describe("pending passages", () => {
     sandbox.withRules((rules) => rules.publish(passage!.rules[0]!.ruleId!));
 
     const after = sandbox.withImports((imports) => imports.getImport(id));
-    expect(after.passages[0]!.rules[0]).toMatchObject({ decision: "published", rule: { state: "live" } });
+    expect(after.passages[0]!.rules[0]).toMatchObject({ decision: "published", rule: { published: true } });
     expect(after.passages[0]!.pending).toBe(false);
     expect(after.pendingCount).toBe(0);
     expect(sandbox.withRules((rules) => rules.liveRules("message")).map((r) => r.name)).toEqual(["Links"]);
@@ -289,7 +289,7 @@ describe("decisions", () => {
     const after = sandbox.withImports((imports) => imports.publishProposedRule(proposed.id));
     expect(after.passages[0]!.rules[0]).toMatchObject({
       decision: "published",
-      rule: { state: "live", live: { instruction: "Give the local link.", conditions: ["The message asks for a link."] } },
+      rule: { published: true, live: { instruction: "Give the local link.", conditions: ["The message asks for a link."] } },
     });
     expect(after.passages[0]!.pending).toBe(false);
   });
@@ -306,7 +306,7 @@ describe("decisions", () => {
     const detail = importOf(becomesRule("Links"));
     const proposed = detail.passages[0]!.rules[0]!;
     const kept = sandbox.withImports((imports) => imports.keepProposedRule(proposed.id));
-    expect(kept.passages[0]!.rules[0]).toMatchObject({ decision: "kept", rule: { state: "draft" } });
+    expect(kept.passages[0]!.rules[0]).toMatchObject({ decision: "kept", rule: { published: false } });
     expect(kept.passages[0]!.pending).toBe(false);
     expect(kept.pendingCount).toBe(0);
     expect(sandbox.withRules((rules) => rules.liveRules("message"))).toEqual([]);
@@ -338,11 +338,11 @@ describe("decisions", () => {
     expect(ruleNames()).toEqual([]);
   });
 
-  it("refuses to keep or skip a published rule, which is live", () => {
+  it("refuses to keep or skip a published rule", () => {
     const proposed = importOf(becomesRule("Links")).passages[0]!.rules[0]!;
     sandbox.withImports((imports) => imports.publishProposedRule(proposed.id));
-    expect(() => sandbox.withImports((imports) => imports.keepProposedRule(proposed.id))).toThrow(/live/);
-    expect(() => sandbox.withImports((imports) => imports.skipProposedRule(proposed.id))).toThrow(/live/);
+    expect(() => sandbox.withImports((imports) => imports.keepProposedRule(proposed.id))).toThrow(/published/);
+    expect(() => sandbox.withImports((imports) => imports.skipProposedRule(proposed.id))).toThrow(/published/);
     expect(ruleNames()).toEqual(["Links"]);
   });
 
@@ -395,7 +395,7 @@ describe("decisions", () => {
     expect(after.rules).toHaveLength(1);
     expect(after.rules[0]).toMatchObject({
       decision: null,
-      rule: { name: "Plain words", checkType: "reply", state: "draft", draft: { scope: { kind: "all" } } },
+      rule: { name: "Plain words", checkType: "reply", published: false, draft: { scope: { kind: "all" } } },
     });
     expect(after.pending).toBe(true);
 
@@ -443,10 +443,10 @@ describe("decisions", () => {
     expect(ruleNames()).toEqual([]);
   });
 
-  it("refuses to mark a passage as staying while one of its rules is live", () => {
+  it("refuses to mark a passage as staying while one of its rules is published", () => {
     const [passage] = importOf(twoRules).passages;
     sandbox.withImports((imports) => imports.publishProposedRule(passage!.rules[0]!.id));
-    expect(() => sandbox.withImports((imports) => imports.markPassageStays(passage!.id))).toThrow(/live/);
+    expect(() => sandbox.withImports((imports) => imports.markPassageStays(passage!.id))).toThrow(/published/);
     expect(ruleNames()).toEqual(["One", "Three", "Two"]);
   });
 

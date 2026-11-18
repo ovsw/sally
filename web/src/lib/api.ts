@@ -3,13 +3,15 @@
 // code.
 
 export type CheckType = "message" | "reply";
-export type RuleState = "live" | "draft" | "off";
 
 export interface RuleSummary {
   id: number;
   name: string;
   checkType: CheckType;
-  state: RuleState;
+  /** True once the rule has a published version. */
+  published: boolean;
+  /** The scope in force: the published version's, or the draft's before the first publish. */
+  scope: Scope;
   on: boolean;
   hasDraft: boolean;
 }
@@ -49,8 +51,10 @@ export interface RuleDetail extends RuleSummary {
 export interface RuleFilter {
   search?: string;
   checkType?: CheckType[];
-  state?: RuleState[];
+  published?: boolean[];
+  on?: boolean[];
   hasDraft?: boolean[];
+  allProjects?: boolean[];
 }
 
 export class ApiError extends Error {}
@@ -73,7 +77,7 @@ async function call<T>(
 }
 
 /**
- * The server filters check type and draft by one value each; picking both
+ * The server filters each of these by one value; picking both
  * values of one of them is the same as picking none.
  */
 function single<T>(values: T[] | undefined): T | undefined {
@@ -85,9 +89,10 @@ export function listRules(filter: RuleFilter): Promise<RuleSummary[]> {
   if (filter.search?.trim()) params.set("search", filter.search.trim());
   const checkType = single(filter.checkType);
   if (checkType) params.set("checkType", checkType);
-  for (const state of filter.state ?? []) params.append("state", state);
-  const hasDraft = single(filter.hasDraft);
-  if (hasDraft !== undefined) params.set("hasDraft", String(hasDraft));
+  for (const key of ["published", "on", "hasDraft", "allProjects"] as const) {
+    const value = single(filter[key]);
+    if (value !== undefined) params.set(key, String(value));
+  }
   const query = params.toString();
   return call<{ rules: RuleSummary[] }>("GET", `/api/rules${query ? `?${query}` : ""}`).then((r) => r.rules);
 }
@@ -152,6 +157,21 @@ export interface LimitUse {
   largestRequest: number | null;
   share: number | null;
   warning: boolean;
+  /** The check that sent the largest request; null with no such checks. */
+  largestCheck: LargestCheck | null;
+}
+
+/** The check behind the largest recent request, and what took up its room. */
+export interface LargestCheck {
+  checkId: number;
+  createdAt: string;
+  checkType: CheckType;
+  project: string | null;
+  /** The start of the text checked, as sent. */
+  excerpt: string;
+  conditions: number;
+  /** About how much of the request the text took, from 0 to 1; the conditions took the rest. */
+  textShare: number;
 }
 
 export interface SettingsAnswer {

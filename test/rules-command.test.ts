@@ -40,7 +40,7 @@ function ruleWithDraft(): number {
 }
 
 describe("reading rules", () => {
-  it("lists every rule as JSON with its check type, state and draft", () => {
+  it("lists every rule as JSON with its check type, published, on and draft", () => {
     const linksId = ruleWithDraft();
     const draftId = sandbox.withRules(
       (rules) =>
@@ -48,18 +48,22 @@ describe("reading rules", () => {
           .ruleId,
     );
     expect(sallyJson("list")).toEqual([
-      { id: draftId, name: "Brief", checkType: "reply", state: "draft", on: true, hasDraft: true },
-      { id: linksId, name: "Links", checkType: "message", state: "live", on: true, hasDraft: true },
+      { id: draftId, name: "Brief", checkType: "reply", published: false, scope: { kind: "all" }, on: true, hasDraft: true },
+      { id: linksId, name: "Links", checkType: "message", published: true, scope: { kind: "all" }, on: true, hasDraft: true },
     ]);
   });
 
-  it("narrows the list by search, check type, state and draft", () => {
+  it("narrows the list by search, check type, published, on and draft", () => {
     ruleWithDraft();
     sandbox.liveRule({ name: "Brief", checkType: "reply", instruction: "Be brief.", conditions: ["The reply is long."] });
     const names = (...args: string[]) => sallyJson("list", ...args).map((rule: { name: string }) => rule.name);
     expect(names("--search", "localhost")).toEqual(["Links"]);
     expect(names("--check-type", "reply")).toEqual(["Brief"]);
-    expect(names("--state", "draft")).toEqual([]);
+    expect(names("--unpublished")).toEqual([]);
+    expect(names("--published", "--without-draft")).toEqual(["Brief"]);
+    expect(names("--on")).toEqual(["Brief", "Links"]);
+    expect(names("--off")).toEqual([]);
+    expect(sally("list", "--on", "--off")).toMatchObject({ status: 1, stderr: expect.stringContaining("Use --on or --off, not both.") });
     expect(names("--with-draft")).toEqual(["Links"]);
     expect(names("--without-draft")).toEqual(["Brief"]);
   });
@@ -70,7 +74,7 @@ describe("reading rules", () => {
       id: ruleId,
       name: "Links",
       checkType: "message",
-      state: "live",
+      published: true,
       hasDraft: true,
       live: {
         number: 1,
@@ -111,10 +115,10 @@ describe("preparing drafts", () => {
       "--condition",
       "The reply hands back a page without a link.",
     );
-    expect(created).toMatchObject({ name: "Links", checkType: "reply", state: "draft", hasDraft: true, live: null });
+    expect(created).toMatchObject({ name: "Links", checkType: "reply", published: false, hasDraft: true, live: null });
     sandbox.withRules((rules) => {
       expect(rules.liveRules("reply")).toEqual([]);
-      expect(rules.listRules()).toMatchObject([{ id: created.id, name: "Links", state: "draft", hasDraft: true }]);
+      expect(rules.listRules()).toMatchObject([{ id: created.id, name: "Links", published: false, hasDraft: true }]);
       expect(rules.getRule(created.id).draft).toMatchObject({
         checkType: "reply",
         instruction: "Give the localhost link.",
@@ -227,7 +231,7 @@ describe("drafts in the app", () => {
     const app = await startApp(sandbox);
     try {
       const { rules } = await app.json<{ rules: RuleSummary[] }>("GET", "/api/rules?checkType=reply&hasDraft=true");
-      expect(rules).toEqual([{ id: created.id, name: "Links", checkType: "reply", state: "draft", on: true, hasDraft: true }]);
+      expect(rules).toEqual([{ id: created.id, name: "Links", checkType: "reply", published: false, scope: { kind: "all" }, on: true, hasDraft: true }]);
       const rule = await app.json<RuleDetail>("GET", `/api/rules/${created.id}`);
       expect(rule).toMatchObject({
         live: null,
@@ -244,7 +248,7 @@ describe("drafts in the app", () => {
         `/api/rules/${created.id}/publish`,
         {},
       );
-      expect(published).toMatchObject({ versionNumber: 1, rule: { state: "live", live: { checkType: "reply" } } });
+      expect(published).toMatchObject({ versionNumber: 1, rule: { published: true, live: { checkType: "reply" } } });
     } finally {
       await app.close();
     }
@@ -258,7 +262,7 @@ describe("drafts in the app", () => {
       expect(await app.json<RuleDetail>("GET", `/api/rules/${ruleId}`)).toMatchObject({
         name: "Links",
         checkType: "message",
-        state: "live",
+        published: true,
         hasDraft: true,
         live: { number: 1, name: "Links", checkType: "message", instruction: "Give a local link." },
         draft: { name: "Local links", checkType: "reply", instruction: "Give a local link." },

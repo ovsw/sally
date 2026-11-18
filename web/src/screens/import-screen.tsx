@@ -175,7 +175,7 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
           {kept ? <Badge variant="secondary">Kept as a draft</Badge> : <Badge variant="outline">To decide</Badge>}
         </div>
         <CardDescription>
-          {rule.checkType === "message" ? "Message check" : "Reply check"} · {scopeText(content.scope)}
+          {rule.checkType === "message" ? "User message" : "Agent reply"} · {scopeText(content.scope)}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -235,7 +235,7 @@ function ProposedRuleCard({ proposed, decide }: { proposed: ProposedRule; decide
         <CardHeader>
           <CardTitle className="text-muted-foreground">Skipped</CardTitle>
           <CardDescription>
-            Its draft was deleted, so it never went live. A skipped rule cannot come back. Write a new rule if you
+            Its draft was deleted, so it was never published. A skipped rule cannot come back. Write a new rule if you
             need one.
           </CardDescription>
         </CardHeader>
@@ -250,11 +250,11 @@ function ProposedRuleCard({ proposed, decide }: { proposed: ProposedRule; decide
           <CardTitle>{rule.live!.name}</CardTitle>
           <Badge className="gap-1">
             <Check className="size-3" />
-            Live
+            Published
           </Badge>
         </div>
         <CardDescription>
-          {rule.checkType === "message" ? "Message check" : "Reply check"} · {scopeText(rule.live!.scope)}
+          {rule.checkType === "message" ? "User message" : "Agent reply"} · {scopeText(rule.live!.scope)}
         </CardDescription>
       </CardHeader>
       <CardContent>

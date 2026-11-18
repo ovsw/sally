@@ -86,7 +86,7 @@ describe("rules service", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);
       rules.saveDraft(ruleId, { checkType: "reply", instruction: "Do X.", conditions: ["Condition A."] });
-      expect(rules.listRules({ checkType: "reply" })).toMatchObject([{ id: ruleId, state: "draft" }]);
+      expect(rules.listRules({ checkType: "reply" })).toMatchObject([{ id: ruleId, published: false }]);
       expect(rules.liveRules("reply")).toEqual([]);
     });
   });
@@ -211,13 +211,15 @@ describe("rules service", () => {
       rules.switchOff(ruleId);
       expect(rules.liveRules("message")).toEqual([]);
       expect(rules.getRule(ruleId)).toMatchObject({
-        state: "off",
+        published: true,
         on: false,
+        hasDraft: true,
         live: { number: 1 },
         draft: { instruction: "Do Y." },
       });
-      expect(rules.listRules({ state: "off" })).toMatchObject([{ id: ruleId, state: "off", on: false }]);
-      expect(rules.listRules({ state: "live" })).toEqual([]);
+      expect(rules.listRules({ on: false })).toMatchObject([{ id: ruleId, published: true, on: false, hasDraft: true }]);
+      expect(rules.listRules({ on: true })).toEqual([]);
+      expect(rules.listRules({ published: true, hasDraft: true })).toMatchObject([{ id: ruleId }]);
 
       // Publishing while off keeps the rule off.
       rules.publish(ruleId);
@@ -225,7 +227,7 @@ describe("rules service", () => {
       expect(rules.getRule(ruleId).versions).toHaveLength(2);
 
       rules.switchOn(ruleId);
-      expect(rules.getRule(ruleId)).toMatchObject({ state: "live", on: true });
+      expect(rules.getRule(ruleId)).toMatchObject({ published: true, on: true });
       expect(rules.liveRules("message")).toMatchObject([{ ruleId, versionNumber: 2, instruction: "Do Y." }]);
     });
   });
@@ -234,9 +236,9 @@ describe("rules service", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);
       rules.switchOff(ruleId);
-      expect(rules.getRule(ruleId)).toMatchObject({ state: "draft", on: false });
+      expect(rules.getRule(ruleId)).toMatchObject({ published: false, on: false });
       rules.publish(ruleId);
-      expect(rules.getRule(ruleId)).toMatchObject({ state: "off", on: false });
+      expect(rules.getRule(ruleId)).toMatchObject({ published: true, on: false });
       expect(rules.liveRules("message")).toEqual([]);
     });
   });

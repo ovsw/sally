@@ -154,7 +154,7 @@ const columns: ColumnDef<AttentionEntry>[] = [
   },
   {
     accessorKey: "checkType",
-    header: "Check",
+    header: "Type",
     cell: ({ row }) => {
       const meta = checkTypes.find((t) => t.value === row.original.checkType);
       const Icon = meta?.icon;
@@ -166,7 +166,7 @@ const columns: ColumnDef<AttentionEntry>[] = [
       );
     },
     filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
-    meta: { label: "Check" },
+    meta: { label: "Type" },
   },
   {
     id: "reason",
@@ -253,7 +253,7 @@ export function AttentionScreen() {
         />
         <DataTableFacetedFilter
           column={table.getColumn("checkType")}
-          title="Check"
+          title="Type"
           options={checkTypes}
         />
         <div className="ml-auto">

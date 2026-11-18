@@ -41,6 +41,29 @@ export function LabelWithHelp({ htmlFor, id, label, children }: LabelWithHelpPro
   );
 }
 
+/** A table column's header with the same information mark, for a column whose meaning is not obvious. */
+export function HeaderWithHelp({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      {title}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={`About ${title.toLowerCase()}`}
+            className="rounded-full font-normal text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Info className="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">
+          <div className="space-y-1.5 text-pretty">{children}</div>
+        </TooltipContent>
+      </Tooltip>
+    </span>
+  );
+}
+
 /** What each field of a rule is for, shared by every place a rule is written. */
 export const ruleHelp = {
   name: "A short label for the rule. Claude sees it with the instruction, and you use it to find the rule. No two rules share a name.",
@@ -48,11 +71,11 @@ export const ruleHelp = {
     <>
       <p>When Sally checks this rule.</p>
       <p>
-        <strong>Message check:</strong> against your message, before Claude starts work. On a match, the instruction
+        <strong>User message:</strong> checked against your message, before Claude starts work. On a match, the instruction
         goes to Claude with your message.
       </p>
       <p>
-        <strong>Reply check:</strong> against Claude's final reply. On a match, the reply is sent back to Claude once,
+        <strong>Agent reply:</strong> checked against Claude's final reply. On a match, the reply is sent back to Claude once,
         with the instruction.
       </p>
     </>

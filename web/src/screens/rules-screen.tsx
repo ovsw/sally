@@ -1,7 +1,8 @@
 // The Rules screen, built on the shadcnblocks block data-table12 (faceted
-// filter data table).
+// filter data table). An open rule shows in a panel beside the list, as in
+// Sanity, built on the shadcnblocks block resizable-with-scroll-area.
 import type { ColumnDef, ColumnFiltersState } from "@tanstack/react-table";
-import { BookOpen, CircleDot, CirclePause, FileEdit, ListChecks, MessageSquare, PenLine, Reply } from "lucide-react";
+import { BookOpen, FolderGit2, Globe, ListChecks, MessageSquare, PenLine, Power, PowerOff, Reply } from "lucide-react";
 import * as React from "react";
 
 import {
@@ -13,7 +14,7 @@ import {
   useDataTable,
 } from "@/components/data-table";
 import { NewRuleDialog } from "@/components/new-rule-dialog";
-import { Badge } from "@/components/ui/badge";
+import { RuleLights } from "@/components/rule-status";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -24,104 +25,180 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   type CheckType,
   listRules,
-  type RuleState,
   type RuleSummary,
+  type Scope,
+  switchRule,
 } from "@/lib/api";
+import { errorText } from "@/lib/draft-saver";
 import { followLink, navigate } from "@/lib/router";
+import { announceRuleChange, useRuleChanges } from "@/lib/rule-events";
+import { RuleScreen } from "@/screens/rule-screen";
 
 export const checkTypes = [
-  { value: "message", label: "Message", icon: MessageSquare },
-  { value: "reply", label: "Reply", icon: Reply },
+  { value: "message", label: "User message", icon: MessageSquare },
+  { value: "reply", label: "Agent reply", icon: Reply },
 ];
 
-const states = [
-  { value: "live", label: "Live", icon: CircleDot },
-  { value: "off", label: "Off", icon: CirclePause },
-  { value: "draft", label: "Draft only", icon: FileEdit },
+const publishedOptions = [
+  { value: "true", label: "Published" },
+  { value: "false", label: "Not published" },
 ];
+
+const onOptions = [
+  { value: "true", label: "On", icon: Power },
+  { value: "false", label: "Off", icon: PowerOff },
+];
+
+const scopes = [
+  { value: "true", label: "All projects", icon: Globe },
+  { value: "false", label: "Only some projects", icon: FolderGit2 },
+];
+
+/**
+ * An icon and its label. `compact` (beside an open rule) shows the icon alone,
+ * with the label on hover; `hint`, when given, shows on hover either way.
+ */
+function IconLabel({
+  icon: Icon,
+  label,
+  hint,
+  compact,
+  muted = true,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  hint?: React.ReactNode;
+  compact: boolean;
+  muted?: boolean;
+}) {
+  const shown = (
+    <span className={`flex min-w-0 items-center gap-2 ${muted ? "text-muted-foreground" : ""}`}>
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      {compact ? <span className="sr-only">{label}</span> : <span className="max-w-[240px] truncate">{label}</span>}
+    </span>
+  );
+  if (!compact && hint === undefined) return shown;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{shown}</TooltipTrigger>
+      <TooltipContent>{hint ?? label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** All projects, or the named ones: one by name, several by count with the names on hover. */
+function ScopeCell({ scope, compact }: { scope: Scope; compact: boolean }) {
+  if (scope.kind === "all") return <IconLabel icon={Globe} label="All projects" compact={compact} />;
+  const label = scope.projects.length === 1 ? scope.projects[0]! : `${scope.projects.length} projects`;
+  const names = scope.projects.map((project) => <div key={project}>{project}</div>);
+  // Rules for named projects stand out from those for all projects.
+  return <IconLabel icon={FolderGit2} label={label} hint={names} compact={compact} muted={false} />;
+}
 
 const drafts = [
   { value: "true", label: "Has a draft" },
   { value: "false", label: "No draft" },
 ];
 
-const columns: ColumnDef<RuleSummary>[] = [
-  {
-    accessorKey: "name",
-    header: ({ column }) => <DataTableColumnHeader column={column} title="Name" />,
-    cell: ({ row }) => (
-      <a
-        href={`/rules/${row.original.id}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          followLink(event);
-        }}
-        className="max-w-[500px] truncate font-medium hover:underline"
-      >
-        {row.original.name}
-      </a>
-    ),
-    enableHiding: false,
-    meta: { label: "Name" },
-  },
-  {
-    accessorKey: "checkType",
-    header: ({ column }) => <DataTableColumnHeader column={column} title="Check" />,
-    cell: ({ row }) => {
-      const meta = checkTypes.find((t) => t.value === row.original.checkType);
-      const Icon = meta?.icon;
-      return (
-        <span className="flex items-center gap-2 text-muted-foreground">
-          {Icon && <Icon className="size-4" />}
-          {meta?.label}
-        </span>
-      );
+/**
+ * Switches a rule on or off right from the list. The switch moves at once and
+ * holds there until the reloaded list agrees; it goes back only if the server
+ * refuses.
+ */
+function OnSwitch({ rule, onError }: { rule: RuleSummary; onError: (message: string) => void }) {
+  // The position asked for, shown until the server has answered the last click.
+  const [wanted, setWanted] = React.useState<boolean | null>(null);
+  const clicks = React.useRef(0);
+  const queue = React.useRef<Promise<unknown>>(Promise.resolve());
+  const toggle = (on: boolean) => {
+    const click = ++clicks.current;
+    setWanted(on);
+    // One request at a time, in click order, so the last click is what is stored.
+    const request = queue.current.then(() => switchRule(rule.id, on));
+    queue.current = request.catch(() => undefined);
+    request
+      .then((next) => {
+        // The list takes the answer in the same render, so the switch does not bounce.
+        announceRuleChange({ rule: next });
+        if (click === clicks.current) setWanted(null);
+      })
+      .catch((e: unknown) => {
+        if (click === clicks.current) setWanted(null);
+        onError(errorText(e));
+      });
+  };
+  return (
+    // The row opens the rule on a click; the switch only switches.
+    <span className="flex" onClick={(event) => event.stopPropagation()}>
+      <Switch checked={wanted ?? rule.on} onCheckedChange={toggle} aria-label={`${rule.name} on`} />
+    </span>
+  );
+}
+
+/** `compact`: beside an open rule, where the list is narrow and the name takes what room there is. */
+function makeColumns(onError: (message: string) => void, compact: boolean): ColumnDef<RuleSummary>[] {
+  return [
+    {
+      id: "on",
+      accessorFn: (row) => String(row.on),
+      header: () => <span className="sr-only">On</span>,
+      cell: ({ row }) => <OnSwitch rule={row.original} onError={onError} />,
+      enableHiding: false,
+      enableSorting: false,
+      meta: { className: "w-px" },
     },
-    enableSorting: false,
-    meta: { label: "Check" },
-  },
-  {
-    accessorKey: "state",
-    header: ({ column }) => <DataTableColumnHeader column={column} title="State" />,
-    cell: ({ row }) =>
-      row.original.state === "live" ? (
-        <Badge className="gap-1 whitespace-nowrap">
-          <CircleDot className="size-3" />
-          Live
-        </Badge>
-      ) : row.original.state === "off" ? (
-        <Badge variant="secondary" className="gap-1 whitespace-nowrap">
-          <CirclePause className="size-3" />
-          Off
-        </Badge>
-      ) : (
-        <Badge variant="outline" className="gap-1 whitespace-nowrap">
-          <FileEdit className="size-3" />
-          Draft only
-        </Badge>
+    {
+      accessorKey: "name",
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Name" />,
+      cell: ({ row }) => (
+        <span className="flex min-w-0 items-center gap-2">
+          <a
+            href={`/rules/${row.original.id}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              followLink(event);
+            }}
+            className="max-w-[500px] truncate font-medium hover:underline"
+          >
+            {row.original.name}
+          </a>
+          <RuleLights published={row.original.published} hasDraft={row.original.hasDraft} />
+        </span>
       ),
-    enableSorting: false,
-    meta: { label: "State" },
-  },
-  {
-    id: "hasDraft",
-    accessorFn: (row) => String(row.hasDraft),
-    header: ({ column }) => <DataTableColumnHeader column={column} title="Draft" />,
-    cell: ({ row }) =>
-      row.original.hasDraft ? (
-        <Badge variant="secondary" className="whitespace-nowrap">
-          Unpublished draft
-        </Badge>
-      ) : (
-        <span className="text-muted-foreground">None</span>
-      ),
-    enableSorting: false,
-    meta: { label: "Draft" },
-  },
-];
+      enableHiding: false,
+      // On the full list the name is as wide as the longest one, so the type sits right after it.
+      meta: { label: "Name", className: compact ? undefined : "w-px pr-12" },
+    },
+    {
+      accessorKey: "checkType",
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Type" />,
+      cell: ({ row }) => {
+        const meta = checkTypes.find((t) => t.value === row.original.checkType)!;
+        return <IconLabel icon={meta.icon} label={meta.label} compact={compact} />;
+      },
+      enableSorting: false,
+      meta: { label: "Type", className: compact ? "w-px" : "w-px pr-12" },
+    },
+    {
+      id: "allProjects",
+      accessorFn: (row) => String(row.scope.kind === "all"),
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Scope" />,
+      cell: ({ row }) => <ScopeCell scope={row.original.scope} compact={compact} />,
+      enableSorting: false,
+      meta: { label: "Scope", className: compact ? "w-px" : undefined },
+    },
+    // Only for the Published and Draft filters: the lights by the name show both.
+    { id: "published", accessorFn: (row) => String(row.published), enableHiding: false, enableSorting: false },
+    { id: "hasDraft", accessorFn: (row) => String(row.hasDraft), enableHiding: false, enableSorting: false },
+  ];
+}
 
 // Built on the shadcnblocks block empty-actions-2 (empty state with two
 // actions): a new user is pointed to the import and to writing a first rule.
@@ -168,19 +245,36 @@ function NoRulesYet() {
 const values = (filters: ColumnFiltersState, id: string) =>
   filters.find((f) => f.id === id)?.value as string[] | undefined;
 
-export function RulesScreen() {
+/** The rules list; with `openId`, that rule open in a panel beside it. */
+export function RulesScreen({ openId }: { openId?: number }) {
   const [rules, setRules] = React.useState<RuleSummary[]>([]);
   const [loaded, setLoaded] = React.useState(false);
   // Whether the rules shown came from a request with no search or filter.
   const [shownUnfiltered, setShownUnfiltered] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Counts rule changes made here or in the panel, so the list reloads.
+  const [changes, setChanges] = React.useState(0);
+  useRuleChanges((change) => {
+    // Shown at once, then confirmed by a fresh list.
+    if ("rule" in change) {
+      const { id, name, checkType, published, scope, on, hasDraft } = change.rule;
+      setRules((rows) =>
+        rows.map((row) => (row.id === id ? { id, name, checkType, published, scope, on, hasDraft } : row)),
+      );
+    }
+    setChanges((n) => n + 1);
+  });
+  const compact = openId !== undefined;
+  const columns = React.useMemo(() => makeColumns(setError, compact), [compact]);
   const { table, globalFilter, columnFilters } = useDataTable({
     data: rules,
     columns: columns as ColumnDef<RuleSummary, unknown>[],
     getRowId: (row) => String(row.id),
     enableRowSelection: false,
     manualFiltering: true,
+    initialVisibility: { published: false, hasDraft: false },
   });
+  const isMobile = useIsMobile();
 
   React.useEffect(() => {
     let stale = false;
@@ -189,8 +283,10 @@ export function RulesScreen() {
       listRules({
         search: globalFilter,
         checkType: values(columnFilters, "checkType") as CheckType[] | undefined,
-        state: values(columnFilters, "state") as RuleState[] | undefined,
+        published: values(columnFilters, "published")?.map((v) => v === "true"),
+        on: values(columnFilters, "on")?.map((v) => v === "true"),
         hasDraft: values(columnFilters, "hasDraft")?.map((v) => v === "true"),
+        allProjects: values(columnFilters, "allProjects")?.map((v) => v === "true"),
       })
         .then((next) => {
           if (stale) return;
@@ -205,75 +301,103 @@ export function RulesScreen() {
       stale = true;
       window.clearTimeout(timer);
     };
-  }, [globalFilter, columnFilters]);
+  }, [globalFilter, columnFilters, changes]);
 
   const filtering = globalFilter !== "" || columnFilters.length > 0;
   // Only an unfiltered answer says there are no rules: right after a search is
   // cleared, the empty result of that search is still showing.
   const noRules = loaded && !error && !filtering && shownUnfiltered && rules.length === 0;
 
-  return (
-    <div className="w-full">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div className="text-left">
-          <h1 className="text-2xl font-bold tracking-tight">Rules</h1>
-          <p className="mt-2 text-muted-foreground">
-            Each rule is one or more conditions and an instruction. Edits go
-            into a draft, which changes nothing until you publish it.
-          </p>
-        </div>
+  const header = (
+    <div className="mb-4 flex items-start justify-between gap-4">
+      <div className="text-left">
+        <h1 className="text-2xl font-bold tracking-tight">Rules</h1>
+        <p className="mt-2 text-muted-foreground">
+          Each rule is one or more conditions and an instruction. Edits go
+          into a draft, which changes nothing until you publish it.
+        </p>
       </div>
-      {noRules ? (
-        <NoRulesYet />
-      ) : (
-        <>
-          <DataTableToolbar table={table}>
-            <Input
-              placeholder="Search names, conditions and instructions..."
-              value={globalFilter}
-              onChange={(event) => table.setGlobalFilter(event.target.value)}
-              className="h-8 w-full lg:w-[320px]"
-              aria-label="Search rules"
-            />
-            <DataTableFacetedFilter
-              column={table.getColumn("checkType")}
-              title="Check"
-              options={checkTypes}
-            />
-            <DataTableFacetedFilter
-              column={table.getColumn("state")}
-              title="State"
-              options={states}
-            />
-            <DataTableFacetedFilter
-              column={table.getColumn("hasDraft")}
-              title="Draft"
-              options={drafts}
-            />
-            {/* Only once the first list is in: it may swap this toolbar for the first-run panel. */}
-            {loaded && (
-              <div className="ml-auto">
-                <NewRuleDialog onCreated={(rule) => navigate(`/rules/${rule.id}`)} />
-              </div>
-            )}
-          </DataTableToolbar>
-          {error && (
-            <p role="alert" className="mb-4 text-sm text-destructive">
-              {error}
-            </p>
-          )}
-          <DataTable
-            table={table}
-            onRowClick={(rule) => navigate(`/rules/${rule.id}`)}
-            emptyMessage={
-              !loaded
-                ? "Loading..."
-                : "No rules match."
-            }
-          />
-          <DataTablePagination table={table} />
-        </>
+      {/* Only once the first list is in: it may swap the list for the first-run panel. */}
+      {loaded && !noRules && <NewRuleDialog onCreated={(rule) => navigate(`/rules/${rule.id}`)} />}
+    </div>
+  );
+
+  const list = noRules ? (
+    <NoRulesYet />
+  ) : (
+    <>
+      <DataTableToolbar table={table} showViewOptions={openId === undefined}>
+        <Input
+          placeholder="Search names, conditions and instructions..."
+          value={globalFilter}
+          onChange={(event) => table.setGlobalFilter(event.target.value)}
+          className="h-8 w-full lg:w-[320px]"
+          aria-label="Search rules"
+        />
+        <DataTableFacetedFilter
+          column={table.getColumn("checkType")}
+          title="Type"
+          options={checkTypes}
+        />
+        <DataTableFacetedFilter
+          column={table.getColumn("allProjects")}
+          title="Scope"
+          options={scopes}
+        />
+        <DataTableFacetedFilter
+          column={table.getColumn("published")}
+          title="Published"
+          options={publishedOptions}
+        />
+        <DataTableFacetedFilter
+          column={table.getColumn("hasDraft")}
+          title="Draft"
+          options={drafts}
+        />
+        <DataTableFacetedFilter
+          column={table.getColumn("on")}
+          title="On/Off"
+          options={onOptions}
+        />
+      </DataTableToolbar>
+      {error && (
+        <p role="alert" className="mb-4 text-sm text-destructive">
+          {error}
+        </p>
       )}
+      <DataTable
+        table={table}
+        onRowClick={(rule) => navigate(`/rules/${rule.id}`)}
+        activeRowId={openId === undefined ? undefined : String(openId)}
+        emptyMessage={!loaded ? "Loading..." : "No rules match."}
+      />
+      <DataTablePagination table={table} />
+    </>
+  );
+
+  if (openId === undefined) {
+    return (
+      <div className="w-full">
+        {header}
+        {list}
+      </div>
+    );
+  }
+  const panel = <RuleScreen key={openId} id={openId} />;
+  // A phone has no room beside the list: the rule takes the screen.
+  if (isMobile) return <div className="w-full">{panel}</div>;
+  return (
+    <div className="flex h-[calc(100svh-4rem)] w-full flex-col">
+      {header}
+      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1 rounded-lg border">
+        <ResizablePanel defaultSize="40%" minSize="25%">
+          <div className="h-full overflow-auto p-3">{list}</div>
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        <ResizablePanel defaultSize="60%" minSize="35%">
+          <div className="h-full overflow-auto p-4">{panel}</div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }

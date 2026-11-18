@@ -290,7 +290,7 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 @xl:grid-cols-3">
         <Stat
           label="Matched"
           value={analytics.matches}

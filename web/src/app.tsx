@@ -7,13 +7,13 @@ import { ActivityScreen } from "@/screens/activity-screen";
 import { AttentionScreen } from "@/screens/attention-screen";
 import { ImportScreen } from "@/screens/import-screen";
 import { GuideScreen } from "@/screens/guide-screen";
-import { RuleScreen } from "@/screens/rule-screen";
 import { RulesScreen } from "@/screens/rules-screen";
 import { SettingsScreen } from "@/screens/settings-screen";
 
 function Screen({ path }: { path: string }) {
+  // An open rule shows beside the list, so the list stays as it was.
   const rule = path.match(/^\/rules\/(\d+)$/);
-  if (rule) return <RuleScreen key={rule[1]} id={Number(rule[1])} />;
+  if (rule) return <RulesScreen openId={Number(rule[1])} />;
   const importPassage = path.match(/^\/imports\/(\d+)(?:\/passages\/(\d+))?$/);
   if (importPassage) {
     const position = importPassage[2] === undefined ? undefined : Number(importPassage[2]);

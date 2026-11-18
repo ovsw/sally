@@ -41,7 +41,7 @@ export function NewRuleDialog<T = RuleDetail>({
   trigger,
   create = createRule as unknown as (rule: NewRule) => Promise<T>,
   title = "New rule",
-  description = "The rule starts as a draft. It is not live until you publish it.",
+  description = "The rule starts as a draft. Checks do not use it until you publish it.",
 }: NewRuleDialogProps<T>) {
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
@@ -129,7 +129,7 @@ export function NewRuleDialog<T = RuleDetail>({
                 />
               </div>
               <div className="space-y-2">
-                <LabelWithHelp htmlFor="new-rule-check" label="Check">
+                <LabelWithHelp htmlFor="new-rule-check" label="Type">
                   {ruleHelp.check}
                 </LabelWithHelp>
                 <Select
@@ -140,8 +140,8 @@ export function NewRuleDialog<T = RuleDetail>({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="message">Message check</SelectItem>
-                    <SelectItem value="reply">Reply check</SelectItem>
+                    <SelectItem value="message">User message</SelectItem>
+                    <SelectItem value="reply">Agent reply</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

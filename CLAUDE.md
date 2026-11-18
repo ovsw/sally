@@ -3,7 +3,7 @@
 A salience engine for Claude Code. The spec is issue #1 in `ovsw/sally`; its
 sub-issues are the tickets. Read the spec's Vocabulary and Implementation
 Decisions before writing code, and use its words (rule, condition,
-instruction, check, match, cutoff, draft, live version).
+instruction, check, match, cutoff, draft, published version).
 
 - This repository is public. Never commit secrets, API keys, the database,
   real user messages, client names, or personal contact details. Evaluation

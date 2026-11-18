@@ -108,7 +108,7 @@ export interface ImportDetail extends ImportSummary {
  *   given a written rule can be marked as staying again.
  */
 export interface ImportDecisions {
-  /** Publishes the proposed rule's draft. A rule already live with no draft is left as it is. Refuses a skipped rule. */
+  /** Publishes the proposed rule's draft. A rule already published with no draft is left as it is. Refuses a skipped rule. */
   publishProposedRule(proposalId: number): ImportDetail;
   /** Leaves the proposed rule as a draft and settles it for the import. Refuses a skipped or live rule. */
   keepProposedRule(proposalId: number): ImportDetail;
@@ -510,7 +510,7 @@ function decisions(
         const proposal = findProposal(proposalId);
         if (proposal.rule_id === null) throw new RuleError(SKIPPED);
         if (isLive(proposal.rule_id)) {
-          throw new RuleError("This rule is live already. Change it, switch it off or delete it on its rule screen.");
+          throw new RuleError("This rule is published already. Change it, switch it off or delete it in Rules.");
         }
         settle(proposal.id, "kept");
         return answer(proposal.import_id);
@@ -522,7 +522,7 @@ function decisions(
         const proposal = findProposal(proposalId);
         if (proposal.rule_id !== null) {
           if (isLive(proposal.rule_id)) {
-            throw new RuleError("This rule is live, so skipping cannot remove it. Delete it on its rule screen instead.");
+            throw new RuleError("This rule is published, so skipping cannot remove it. Delete it in Rules instead.");
           }
           skip(proposal);
         }
@@ -563,7 +563,7 @@ function decisions(
           .all(passageId) as unknown as { id: number; rule_id: number | null }[];
         if (proposals.some((proposal) => proposal.rule_id !== null && isLive(proposal.rule_id))) {
           throw new RuleError(
-            "A rule from this passage is live, so the passage cannot also stay in the rules file. Delete that rule on its rule screen first.",
+            "A rule from this passage is published, so the passage cannot also stay in the rules file. Delete that rule in Rules first.",
           );
         }
         for (const proposal of proposals) if (proposal.rule_id !== null) skip(proposal);

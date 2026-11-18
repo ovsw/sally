@@ -2,7 +2,7 @@ import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
 import { type AttentionEntry, type AttentionKind, attentionList, CLEARABLE_KINDS } from "./attention.ts";
 import { RuleError, RuleNotFoundError } from "./errors.ts";
 import { createFlags, type Flags } from "./flags.ts";
-import { conditionFits, REQUEST_TOKEN_LIMIT, REQUEST_WARNING_SHARE } from "./limits.ts";
+import { conditionFits, estimateTokens, REQUEST_TOKEN_LIMIT, REQUEST_WARNING_SHARE } from "./limits.ts";
 import type { Matcher } from "./matcher.ts";
 import { rescoreCases, type RescoreResult } from "./rescore.ts";
 import { type Store, transaction } from "./store.ts";
@@ -61,19 +61,19 @@ export interface LiveRule {
 }
 
 /**
- * A rule is live once published; until then it has only its draft. A
- * published rule that is switched off is "off": it keeps its history, and the
- * engine skips it.
+ * One row of the rules list. `name` is the name in force (the published one, if any).
+ * Published, on and has-draft are separate facts: a published rule can be
+ * switched off and can have a draft too.
  */
-export type RuleState = "live" | "draft" | "off";
-
-/** One row of the rules list. `name` is the name in force (the live one, if any). */
 export interface RuleSummary {
   id: number;
   name: string;
   checkType: CheckType;
-  state: RuleState;
-  /** False once switched off. A rule switched off before its first publish stays off when published. */
+  /** True once the rule has a published version. */
+  published: boolean;
+  /** The scope in force: the published version's, or the draft's before the first publish. */
+  scope: Scope;
+  /** False once switched off: the engine skips it. A rule switched off before its first publish stays off when published. */
   on: boolean;
   hasDraft: boolean;
 }
@@ -107,9 +107,11 @@ export interface RuleFilter {
   /** Matches the name, instruction or conditions of the live version or the draft, ignoring case. */
   search?: string;
   checkType?: CheckType;
-  /** One state, or any of several. */
-  state?: RuleState | RuleState[];
+  published?: boolean;
+  on?: boolean;
   hasDraft?: boolean;
+  /** True for rules for all projects, false for rules for named projects only. */
+  allProjects?: boolean;
 }
 
 export { RuleError, RuleNotFoundError };
@@ -195,7 +197,26 @@ export interface LimitUse {
   share: number | null;
   /** True from the warning share up. */
   warning: boolean;
+  /** The check that sent the largest request, so it can be found; null with no such checks. */
+  largestCheck: LargestCheck | null;
 }
+
+/** The check behind the largest recent request, and what took up its room. */
+export interface LargestCheck {
+  checkId: number;
+  createdAt: string;
+  checkType: CheckType;
+  project: string | null;
+  /** The start of the text checked, as sent (it may have been cut to fit). */
+  excerpt: string;
+  /** How many conditions the text was checked against. */
+  conditions: number;
+  /** About how much of the request the text took, from 0 to 1; the conditions took the rest. */
+  textShare: number;
+}
+
+/** How much of the text checked the largest check shows. */
+const EXCERPT_LENGTH = 280;
 
 /** The rules service also answers the analytics queries (see analytics.ts) and keeps flags and saved cases (see flags.ts). */
 export interface RulesService extends AnalyticsQueries, Flags {
@@ -339,6 +360,66 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     cleanConditions(content.conditions).forEach((text, position) => addCondition.run(lastInsertRowid, position, text));
     const addProject = db.prepare("INSERT INTO version_projects (version_id, project_id) VALUES (?, ?)");
     for (const id of ids) addProject.run(lastInsertRowid, id);
+  }
+
+  /** The latest of the recent checks with the largest request, with what its text and conditions took. */
+  function largestCheck(recentChecks: number): LargestCheck | null {
+    const check = db
+      .prepare(
+        `SELECT c.id, c.created_at, c.check_type, c.text, p.name AS project FROM (
+           SELECT id, created_at, check_type, text, project_id, COALESCE(request_tokens, input_tokens) AS tokens
+             FROM checks WHERE input_tokens IS NOT NULL ORDER BY id DESC LIMIT ?
+         ) c LEFT JOIN projects p ON p.id = c.project_id
+         ORDER BY c.tokens DESC, c.id DESC LIMIT 1`,
+      )
+      .get(recentChecks) as
+      | { id: number; created_at: string; check_type: CheckType; text: string; project: string | null }
+      | undefined;
+    if (!check) return null;
+    const conditions = db
+      .prepare("SELECT text FROM conditions WHERE id IN (SELECT condition_id FROM scores WHERE check_id = ?)")
+      .all(check.id) as { text: string }[];
+    // Jev reports only the total, so the split is estimated from the lengths.
+    const textTokens = estimateTokens(check.text);
+    const conditionTokens = conditions.reduce((sum, c) => sum + estimateTokens(c.text), 0);
+    return {
+      checkId: check.id,
+      createdAt: check.created_at,
+      checkType: check.check_type,
+      project: check.project,
+      excerpt: check.text.length > EXCERPT_LENGTH ? `${check.text.slice(0, EXCERPT_LENGTH)}…` : check.text,
+      conditions: conditions.length,
+      textShare: textTokens + conditionTokens === 0 ? 0 : textTokens / (textTokens + conditionTokens),
+    };
+  }
+
+  function ruleDetail(ruleId: number): RuleDetail {
+    const rule = requireRule(ruleId);
+    const versions = published(ruleId).map(publishedView);
+    const draftRow = draft(ruleId);
+    const on = rule.switched_off === 0;
+    return {
+      id: ruleId,
+      name: rule.name,
+      checkType: rule.check_type,
+      published: versions.length > 0,
+      // A rule always has a published version or a draft.
+      scope: versions[0]?.scope ?? scopeOf(draftRow!.id),
+      on,
+      hasDraft: draftRow !== undefined,
+      live: versions[0] ?? null,
+      versions,
+      draft: draftRow
+        ? {
+            savedAt: draftRow.created_at,
+            name: draftRow.name,
+            checkType: draftRow.check_type,
+            instruction: draftRow.instruction,
+            conditions: conditionsOf(draftRow.id),
+            scope: scopeOf(draftRow.id),
+          }
+        : null,
+    };
   }
 
   function scopeOf(versionId: number): Scope {
@@ -632,14 +713,21 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         where.push("check_type = ?");
         params.push(filter.checkType);
       }
-      const states = filter.state === undefined ? [] : [filter.state].flat();
-      if (states.length) {
-        where.push(`state IN (${states.map(() => "?").join(", ")})`);
-        params.push(...states);
+      if (filter.published !== undefined) {
+        where.push("published = ?");
+        params.push(filter.published ? 1 : 0);
+      }
+      if (filter.on !== undefined) {
+        where.push("switched_off = ?");
+        params.push(filter.on ? 0 : 1);
       }
       if (filter.hasDraft !== undefined) {
         where.push("has_draft = ?");
         params.push(filter.hasDraft ? 1 : 0);
+      }
+      if (filter.allProjects !== undefined) {
+        where.push("all_projects = ?");
+        params.push(filter.allProjects ? 1 : 0);
       }
       const search = filter.search?.trim();
       if (search) {
@@ -657,10 +745,13 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         .prepare(
           `SELECT * FROM (
              SELECT r.id, r.name, r.check_type, r.switched_off,
-                    CASE WHEN NOT EXISTS (SELECT 1 FROM versions WHERE rule_id = r.id AND number IS NOT NULL)
-                         THEN 'draft' WHEN r.switched_off THEN 'off' ELSE 'live' END AS state,
-                    EXISTS (SELECT 1 FROM versions WHERE rule_id = r.id AND number IS NULL) AS has_draft
-               FROM rules r) r
+                    EXISTS (SELECT 1 FROM versions WHERE rule_id = r.id AND number IS NOT NULL) AS published,
+                    EXISTS (SELECT 1 FROM versions WHERE rule_id = r.id AND number IS NULL) AS has_draft,
+                    v.id AS scope_version, v.all_projects
+               FROM rules r
+               -- The version whose scope is in force: the latest published, else the draft.
+               JOIN versions v ON v.id = (SELECT id FROM versions WHERE rule_id = r.id
+                                           ORDER BY number IS NULL, number DESC LIMIT 1)) r
            ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
            ORDER BY lower(name), id`,
         )
@@ -669,44 +760,25 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         name: string;
         check_type: CheckType;
         switched_off: number;
-        state: RuleState;
+        published: number;
         has_draft: number;
+        scope_version: number;
       }[];
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
         checkType: row.check_type,
-        state: row.state,
+        published: row.published === 1,
+        scope: scopeOf(row.scope_version),
         on: row.switched_off === 0,
         hasDraft: row.has_draft === 1,
       }));
     },
 
     getRule(ruleId) {
-      const rule = requireRule(ruleId);
-      const versions = published(ruleId).map(publishedView);
-      const draftRow = draft(ruleId);
-      const on = rule.switched_off === 0;
-      return {
-        id: ruleId,
-        name: rule.name,
-        checkType: rule.check_type,
-        state: versions.length === 0 ? "draft" : on ? "live" : "off",
-        on,
-        hasDraft: draftRow !== undefined,
-        live: versions[0] ?? null,
-        versions,
-        draft: draftRow
-          ? {
-              savedAt: draftRow.created_at,
-              name: draftRow.name,
-              checkType: draftRow.check_type,
-              instruction: draftRow.instruction,
-              conditions: conditionsOf(draftRow.id),
-              scope: scopeOf(draftRow.id),
-            }
-          : null,
-      };
+      // In one transaction, so a publish in between cannot leave it with neither
+      // a published version nor a draft.
+      return transaction(db, () => ruleDetail(ruleId));
     },
 
     projects() {
@@ -737,6 +809,7 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         largestRequest: row.largest,
         share,
         warning: share !== null && share >= REQUEST_WARNING_SHARE,
+        largestCheck: largestCheck(recentChecks),
       };
     },
 

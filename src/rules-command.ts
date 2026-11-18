@@ -11,7 +11,6 @@ import {
   RuleError,
   type RuleFilter,
   type RulesService,
-  type RuleState,
 } from "./rules.ts";
 import { openStore } from "./store.ts";
 
@@ -22,7 +21,8 @@ export interface CommandIo {
 }
 
 export const RULES_USAGE = `Usage:
-  node src/cli.ts rules list [--search TEXT] [--check-type message|reply] [--state live|draft]
+  node src/cli.ts rules list [--search TEXT] [--check-type message|reply]
+                             [--published | --unpublished] [--on | --off]
                              [--with-draft | --without-draft]
   node src/cli.ts rules show RULE
   node src/cli.ts rules create --name NAME --check-type message|reply --instruction TEXT
@@ -32,7 +32,7 @@ export const RULES_USAGE = `Usage:
 
 RULE is a rule's id or its exact name. Output is JSON.
 create makes a draft; edit changes the rule's draft, starting one from the
-live version if there is none. --condition replaces all of the draft's
+published version if there is none. --condition replaces all of the draft's
 conditions. Publishing, switching off and deleting a rule are done by the user
 in Sally's web app, not by these commands.
 `;
@@ -51,7 +51,6 @@ export const RESERVED: Record<string, string> = {
 export class UsageError extends Error {}
 
 const CHECK_TYPES: readonly CheckType[] = ["message", "reply"];
-const STATES: readonly RuleState[] = ["live", "draft"];
 
 function oneOf<T extends string>(value: string | undefined, allowed: readonly T[], flag: string): T | undefined {
   if (value === undefined) return undefined;
@@ -59,6 +58,12 @@ function oneOf<T extends string>(value: string | undefined, allowed: readonly T[
     throw new UsageError(`${flag} is one of: ${allowed.join(", ")}.`);
   }
   return value as T;
+}
+
+/** A pair of opposite flags: true, false, or undefined when neither is given. */
+function either(yes: boolean | undefined, no: boolean | undefined, yesFlag: string, noFlag: string): boolean | undefined {
+  if (yes && no) throw new UsageError(`Use ${yesFlag} or ${noFlag}, not both.`);
+  return yes ? true : no ? false : undefined;
 }
 
 export function parse<T extends ParseArgsOptionsConfig>(args: string[], options: T) {
@@ -99,19 +104,20 @@ function list(rules: RulesService, args: string[]): unknown {
   const { values, positionals } = parse(args, {
     search: { type: "string" },
     "check-type": { type: "string" },
-    state: { type: "string" },
+    published: { type: "boolean" },
+    unpublished: { type: "boolean" },
+    on: { type: "boolean" },
+    off: { type: "boolean" },
     "with-draft": { type: "boolean" },
     "without-draft": { type: "boolean" },
   });
   noPositionals(positionals, "list");
-  if (values["with-draft"] && values["without-draft"]) {
-    throw new UsageError("Use --with-draft or --without-draft, not both.");
-  }
   const filter: RuleFilter = {
     search: values.search,
     checkType: oneOf(values["check-type"], CHECK_TYPES, "--check-type"),
-    state: oneOf(values.state, STATES, "--state"),
-    hasDraft: values["with-draft"] ? true : values["without-draft"] ? false : undefined,
+    published: either(values.published, values.unpublished, "--published", "--unpublished"),
+    on: either(values.on, values.off, "--on", "--off"),
+    hasDraft: either(values["with-draft"], values["without-draft"], "--with-draft", "--without-draft"),
   };
   return rules.listRules(filter);
 }
