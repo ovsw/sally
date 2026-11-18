@@ -131,7 +131,7 @@ function OpenRuleLink({ ruleId, save }: { ruleId: number; save?: () => Promise<b
 function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule: RuleDetail; decide: Decide }) {
   const [content, setContent] = React.useState(() => contentOf(rule));
   const [hasDraft, setHasDraft] = React.useState(rule.hasDraft);
-  const [busy, setBusy] = React.useState<"publish" | "keep" | "skip" | null>(null);
+  const [busy, setBusy] = React.useState<"publish" | "keep" | "skip" | "open" | null>(null);
   const onSaved = React.useCallback((saved: RuleDetail) => setHasDraft(saved.hasDraft), []);
   const saver = useDraftSaver(rule.id, onSaved);
   const kept = proposed.decision === "kept";
@@ -156,6 +156,15 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
       await decide(() => run(proposed.id));
     }
     setBusy(null);
+  }
+
+  // The fields are closed while the save runs, so no edit can be typed after
+  // it and left behind; a failed save opens them again.
+  async function saveBeforeLeaving() {
+    setBusy("open");
+    const saved = await saver.flush();
+    if (!saved) setBusy(null);
+    return saved;
   }
 
   return (
@@ -195,7 +204,7 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
       <CardFooter className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-4">
           <SaveStatus state={saver.state} hasDraft={hasDraft} />
-          <OpenRuleLink ruleId={rule.id} save={saver.flush} />
+          <OpenRuleLink ruleId={rule.id} save={saveBeforeLeaving} />
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
           <Button variant="ghost" onClick={() => void act("skip")} disabled={busy !== null}>
