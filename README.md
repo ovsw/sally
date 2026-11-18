@@ -216,27 +216,84 @@ with.
 
 ## Install
 
+Sally runs on Linux, macOS and Windows.
+
+### What you need
+
+- **Node 24 or newer.** The database is SQLite, which ships with Node, so
+  there is nothing else to set up.
+- **git**, to get Sally and because a project is a git repository.
+- **Claude Code 2.1.139 or newer.** Install warns you when yours is older.
+- **A Jev API key from TypeSafe.** Jev is in early access.
+
+### Steps
+
+The same commands work in a terminal on Linux and macOS and in PowerShell on
+Windows.
+
 ```sh
-node src/cli.ts install     # from this checkout
-node src/cli.ts uninstall   # backs it out
+git clone https://github.com/ovsw/sally.git
+cd sally
+npx pnpm@11 install        # or `pnpm install`, if you have pnpm
+node src/cli.ts install
 ```
 
-Install registers the message hook (`UserPromptSubmit`) and the reply hook
-(`Stop`) in `~/.claude/settings.json`, pointing at this checkout, and adds one
-line to `~/.claude/CLAUDE.md` saying that the rules Sally attaches are yours and
-carry the same authority as that file. Running it again changes nothing.
-Uninstall removes exactly those entries. Both leave everything else in the two
-files as it was, and both follow `CLAUDE_CONFIG_DIR` when it is set.
+`npx pnpm@11 install` uses npm to fetch pnpm for that one command, so you get
+the tested versions of the dependencies without installing pnpm.
+
+Install then walks you through the rest:
+
+1. It checks your Node version.
+2. It asks you to paste your API key. What you type is not shown. A key
+   already in `TYPESAFE_API_KEY` or in the key file is used instead.
+3. It tests the key with one call to Jev. If the test fails it says why, and
+   you can paste again or save the key anyway.
+4. It saves the key and creates the database.
+5. It registers the message hook (`UserPromptSubmit`) and the reply hook
+   (`Stop`) in `~/.claude/settings.json`, pointing at this checkout, and adds
+   one line to `~/.claude/CLAUDE.md` saying that the rules Sally attaches are
+   yours and carry the same authority as that file.
+6. It adds the `sally-import` skill to Claude Code.
+
+Sally has no rules yet, so it does nothing until you give it some. In Claude
+Code, type `/sally-import` to bring in the rules you already keep in your
+rules files; the Guide in the web app (`node src/cli.ts app`) explains the
+import and how to write a rule that matches well.
+
+Keep the checkout where it is: the hooks and the skill point at it. If you
+move it, run install again from the new place.
+
+`node src/cli.ts install --yes` asks nothing: it registers the hooks, the
+authority line and the skill, and leaves the key to you. Install does the same
+when it is not run in a terminal. Running install again changes nothing.
+
+### Uninstall
+
+```sh
+node src/cli.ts uninstall
+```
+
+Uninstall removes the hooks, the authority line and the skill, and leaves
+everything else in those files as it was. It keeps your key and your database
+and tells you where they are. Both commands follow `CLAUDE_CONFIG_DIR` when it
+is set.
 
 ### Where things live
 
 - **API key**: the `TYPESAFE_API_KEY` environment variable, or the file
-  `~/.config/sally/api_key` (readable only by you: `chmod 600`). Without a key
+  `~/.config/sally/api_key`, which install writes readable only by you.
+  Without a key
   every check fails as soon as you have a live rule: see
   [When a check fails](#when-a-check-fails).
 - **Database**: `~/.local/share/sally/sally.db` (SQLite). It holds your rules
   and every check, including the full text of your messages, so it never
   belongs in a repository.
+
+- **Backups of rules files**: `~/.local/share/sally/backups/`, made before an
+  import removes anything from a rules file.
+
+On Windows `~` is your user folder (`%USERPROFILE%`), and the key file takes
+its access from that folder.
 
 `XDG_CONFIG_HOME` and `XDG_DATA_HOME` move these folders as usual;
 `SALLY_CONFIG_DIR` and `SALLY_DATA_DIR` override them outright.
@@ -249,6 +306,8 @@ files as it was, and both follow `CLAUDE_CONFIG_DIR` when it is set.
   [When a check fails](#when-a-check-fails).
 - **`sally wrong-match "<rule name>"`:** see [Wrong matches](#wrong-matches).
 - **`sally rules ...`:** lets an agent read your rules and prepare drafts.
+- **`sally import ...`:** what the `sally-import` skill runs to record an
+  import, back up a rules file and note that it was cleaned up.
 - **`sally evaluate`:** measures matching against the real Jev.
 
 ### Commands for agents
