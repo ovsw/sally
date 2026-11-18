@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -29,7 +29,9 @@ export interface Sandbox {
 }
 
 export function createSandbox(): Sandbox {
-  const root = mkdtempSync(join(tmpdir(), "sally-test-"));
+  // The native real path: on Windows the temporary folder can come back in its
+  // short 8.3 form, which git and Node then report differently.
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "sally-test-")));
   const env: Env = {
     HOME: root,
     SALLY_DATA_DIR: join(root, "data"),
@@ -72,7 +74,8 @@ export function createSandbox(): Sandbox {
       }
     },
     cleanup() {
-      rmSync(root, { recursive: true, force: true });
+      // Retries: Windows refuses to delete a file for a moment after it is closed.
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     },
   };
 }
