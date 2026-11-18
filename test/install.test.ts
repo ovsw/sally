@@ -347,6 +347,25 @@ it("uninstall removes Sally's hooks in either form and nothing else", () => {
   expect(settings()).toEqual({ hooks: userHooks });
 });
 
+it("leaves alone a user's own hook that only looks like Sally's", () => {
+  // Another tool's command line, called the same way, in both forms.
+  const lookalikes = {
+    UserPromptSubmit: [
+      { hooks: [{ type: "command", command: "node", args: ["/tools/src/cli.ts", "hook", "message"] }] },
+      { hooks: [{ type: "command", command: "node /tools/cli.ts hook message" }] },
+    ],
+  };
+  writeFile(settingsPath, JSON.stringify({ hooks: lookalikes }));
+
+  expect(sally("install").status).toBe(0);
+  expect(settings()).toEqual({
+    hooks: { UserPromptSubmit: [...lookalikes.UserPromptSubmit, ...sallyHooks.UserPromptSubmit], Stop: sallyHooks.Stop },
+  });
+
+  expect(sally("uninstall").status).toBe(0);
+  expect(settings()).toEqual({ hooks: lookalikes });
+});
+
 it("says so when Claude Code is older than the first version that runs these hooks", () => {
   fakeClaude("2.1.100");
 

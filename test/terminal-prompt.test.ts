@@ -52,6 +52,23 @@ it("does not bring a hidden answer back with the Up key at the next question", a
   expect(terminal.shown()).not.toContain("secret");
 });
 
+it("does not bring back erased hidden input with Ctrl-Y at the next question", async () => {
+  const terminal = fakeTerminal();
+  const prompt = terminalPrompt(terminal.input, terminal.output);
+
+  const hidden = prompt.askHidden("Paste your key: ");
+  // Type a key, erase the line with Ctrl-U, then type another.
+  terminal.input.write("sk-secret-123\x15sk-other-456\n");
+  expect(await hidden).toBe("sk-other-456");
+
+  const next = prompt.ask("Paste again or save? ");
+  terminal.input.write("\x19\n");
+
+  expect(await next).toBe("");
+  prompt.close();
+  expect(terminal.shown()).not.toContain("secret");
+});
+
 it("fails a question when the input ends before an answer", async () => {
   const terminal = fakeTerminal();
   const prompt = terminalPrompt(terminal.input, terminal.output);

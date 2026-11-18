@@ -26,19 +26,24 @@ export function terminalPrompt(
       done();
     },
   });
-  // No history: a hidden answer must not come back with the Up key at a later question.
-  const rl = createInterface({ input, output: gate, terminal: true, historySize: 0 });
-  rl.on("SIGINT", () => {
-    output.write("\n");
-    process.exit(130);
-  });
+  // One readline per question, with no history: what was typed at a hidden
+  // question must not come back at a later one, neither with the Up key nor
+  // from readline's kill ring (Ctrl-U then Ctrl-Y).
+  let current: ReturnType<typeof createInterface> | undefined;
   // Input that ends before an answer (Ctrl-D, a closed pipe) fails the question instead of hanging.
   const question = (text: string) =>
     new Promise<string>((resolve, reject) => {
+      const rl = createInterface({ input, output: gate, terminal: true, historySize: 0 });
+      current = rl;
+      rl.on("SIGINT", () => {
+        output.write("\n");
+        process.exit(130);
+      });
       const closed = () => reject(new Error("Input ended before the question was answered."));
       rl.once("close", closed);
       rl.question(text, (answer) => {
         rl.off("close", closed);
+        rl.close();
         resolve(answer);
       });
     });
@@ -54,6 +59,6 @@ export function terminalPrompt(
         output.write("\n");
       }
     },
-    close: () => rl.close(),
+    close: () => current?.close(),
   };
 }

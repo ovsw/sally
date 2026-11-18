@@ -144,7 +144,8 @@ async function guidedInstall(options: InstallCommandOptions, prompt: Prompt): Pr
   }
   if (typed) {
     saveKey(env, key);
-    say(`Saved the key to ${keyPath}, readable only by you.`);
+    // On Windows nothing is changed: the file takes its access from its folder.
+    say(isWindows ? `Saved the key to ${keyPath}.` : `Saved the key to ${keyPath}, readable only by you.`);
     if (found?.source === "env") {
       say("TYPESAFE_API_KEY is set and is used before the key file; change or unset it to use the saved key.");
     }

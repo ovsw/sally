@@ -93,15 +93,42 @@ function readSettings(path: string): SettingsFile {
   return { path, settings, indent };
 }
 
-const CLI_FILE = /[\\/]cli\.ts$/;
+const CLI_FILE = /[\\/]src[\\/]cli\.ts$/;
+const IN_SALLY_FOLDER = /[\\/]sally[\\/]src[\\/]cli\.ts$/;
+
+/**
+ * Whether `path` is the command line of a Sally checkout, so that a hook
+ * running it is Sally's and not a user's own hook that happens to look alike.
+ * It is when it is the checkout being installed, when the checkout's package
+ * is named sally, or when the checkout is gone and its folder was called sally
+ * (a moved or deleted checkout, whose hook would only fail).
+ */
+function isSallyCli(path: string, cliPath: string): boolean {
+  if (path === cliPath) return true;
+  if (!CLI_FILE.test(path)) return false;
+  if (!existsSync(path)) return IN_SALLY_FOLDER.test(path);
+  try {
+    const manifest: unknown = JSON.parse(readFileSync(join(dirname(dirname(path)), "package.json"), "utf8"));
+    return isObject(manifest) && manifest.name === "sally";
+  } catch {
+    return false;
+  }
+}
+
+/** Undoes the POSIX quoting earlier installs put around the path. */
+function unquote(value: string): string {
+  if (!value.startsWith("'") || !value.endsWith("'")) return value;
+  return value.slice(1, -1).replaceAll(`'\\''`, "'");
+}
 
 /**
  * Whether a hook entry is one of Sally's for `hook`, in either form: the
  * program plus arguments install writes now, or the single shell command
  * line earlier installs wrote (`node <quoted path to cli.ts> hook message`).
- * The path may be any checkout's, so a moved checkout leaves no stale entry.
+ * The path may be another Sally checkout's, so a moved checkout leaves no
+ * stale entry.
  */
-function isSallyHook(entry: unknown, hook: "message" | "reply"): boolean {
+function isSallyHook(entry: unknown, hook: "message" | "reply", cliPath: string): boolean {
   if (!isObject(entry) || typeof entry.command !== "string") return false;
   if (Array.isArray(entry.args)) {
     const [path, group, name, ...rest] = entry.args as unknown[];
@@ -109,14 +136,14 @@ function isSallyHook(entry: unknown, hook: "message" | "reply"): boolean {
       entry.command === "node" &&
       rest.length === 0 &&
       typeof path === "string" &&
-      CLI_FILE.test(path) &&
       group === "hook" &&
-      name === hook
+      name === hook &&
+      isSallyCli(path, cliPath)
     );
   }
   if (entry.args !== undefined) return false;
   const match = /^node (.+) hook (message|reply)$/.exec(entry.command);
-  return match !== null && match[2] === hook && CLI_FILE.test(match[1]!.replace(/'$/, ""));
+  return match !== null && match[2] === hook && isSallyCli(unquote(match[1]!), cliPath);
 }
 
 function isCurrent(entry: unknown, wanted: HookEntry): boolean {
@@ -129,18 +156,18 @@ function isCurrent(entry: unknown, wanted: HookEntry): boolean {
 }
 
 /** Takes every Sally entry for `hook` out of the groups, dropping groups left empty. */
-function withoutSallyHooks(groups: unknown[], hook: "message" | "reply"): unknown[] {
+function withoutSallyHooks(groups: unknown[], hook: "message" | "reply", cliPath: string): unknown[] {
   return groups.flatMap((group: unknown) => {
     if (!isObject(group) || !Array.isArray(group.hooks)) return [group];
-    const remaining = group.hooks.filter((entry: unknown) => !isSallyHook(entry, hook));
+    const remaining = group.hooks.filter((entry: unknown) => !isSallyHook(entry, hook, cliPath));
     if (remaining.length === group.hooks.length) return [group];
     return remaining.length === 0 ? [] : [{ ...(group as HookGroup), hooks: remaining }];
   });
 }
 
-function sallyHooks(groups: unknown[], hook: "message" | "reply"): unknown[] {
+function sallyHooks(groups: unknown[], hook: "message" | "reply", cliPath: string): unknown[] {
   return groups.flatMap((group) =>
-    isObject(group) && Array.isArray(group.hooks) ? group.hooks.filter((entry) => isSallyHook(entry, hook)) : [],
+    isObject(group) && Array.isArray(group.hooks) ? group.hooks.filter((entry) => isSallyHook(entry, hook, cliPath)) : [],
   );
 }
 
@@ -150,12 +177,13 @@ function sallyHooks(groups: unknown[], hook: "message" | "reply"): unknown[] {
  * Groups left empty are dropped.
  */
 function replaceSallyHooks(groups: unknown[], hook: "message" | "reply", wanted: HookEntry): unknown[] {
+  const cliPath = wanted.args[0]!;
   let placed = false;
   return groups.flatMap((group: unknown) => {
     if (!isObject(group) || !Array.isArray(group.hooks)) return [group];
     let changed = false;
     const entries = group.hooks.flatMap((entry: unknown) => {
-      if (!isSallyHook(entry, hook)) return [entry];
+      if (!isSallyHook(entry, hook, cliPath)) return [entry];
       changed = true;
       if (placed) return [];
       placed = true;
@@ -253,7 +281,7 @@ export function install({ env, cliPath, claudeVersion = readClaudeVersion }: Set
     const wanted = hookEntry(hook, cliPath);
     const hooks = (settings.hooks ?? {}) as Json;
     const groups = (hooks[event] ?? []) as unknown[];
-    const existing = sallyHooks(groups, hook);
+    const existing = sallyHooks(groups, hook, cliPath ?? CLI_PATH);
     if (existing.length === 1 && isCurrent(existing[0], wanted)) continue;
     if (existing.length === 0) {
       hooks[event] = [...groups, { hooks: [wanted] }];
@@ -281,7 +309,7 @@ export function install({ env, cliPath, claudeVersion = readClaudeVersion }: Set
  * Removes exactly what install added: Sally's two hooks, in either form, from
  * the settings and the authority line from the global rules file.
  */
-export function uninstall({ env }: SetupOptions): SetupResult {
+export function uninstall({ env, cliPath }: SetupOptions): SetupResult {
   const settingsFile = readSettings(claudeSettingsPath(env));
   const rulesPath = globalRulesPath(env);
   const rules = readRules(rulesPath);
@@ -293,8 +321,8 @@ export function uninstall({ env }: SetupOptions): SetupResult {
     for (const [event, hook] of Object.entries(HOOK_EVENTS) as [HookEvent, "message" | "reply"][]) {
       const groups = hooks[event];
       if (!Array.isArray(groups)) continue;
-      if (sallyHooks(groups, hook).length === 0) continue;
-      const kept = withoutSallyHooks(groups, hook);
+      if (sallyHooks(groups, hook, cliPath ?? CLI_PATH).length === 0) continue;
+      const kept = withoutSallyHooks(groups, hook, cliPath ?? CLI_PATH);
       if (kept.length === 0) delete hooks[event];
       else hooks[event] = kept;
       changes.push(`Removed the ${hook} hook (${event}) from ${settingsFile.path}`);
