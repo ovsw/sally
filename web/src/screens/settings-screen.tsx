@@ -20,10 +20,13 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import {
   getSettings,
+  type LargestCheck,
   type LimitUse,
   type Settings,
   updateSettings,
 } from "@/lib/api";
+import { formatTime } from "@/lib/format";
+import { checkTypes } from "@/screens/rules-screen";
 
 /** The settings that are numbers; stopOnFailure is the one switch. */
 type NumberKey = Exclude<keyof Settings, "stopOnFailure">;
@@ -145,8 +148,42 @@ function changesFrom(
 
 const formatTokens = (n: number) => n.toLocaleString("en-US");
 const formatShare = (share: number) => `${Math.round(share * 100)}%`;
+/** A rough share: never "0%" or "100%" for a part that is there but small. */
+const formatRoughShare = (share: number) => {
+  const percent = Math.round(share * 100);
+  if (percent === 0 && share > 0) return "under 1%";
+  if (percent === 100 && share < 1) return "over 99%";
+  return `${percent}%`;
+};
+
+/** The check behind the largest request: when, where, what, and what took its room. */
+function LargestCheckCard({ check }: { check: LargestCheck }) {
+  const type = checkTypes.find((t) => t.value === check.checkType)!;
+  const conditions = check.conditions === 1 ? "its 1 condition" : `its ${check.conditions} conditions`;
+  return (
+    <div className="space-y-2 rounded-md border p-3 text-sm">
+      <p className="flex flex-wrap gap-x-2 text-muted-foreground">
+        <span>{formatTime(check.createdAt)}</span>
+        <span aria-hidden>·</span>
+        <span>{type.label}</span>
+        {check.project && (
+          <>
+            <span aria-hidden>·</span>
+            <span className="truncate">{check.project}</span>
+          </>
+        )}
+      </p>
+      <p className="line-clamp-3 break-words whitespace-pre-wrap">{check.excerpt}</p>
+      <p className="text-muted-foreground">
+        About {formatRoughShare(check.textShare)} of the request was this text,
+        and {formatRoughShare(1 - check.textShare)} {conditions}.
+      </p>
+    </div>
+  );
+}
 
 function LimitUseSection({ use }: { use: LimitUse }) {
+  const mostlyText = (use.largestCheck?.textShare ?? 0) >= 0.5;
   const limit = formatTokens(use.requestLimit);
   return (
     <FieldSet>
@@ -178,8 +215,9 @@ function LimitUseSection({ use }: { use: LimitUse }) {
           <p className="text-sm text-muted-foreground">
             The largest request among the last{" "}
             {use.checks === 1 ? "check" : `${use.checks} checks`} that reported
-            a size.
+            a size. It came from this check:
           </p>
+          {use.largestCheck && <LargestCheckCard check={use.largestCheck} />}
           {use.warning && (
             <Alert variant="destructive">
               <TriangleAlert />
@@ -188,8 +226,9 @@ function LimitUseSection({ use }: { use: LimitUse }) {
                 limit
               </AlertTitle>
               <AlertDescription>
-                Checks will soon be split across more than one request each.
-                Fewer or shorter conditions keep them in one.
+                {mostlyText
+                  ? "Most of it was the text checked, such as a pasted log. Sally cuts a long text to fit, so nothing breaks, but a check with a long text is split across more requests sooner. Shorter conditions leave it more room."
+                  : "Most of it was the conditions. Checks will soon be split across more than one request each. Fewer or shorter conditions keep them in one."}
               </AlertDescription>
             </Alert>
           )}

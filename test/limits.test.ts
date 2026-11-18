@@ -245,6 +245,7 @@ describe("settings in the app", () => {
         largestRequest: null,
         share: null,
         warning: false,
+        largestCheck: null,
       });
     });
 
@@ -257,6 +258,32 @@ describe("settings in the app", () => {
 
       await checkWithTokens(51_200);
       expect(await limitUse()).toMatchObject({ checks: 3, largestRequest: 51_200, share: 0.8, warning: true });
+    });
+
+    it("points to the check behind the largest request, with about how much its text took", async () => {
+      sandbox.liveRule({ name: "Short", conditions: ["Condition A."] });
+      const check = (prompt: string, inputTokens: number) =>
+        runMessageHook(hookInput(prompt), { env: sandbox.env, matcher: standInMatcher({}, { inputTokens }) });
+      await check("hello there", 1_000);
+      await check("a pasted log line\n".repeat(500), 52_000);
+      await check("small again", 2_000);
+
+      const { largestCheck } = await limitUse();
+
+      expect(largestCheck).toMatchObject({ checkType: "message", conditions: 1 });
+      expect(sandbox.query(`SELECT input_tokens FROM checks WHERE id = ${largestCheck!.checkId}`)).toEqual([
+        { input_tokens: 52_000 },
+      ]);
+      // Only the start of a long text comes back.
+      expect(largestCheck!.excerpt).toMatch(/^a pasted log line\n/);
+      expect(largestCheck!.excerpt.length).toBeLessThan(300);
+      expect(largestCheck!.textShare).toBeGreaterThan(0.9);
+    });
+
+    it("says when the conditions took most of the largest request", async () => {
+      sandbox.liveRule({ name: "Long", conditions: ["The message is about a topic that takes many words to describe. ".repeat(40)] });
+      await runMessageHook(hookInput("hi"), { env: sandbox.env, matcher: standInMatcher({}, { inputTokens: 900 }) });
+      expect((await limitUse()).largestCheck!.textShare).toBeLessThan(0.1);
     });
 
     it("counts only the recent checks", async () => {

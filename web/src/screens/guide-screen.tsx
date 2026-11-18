@@ -61,7 +61,7 @@ function WhatSallyDoes() {
         </li>
       </ol>
       <p>
-        Only live versions count. A draft changes nothing until you publish it, and a
+        Only published versions count. A draft changes nothing until you publish it, and a
         rule switched off is left out. A rule scoped to named projects is checked only in
         those projects.
       </p>
@@ -98,7 +98,7 @@ function Importing() {
           <strong>The skill proposes.</strong> It splits the file into passages. For each
           passage it gives a verdict (becomes a rule, stays as an always-rule, or stays
           because it is too vague to match on), a short reason, and, where it fits, one or
-          more rules as drafts. Nothing is live yet.
+          more rules as drafts. Nothing is published yet.
         </li>
         <li>
           <strong>Review in Sally's Import screen.</strong> It shows one passage at a time:

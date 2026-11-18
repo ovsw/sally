@@ -1,9 +1,8 @@
-// The Rule screen: the live version beside the draft, then the version
+// The Rule panel, opened beside the rules list: the published version beside the draft, then the version
 // history. The draft form follows the shadcnblocks block form-layouts-1
 // (vertical field layout).
 import { LabelWithHelp, ruleHelp } from "@/components/field-help";
 import {
-  ArrowLeft,
   FilePen,
   Loader2,
   Trash2,
@@ -16,6 +15,7 @@ import * as React from "react";
 import { RescoreDialog } from "@/components/rescore-dialog";
 import { ConditionsField, InstructionField, SaveStatus } from "@/components/rule-fields";
 import { RuleAnalyticsPanel } from "@/components/rule-analytics";
+import { RuleStatus } from "@/components/rule-status";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -62,7 +62,8 @@ import {
   type VersionView,
 } from "@/lib/api";
 import { errorText, useDraftSaver } from "@/lib/draft-saver";
-import { followLink, navigate } from "@/lib/router";
+import { navigate } from "@/lib/router";
+import { announceRuleChange, useRuleChanges } from "@/lib/rule-events";
 
 /** Typing in one field with pauses shorter than this is undone in one step. */
 const UNDO_GROUP_MS = 1000;
@@ -78,14 +79,12 @@ interface UndoStep {
   liveNumber: number | null;
 }
 
-function LiveVersion({ rule }: { rule: RuleDetail }) {
+function PublishedVersion({ rule }: { rule: RuleDetail }) {
   const live = rule.live;
   return (
     <section className="rounded-md border">
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-        <h2 className="font-medium">
-          {rule.on ? "Live version" : "Live version (switched off)"}
-        </h2>
+        <h2 className="font-medium">Published version</h2>
         {live && <Badge variant="secondary">Version {live.number}</Badge>}
       </div>
       {live ? (
@@ -318,13 +317,13 @@ function VersionHistory({
           {rule.versions.map((version) => (
             <li
               key={version.number}
-              className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between"
+              className="flex flex-col gap-3 px-4 py-4 @xl:flex-row @xl:items-start @xl:justify-between"
             >
               <div className="min-w-0 space-y-2 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">Version {version.number}</span>
                   {version.number === rule.live?.number && (
-                    <Badge variant="secondary">{rule.on ? "Live" : "Latest"}</Badge>
+                    <Badge variant="secondary">Latest</Badge>
                   )}
                   <span className="text-xs text-muted-foreground">
                     Published {new Date(version.publishedAt).toLocaleString()}
@@ -386,7 +385,18 @@ export function RuleScreen({ id }: { id: number }) {
   const setRule = React.useCallback((next: RuleDetail) => {
     ruleRef.current = next;
     setRuleState(next);
+    announceRuleChange({ rule: next });
   }, []);
+  // Switched on or off from the list: only that changes here, so a draft
+  // being saved is not disturbed.
+  useRuleChanges((change) => {
+    const current = ruleRef.current;
+    if (!("rule" in change) || change.rule === current || change.rule.id !== id || !current) return;
+    if (change.rule.on === current.on) return;
+    const next = { ...current, on: change.rule.on };
+    ruleRef.current = next;
+    setRuleState(next);
+  });
   const saver = useDraftSaver(id, setRule);
   const { state: save, setState: setSave, flush, replacing: replacingDraft } = saver;
 
@@ -558,28 +568,43 @@ export function RuleScreen({ id }: { id: number }) {
     });
   };
 
-  const toggle = (on: boolean) =>
-    act("switch", async () => {
+  /** Shows a change to the rule here only, before the server has it. */
+  const showAhead = (next: RuleDetail) => {
+    ruleRef.current = next;
+    setRuleState(next);
+  };
+
+  // The switch moves at once and goes back only if the server refuses.
+  const toggle = async (on: boolean) => {
+    const was = ruleRef.current!.on;
+    showAhead({ ...ruleRef.current!, on });
+    setActionError(null);
+    try {
       // In line with the saves, so a save answered earlier cannot show the
       // rule's old on or off after this.
       setRule(await saver.inLine(() => switchRule(id, on)));
-    });
+    } catch (e) {
+      showAhead({ ...ruleRef.current!, on: was });
+      setActionError(errorText(e));
+    }
+  };
 
   const remove = () =>
     act("delete", async () => {
       await replacingDraft(async () => {
         await deleteRule(id);
       });
+      announceRuleChange({ deleted: id });
       navigate("/rules");
     });
 
   if (loadError) {
     return (
-      <div className="space-y-4">
-        <BackLink />
+      <div className="flex items-start justify-between gap-4">
         <p role="alert" className="text-sm text-destructive">
           {loadError}
         </p>
+        <CloseButton />
       </div>
     );
   }
@@ -595,71 +620,67 @@ export function RuleScreen({ id }: { id: number }) {
   const canDiscard = rule.live !== null && showingDraft && !acting;
 
   return (
-    <div className="w-full space-y-6">
-      <BackLink />
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-2">
-          <h1 className="text-2xl font-bold tracking-tight">{rule.name}</h1>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">
-              {rule.checkType === "message" ? "Message check" : "Reply check"}
-            </Badge>
-            {rule.state === "live" ? (
-              <Badge>Live</Badge>
-            ) : rule.state === "off" ? (
-              <Badge variant="secondary">Off</Badge>
-            ) : (
-              <Badge variant="outline">Draft only</Badge>
-            )}
+    <div className="@container w-full space-y-6">
+      <div className="flex items-start gap-2">
+        <div className="flex flex-1 flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 space-y-2">
+            <h1 className="text-2xl font-bold tracking-tight">{rule.name}</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">
+                {rule.checkType === "message" ? "User message" : "Agent reply"}
+              </Badge>
+              <RuleStatus published={rule.published} hasDraft={rule.hasDraft} />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <SaveStatus state={save} hasDraft={rule.hasDraft} />
+            <label className="flex items-center gap-2 text-sm">
+              <Switch
+                checked={rule.on}
+                disabled={acting}
+                onCheckedChange={(on) => void toggle(on)}
+                aria-label="Rule on"
+              />
+              {rule.on ? "On" : "Off"}
+            </label>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" disabled={acting}>
+                  <Trash2 />
+                  Delete
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete "{rule.name}"?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    The rule, all its versions and its draft are deleted for good.
+                    To pause it and keep its history, switch it off instead.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction variant="destructive" onClick={() => void remove()}>
+                    Delete rule
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <Button onClick={() => void doPublish()} disabled={!canPublish}>
+              {action === "publish" ? <Loader2 className="animate-spin" /> : <Upload />}
+              Publish
+            </Button>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-4">
-          <SaveStatus state={save} hasDraft={rule.hasDraft} />
-          <label className="flex items-center gap-2 text-sm">
-            <Switch
-              checked={rule.on}
-              disabled={acting}
-              onCheckedChange={(on) => void toggle(on)}
-              aria-label="Rule on"
-            />
-            {rule.on ? "On" : "Off"}
-          </label>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline" disabled={acting}>
-                <Trash2 />
-                Delete
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete "{rule.name}"?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  The rule, all its versions and its draft are deleted for good.
-                  To pause it and keep its history, switch it off instead.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction variant="destructive" onClick={() => void remove()}>
-                  Delete rule
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-          <Button onClick={() => void doPublish()} disabled={!canPublish}>
-            {action === "publish" ? <Loader2 className="animate-spin" /> : <Upload />}
-            Publish
-          </Button>
-        </div>
+        <CloseButton />
       </div>
       {actionError && (
         <p role="alert" className="text-sm text-destructive">
           {actionError}
         </p>
       )}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <LiveVersion rule={rule} />
+      <div className="grid grid-cols-1 gap-6 @4xl:grid-cols-2">
+        <PublishedVersion rule={rule} />
         <section className="rounded-md border">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
             <div className="flex items-center gap-2">
@@ -710,15 +731,11 @@ export function RuleScreen({ id }: { id: number }) {
   );
 }
 
-function BackLink() {
+/** Closes the panel, leaving the rules list. */
+function CloseButton() {
   return (
-    <a
-      href="/rules"
-      onClick={followLink}
-      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-    >
-      <ArrowLeft className="size-4" />
-      Rules
-    </a>
+    <Button variant="ghost" size="icon" aria-label="Close" onClick={() => navigate("/rules")}>
+      <X />
+    </Button>
   );
 }

@@ -46,9 +46,13 @@ _Avoid_: Repo, workspace, folder
 **Version**:
 One published, unchangeable state of a rule's instruction and conditions.
 
-**Live version**:
-The version of a rule that checks use.
-_Avoid_: Active version, current version, published rule
+**Published version**:
+A rule's latest published version: the one checks use while the rule is on. A rule can have a published version and a draft at the same time.
+_Avoid_: Live version, active version, current version
+
+**On / Off**:
+Whether checks use a rule at all, set by its switch. It is separate from publishing: a rule switched off keeps its published version and its draft.
+_Avoid_: Enabled, disabled, live
 
 **Draft**:
 The one unpublished working copy of a rule, which has no effect until published.

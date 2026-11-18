@@ -18,6 +18,7 @@ import {
   DataTableToolbar,
   useDataTable,
 } from "@/components/data-table";
+import { HeaderWithHelp } from "@/components/field-help";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,12 +37,35 @@ const outcomes: {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }[] = [
-  { value: "attached", label: "Attached", icon: CircleCheck },
-  { value: "sent_back", label: "Sent back", icon: CornerUpLeft },
-  { value: "nothing", label: "Nothing", icon: CircleDashed },
-  { value: "skipped", label: "Skipped", icon: Ban },
+  { value: "attached", label: "Added to message", icon: CircleCheck },
+  { value: "sent_back", label: "Sent back to Claude", icon: CornerUpLeft },
+  { value: "nothing", label: "No match", icon: CircleDashed },
+  { value: "skipped", label: "Not checked", icon: Ban },
   { value: "failed", label: "Failed", icon: CircleAlert },
 ];
+
+/** What each result means, shown on the Result column's information mark. */
+const resultHelp = (
+  <>
+    <p>
+      <strong>Added to message:</strong> rules matched your message, so their instructions went to Claude with it.
+    </p>
+    <p>
+      <strong>Sent back to Claude:</strong> rules matched Claude's final reply, so the reply went back to Claude
+      with their instructions.
+    </p>
+    <p>
+      <strong>No match:</strong> no rule matched; nothing was added.
+    </p>
+    <p>
+      <strong>Not checked:</strong> skipped, as for a bare slash command, or Claude's second try after a reply was
+      sent back.
+    </p>
+    <p>
+      <strong>Failed:</strong> the check could not finish; the reason shows below it.
+    </p>
+  </>
+);
 
 function OutcomeBadge({ outcome }: { outcome: Outcome }) {
   const meta = outcomes.find((o) => o.value === outcome);
@@ -110,7 +134,7 @@ const columns: ColumnDef<ActivityCheck>[] = [
   },
   {
     accessorKey: "checkType",
-    header: "Check",
+    header: "Type",
     cell: ({ row }) => {
       const meta = checkTypes.find((t) => t.value === row.original.checkType);
       const Icon = meta?.icon;
@@ -121,7 +145,7 @@ const columns: ColumnDef<ActivityCheck>[] = [
         </span>
       );
     },
-    meta: { label: "Check" },
+    meta: { label: "Type" },
   },
   {
     accessorKey: "text",
@@ -138,7 +162,7 @@ const columns: ColumnDef<ActivityCheck>[] = [
   },
   {
     accessorKey: "outcome",
-    header: "Outcome",
+    header: () => <HeaderWithHelp title="Result">{resultHelp}</HeaderWithHelp>,
     cell: ({ row }) => (
       <div className="space-y-1">
         <OutcomeBadge outcome={row.original.outcome} />
@@ -149,11 +173,19 @@ const columns: ColumnDef<ActivityCheck>[] = [
         )}
       </div>
     ),
-    meta: { label: "Outcome" },
+    meta: { label: "Result" },
   },
   {
     id: "attached",
-    header: "Attached",
+    header: () => (
+      <HeaderWithHelp title="Matched rules">
+        <p>The rules that matched this text, each with its score.</p>
+        <p>
+          A score from 0 to 1 is how likely the rule's condition holds for the text. A rule matches when a score
+          reaches the cutoff set in Settings.
+        </p>
+      </HeaderWithHelp>
+    ),
     cell: ({ row }) => {
       if (row.original.matches.length === 0) {
         return <span className="text-muted-foreground">None</span>;
@@ -166,7 +198,7 @@ const columns: ColumnDef<ActivityCheck>[] = [
         </div>
       );
     },
-    meta: { label: "Attached" },
+    meta: { label: "Matched rules" },
   },
 ];
 
@@ -209,19 +241,19 @@ export function ActivityScreen() {
       <div className="mb-4 text-left">
         <h1 className="text-2xl font-bold tracking-tight">Activity</h1>
         <p className="mt-2 text-muted-foreground">
-          The most recent checks, newest first: what was checked and what the
-          engine attached or sent back.
+          The most recent checks, newest first: the text checked, what
+          happened, and which rules matched.
         </p>
       </div>
       <DataTableToolbar table={table}>
         <DataTableFacetedFilter
           column={table.getColumn("outcome")}
-          title="Outcome"
+          title="Result"
           options={outcomes}
         />
         <DataTableFacetedFilter
           column={table.getColumn("checkType")}
-          title="Check"
+          title="Type"
           options={checkTypes}
         />
         <div className="ml-auto">

@@ -134,6 +134,8 @@ export function useDataTable<TData>(options: UseDataTableOptions<TData>) {
     getFacetedUniqueValues: getFacetedUniqueValues(),
     enableRowSelection,
     manualFiltering,
+    // "Reset" in the View menu goes back to these, not to every column shown.
+    initialState: { columnVisibility: initialVisibility },
   });
 
   return {
@@ -207,95 +209,107 @@ export const DataTablePagination = <TData,>({
   const startRow = currentPage * pageSize + 1;
   const endRow = Math.min((currentPage + 1) * pageSize, totalRows);
 
+  // Sizes up to the row count, plus the first that shows every row at once.
+  const fitsAll = pageSizeOptions.find((size) => size >= totalRows);
   const relevantPageSizes = pageSizeOptions.filter(
-    (size) => size <= totalRows || size === pageSize,
+    (size) => size < totalRows || size === fitsAll || size === pageSize,
   );
+  // Nothing to choose or to page through: those controls stay hidden.
+  const canResize = relevantPageSizes.length > 1;
+  const canPage = pageCount > 1;
 
   return (
-    <div className="flex flex-col gap-4 px-2 py-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex-1 text-center text-sm text-muted-foreground sm:text-left">
-        <span className="font-medium">
-          {totalRows === 0 ? (
-            "No results"
-          ) : (
-            <>
-              Showing {startRow} to {endRow} of {totalRows}{" "}
-              {totalRows === 1 ? "row" : "rows"}
-            </>
-          )}
-        </span>
-      </div>
-
-      <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-6 lg:gap-8">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-medium whitespace-nowrap">Rows per page</p>
-          <Select
-            value={`${pageSize}`}
-            onValueChange={(value) => {
-              table.setPageSize(Number(value));
-            }}
-            disabled={totalRows === 0}
-          >
-            <SelectTrigger className="h-8 w-[70px]">
-              <SelectValue placeholder={pageSize} />
-            </SelectTrigger>
-            <SelectContent side="top">
-              {relevantPageSizes.map((size) => (
-                <SelectItem key={size} value={`${size}`}>
-                  {size}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+    // Laid out by its own width, not the window's, so it also fits a pane beside a panel.
+    <div className="@container">
+      <div className="flex flex-col gap-4 px-2 py-4 @2xl:flex-row @2xl:items-center @2xl:justify-between">
+        <div className="flex-1 text-center text-sm text-muted-foreground @2xl:text-left">
+          <span className="font-medium">
+            {totalRows === 0 ? (
+              "No results"
+            ) : (
+              <>
+                Showing {startRow} to {endRow} of {totalRows}{" "}
+                {totalRows === 1 ? "row" : "rows"}
+              </>
+            )}
+          </span>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="text-sm font-medium whitespace-nowrap">
-            Page {currentPage + 1} of {pageCount}
-          </div>
+        <div className="flex flex-col items-center gap-4 @2xl:flex-row @2xl:gap-6 @3xl:gap-8">
+          {canResize && (
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-medium whitespace-nowrap">Rows per page</p>
+              <Select
+                value={`${pageSize}`}
+                onValueChange={(value) => {
+                  table.setPageSize(Number(value));
+                }}
+                disabled={totalRows === 0}
+              >
+                <SelectTrigger className="h-8 w-[70px]">
+                  <SelectValue placeholder={pageSize} />
+                </SelectTrigger>
+                <SelectContent side="top">
+                  {relevantPageSizes.map((size) => (
+                    <SelectItem key={size} value={`${size}`}>
+                      {size}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              className="hidden size-8 lg:flex"
-              onClick={() => table.setPageIndex(0)}
-              disabled={currentPage === 0 || totalRows === 0}
-              aria-label="Go to first page"
-            >
-              <ChevronsLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-8"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
-              aria-label="Go to previous page"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-8"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
-              aria-label="Go to next page"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="hidden size-8 lg:flex"
-              onClick={() => table.setPageIndex(pageCount - 1)}
-              disabled={currentPage === pageCount - 1 || totalRows === 0}
-              aria-label="Go to last page"
-            >
-              <ChevronsRight className="h-4 w-4" />
-            </Button>
-          </div>
+          {canPage && (
+            <div className="flex items-center gap-4">
+              <div className="text-sm font-medium whitespace-nowrap">
+                Page {currentPage + 1} of {pageCount}
+              </div>
+
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="hidden size-8 @3xl:flex"
+                  onClick={() => table.setPageIndex(0)}
+                  disabled={currentPage === 0 || totalRows === 0}
+                  aria-label="Go to first page"
+                >
+                  <ChevronsLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-8"
+                  onClick={() => table.previousPage()}
+                  disabled={!table.getCanPreviousPage()}
+                  aria-label="Go to previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-8"
+                  onClick={() => table.nextPage()}
+                  disabled={!table.getCanNextPage()}
+                  aria-label="Go to next page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="hidden size-8 @3xl:flex"
+                  onClick={() => table.setPageIndex(pageCount - 1)}
+                  disabled={currentPage === pageCount - 1 || totalRows === 0}
+                  aria-label="Go to last page"
+                >
+                  <ChevronsRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -532,15 +546,21 @@ export const DataTableToolbar = <TData,>({
 };
 
 
+/** A column's own classes, from `meta.className`, such as a fixed width. */
+const columnClass = (columnDef: { meta?: unknown }) => (columnDef.meta as { className?: string } | undefined)?.className;
+
 type DataTableProps<TData> = {
   table: TableType<TData>;
   onRowClick?: (row: TData) => void;
+  /** The id of the row shown as open, such as the rule open beside the list. */
+  activeRowId?: string;
   emptyMessage?: React.ReactNode;
 };
 
 export function DataTable<TData>({
   table,
   onRowClick,
+  activeRowId,
   emptyMessage = "No results.",
 }: DataTableProps<TData>) {
   return (
@@ -551,7 +571,7 @@ export function DataTable<TData>({
             <TableRow key={headerGroup.id}>
               {headerGroup.headers.map((header) => {
                 return (
-                  <TableHead key={header.id}>
+                  <TableHead key={header.id} className={columnClass(header.column.columnDef)}>
                     {header.isPlaceholder
                       ? null
                       : flexRender(
@@ -569,12 +589,12 @@ export function DataTable<TData>({
             table.getRowModel().rows.map((row) => (
               <TableRow
                 key={row.id}
-                data-state={row.getIsSelected() && "selected"}
+                data-state={(row.getIsSelected() || row.id === activeRowId) && "selected"}
                 className={cn(onRowClick && "cursor-pointer")}
                 onClick={onRowClick ? () => onRowClick(row.original) : undefined}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
+                  <TableCell key={cell.id} className={columnClass(cell.column.columnDef)}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>
                 ))}

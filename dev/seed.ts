@@ -38,6 +38,14 @@ Ask before you push.
  * message and reply checks, flags and saved cases. Everything goes through
  * the hooks and the rules service, as real use would. Replaces what is there.
  */
+/** A message with a long pasted log: the check behind the large request on the Settings screen. */
+const HUGE_LOG =
+  "here is a huge pasted log, how do I read it?\n" +
+  Array.from(
+    { length: 1_500 },
+    (_, i) => `2026-11-17T08:${String(i % 60).padStart(2, "0")}:00Z worker-${i % 8} INFO job ${i} done in ${i % 97} ms`,
+  ).join("\n");
+
 export async function seed(root: string): Promise<void> {
   rmSync(root, { recursive: true, force: true });
   const env = devEnv(root);
@@ -156,7 +164,7 @@ export async function seed(root: string): Promise<void> {
     "email me at someone@example.com about the commit",
     "update the style guide",
     "how do I run it?",
-    "here is a huge pasted log, how do I read it?",
+    HUGE_LOG,
     "test the parser",
     "deploy to staging",
     "what changed?",

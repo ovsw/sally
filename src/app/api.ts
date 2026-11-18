@@ -10,7 +10,6 @@ import {
   RuleError,
   RuleNotFoundError,
   type RulesService,
-  type RuleState,
   type Scope,
   type Settings,
 } from "../rules.ts";
@@ -115,14 +114,11 @@ function filterFrom(params: URLSearchParams): RuleFilter {
   const checkType = params.get("checkType");
   if (checkType === "message" || checkType === "reply") filter.checkType = checkType;
   else if (checkType) throw new HttpError(400, "checkType is message or reply.");
-  const states = params.getAll("state").filter(Boolean);
-  if (!states.every((state) => state === "live" || state === "draft" || state === "off")) {
-    throw new HttpError(400, "state is live, draft or off.");
+  for (const key of ["published", "on", "hasDraft", "allProjects"] as const) {
+    const value = params.get(key);
+    if (value === "true" || value === "false") filter[key] = value === "true";
+    else if (value) throw new HttpError(400, `${key} is true or false.`);
   }
-  if (states.length) filter.state = states as RuleState[];
-  const hasDraft = params.get("hasDraft");
-  if (hasDraft === "true" || hasDraft === "false") filter.hasDraft = hasDraft === "true";
-  else if (hasDraft) throw new HttpError(400, "hasDraft is true or false.");
   return filter;
 }
 

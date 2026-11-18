@@ -127,8 +127,8 @@ check fails" on the Settings screen, or run this in Sally's folder:
 node src/cli.ts settings stop-on-failure off   # on switches it back; no value shows it
 ```
 
-Having no live rules is not a failure: nothing is asked of Jev and nothing
-matched. And a Sally that is itself broken (its database cannot be opened,
+Having no published rules switched on is not a failure: nothing is asked of
+Jev and nothing matched. And a Sally that is itself broken (its database cannot be opened,
 say) never blocks you: the turn goes through, with a warning.
 
 ## Tending the rules: the web app
@@ -149,11 +149,14 @@ screens:
   at a reason and the rule is doing what you want, **Looks fine** clears that
   one reason for that rule until its next version is published. Wrong matches
   have no such button: they go when the rule is fixed.
-- **Rules:** a searchable, filterable list showing each rule's check type and
-  state (live, draft only, off).
-- **Rule:** one rule in full: the live version beside its draft; conditions,
-  instruction, scope and an on/off switch; version history with how each
-  version performed; its matches, near misses and saved cases.
+- **Rules:** a searchable, filterable list. Each rule has a switch to turn it
+  on or off, a green light when it is published and a yellow one when it has
+  a draft, its type (user message or agent reply), and its scope (all
+  projects, or the projects it is for).
+- **Rule:** opens in a panel beside the list: the published version beside
+  its draft; conditions, instruction, scope and an on/off switch; version
+  history with how each version performed; its matches, near misses and saved
+  cases.
 - **Activity:** recent checks, newest first, with the text checked, the
   outcome, and which rules matched with what scores.
 - **Settings:** see below.
@@ -165,11 +168,12 @@ than its sources.
 
 - **Drafts:** edits save automatically into a draft and change nothing until
   you publish.
-- **Publishing:** makes the draft the new **live version**, which takes
-  effect on the next check.
+- **Publishing:** makes the draft the new **published version**, which takes
+  effect on the next check while the rule is on.
 - **History:** published versions never change. You can start a new draft
   from an old one.
-- **Switching off:** stops a rule matching without deleting it.
+- **Switching off:** stops a rule matching without deleting it. It is separate
+  from publishing: a rule switched off keeps its published version and draft.
 
 ### Settings
 
@@ -288,7 +292,7 @@ is set.
 - **API key**: the `TYPESAFE_API_KEY` environment variable, or the file
   `~/.config/sally/api_key`, which install writes readable only by you.
   Without a key
-  every check fails as soon as you have a live rule: see
+  every check fails as soon as you have a published rule switched on: see
   [When a check fails](#when-a-check-fails).
 - **Database**: `~/.local/share/sally/sally.db` (SQLite). It holds your rules
   and every check, including the full text of your messages, so it never
@@ -326,8 +330,9 @@ or delete a rule. Those stay with you in the web app, where the agent's drafts
 show up like your own. Output is JSON.
 
 ```sh
-node src/cli.ts rules list [--search TEXT] [--check-type message|reply] [--state live|draft]
-node src/cli.ts rules show RULE   # id or exact name: live version beside draft
+node src/cli.ts rules list [--search TEXT] [--check-type message|reply] \
+  [--published | --unpublished] [--on | --off] [--with-draft | --without-draft]
+node src/cli.ts rules show RULE   # id or exact name: published version beside draft
 node src/cli.ts rules create --name NAME --check-type message|reply \
   --instruction TEXT --condition TEXT [--condition TEXT ...]
 node src/cli.ts rules edit RULE [--name NAME] [--check-type message|reply] \
