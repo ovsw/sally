@@ -181,10 +181,15 @@ file stays as it is; run `sally import removed <id>` and go to step 9.
    - `removePart`: only the sentences or lines that the live rules cover. Show
      the passage before and after; what remains must still read as a complete
      instruction.
-3. If the file is shared and the user has not said they are the only one using
-   the project, ask: "This file is tracked in git. Remove these lines anyway?
-   Only say yes if you are the only one using this project." Without that yes,
-   remove nothing: run `sally import removed <id>` and go to step 9.
+3. Check each file you would edit on its own, the rules file and every
+   pulled-in file, even when you came back to the import at step 7:
+   `git ls-files --error-unmatch <file>`, run from that file's folder,
+   succeeds when git tracks it. A file git ignores says nothing about the
+   files it pulls in. For each tracked file, unless the user has said they are
+   the only one using that file, ask: "<file> is tracked in git. Remove these
+   lines from it anyway? Only say yes if you are the only one using this
+   file." Without that yes, leave that file unchanged. If no file is left to
+   edit, run `sally import removed <id>` and go to step 9.
 4. Show the user the exact lines, grouped by file, with their line numbers.
    Ask for one yes for this rules file, and say they can hold back any lines
    by number. **Stop and wait for the answer.**

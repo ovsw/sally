@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { install, uninstall } from "./install.ts";
+import { install, skillInstructionsPath, uninstall } from "./install.ts";
 import { createJevMatcher } from "./jev.ts";
 import type { Matcher } from "./matcher.ts";
 import { apiKeyPath, configDir, databasePath, type Env, findApiKey } from "./paths.ts";
@@ -158,14 +158,28 @@ async function guidedInstall(options: InstallCommandOptions, prompt: Prompt): Pr
   openStore(dbPath).close();
   say(existed ? `The database is at ${dbPath}.` : `Created the database at ${dbPath}.`);
 
-  const { changes, warnings } = install({ env, cliPath: options.cliPath, claudeVersion: options.claudeVersion });
+  const { changes, warnings, skillInstalled } = install({
+    env,
+    cliPath: options.cliPath,
+    claudeVersion: options.claudeVersion,
+  });
   for (const change of changes) say(change);
-  if (changes.length === 0) say("The hooks, the import skill and the authority line were already in place.");
+  if (changes.length === 0) {
+    say(
+      skillInstalled
+        ? "The hooks, the import skill and the authority line were already in place."
+        : "The hooks and the authority line were already in place.",
+    );
+  }
   for (const warning of warnings) stderr(warning + "\n");
 
   say("");
   say("Sally is installed.");
-  say("Next step: import your rules. In Claude Code, type /sally-import, or ask Claude to import your rules file into Sally.");
+  say(
+    skillInstalled
+      ? "Next step: import your rules. In Claude Code, type /sally-import, or ask Claude to import your rules file into Sally."
+      : `Next step: import your rules. Sally's import skill is not installed, so ask Claude in Claude Code to follow the import instructions at ${skillInstructionsPath(options.cliPath)}.`,
+  );
   say('To open the web app, run "sally app" and open the address it prints.');
   return 0;
 }

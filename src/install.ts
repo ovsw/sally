@@ -103,6 +103,11 @@ export interface SetupResult {
   warnings: string[];
 }
 
+export interface InstallResult extends SetupResult {
+  /** Whether Sally's import skill is in place; not when a skill of its name is the user's own. */
+  skillInstalled: boolean;
+}
+
 export class SetupError extends Error {}
 
 type Json = Record<string, unknown>;
@@ -321,7 +326,7 @@ const hasLine = (text: string, line: string) => text.split(/\r?\n/).some((l) => 
  * global rules file. Running it
  * again changes nothing. Everything else in both files is left as it was.
  */
-export function install({ env, cliPath, claudeVersion = readClaudeVersion }: SetupOptions): SetupResult {
+export function install({ env, cliPath, claudeVersion = readClaudeVersion }: SetupOptions): InstallResult {
   const settingsFile = readSettings(claudeSettingsPath(env));
   const rulesPath = globalRulesPath(env);
   const rules = readRules(rulesPath);
@@ -345,7 +350,7 @@ export function install({ env, cliPath, claudeVersion = readClaudeVersion }: Set
   }
   if (changes.length > 0) writeSettings(settingsFile);
 
-  const warnings = installSkill(env, cliPath ?? CLI_PATH, changes);
+  const skill = installSkill(env, cliPath ?? CLI_PATH, changes);
 
   if (!hasLine(rules, AUTHORITY_LINE)) {
     // A blank line before the authority line, which uninstall takes out again.
@@ -355,7 +360,11 @@ export function install({ env, cliPath, claudeVersion = readClaudeVersion }: Set
     writeRules(rulesPath, text + AUTHORITY_LINE + "\n", changes, "install");
     changes.push(`Added Sally's authority line to ${rulesPath}`);
   }
-  return { changes, warnings: [...warnings, ...claudeCodeWarning(claudeVersion)] };
+  return {
+    changes,
+    warnings: [...skill.warnings, ...claudeCodeWarning(claudeVersion)],
+    skillInstalled: skill.installed,
+  };
 }
 
 const isSallySkill = (path: string) => existsSync(path) && SKILL_MARK.test(readFileSync(path, "utf8"));
@@ -368,18 +377,18 @@ const notOurs = (folder: string, what: string) =>
  * Writes the import skill, or brings Sally's earlier one up to date. A folder
  * of that name without Sally's mark is the user's, and is left alone.
  */
-function installSkill(env: Env, cliPath: string, changes: string[]): string[] {
+function installSkill(env: Env, cliPath: string, changes: string[]): { warnings: string[]; installed: boolean } {
   const path = skillPath(env);
   const folder = dirname(path);
   const content = skillContent(cliPath);
   const ours = isSallySkill(path);
   if (!ours && existsSync(folder) && readdirSync(folder).length > 0) {
-    return [notOurs(folder, "; Sally's import skill is not installed")];
+    return { warnings: [notOurs(folder, "; Sally's import skill is not installed")], installed: false };
   }
-  if (ours && readFileSync(path, "utf8") === content) return [];
+  if (ours && readFileSync(path, "utf8") === content) return { warnings: [], installed: true };
   writeRules(path, content, changes, "install");
   changes.push(`${ours ? "Updated" : "Installed"} the import skill (/${SKILL_NAME}) at ${path}`);
-  return [];
+  return { warnings: [], installed: true };
 }
 
 /** Removes the import skill if it is Sally's; a skill of that name without Sally's mark stays. */

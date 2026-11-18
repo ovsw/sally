@@ -63,7 +63,7 @@ it("lets the turn through with a warning and exits successfully on unreadable in
 
 it("switches stopping on a failed check off and on from the command line", () => {
   const settings = (...args: string[]) =>
-    spawnSync(process.execPath, [cli, "settings", ...args], { encoding: "utf8", env: { PATH: process.env.PATH, ...sandbox.env } });
+    spawnSync(process.execPath, [cli, "settings", ...args], { encoding: "utf8", env: sandbox.childEnv() });
   sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
 
   expect(settings("stop-on-failure").stdout).toBe("Stop on failure is on: when a check fails, Sally stops the turn.\n");
@@ -90,7 +90,7 @@ it("loads none of the import on the hook path", () => {
       {
         input: hookInput("hello there"),
         encoding: "utf8",
-        env: { PATH: process.env.PATH, ...sandbox.env, SALLY_TEST_LOADS: loads },
+        env: sandbox.childEnv({ SALLY_TEST_LOADS: loads }),
       },
     );
     expect(result.status).toBe(0);

@@ -183,6 +183,26 @@ describe("guided install in a terminal", () => {
     expect(read(rulesPath)).toBe(rulesBefore);
     expect(read(skillPath(sandbox.env))).toBe(skillBefore);
   });
+
+  it("does not offer /sally-import or call the skill in place when the user's own skill has its name", async () => {
+    const env = { TYPESAFE_API_KEY: "good-key" };
+    const ownSkill = "---\nname: sally-import\ndescription: My own import.\n---\n\nDo it my way.\n";
+    mkdirSync(join(sandbox.root, ".claude", "skills", "sally-import"), { recursive: true });
+    writeFileSync(skillPath(sandbox.env), ownSkill);
+
+    const first = await guided(scriptedPrompt([]), { env });
+    const again = await guided(scriptedPrompt([]), { env });
+
+    for (const result of [first, again]) {
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain("is not Sally's");
+      expect(result.stdout).not.toContain("/sally-import");
+      expect(result.stdout).toMatch(/Next step: import your rules\. Sally's import skill is not installed/);
+    }
+    expect(again.stdout).toContain("The hooks and the authority line were already in place.");
+    expect(again.stdout).not.toContain("the import skill and the authority line were already in place");
+    expect(read(skillPath(sandbox.env))).toBe(ownSkill);
+  });
 });
 
 describe("install that asks nothing", () => {

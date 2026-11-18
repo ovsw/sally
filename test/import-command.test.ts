@@ -21,7 +21,7 @@ function sally(args: string[], input?: string) {
   const result = spawnSync(process.execPath, [cli, "import", ...args], {
     input,
     encoding: "utf8",
-    env: { PATH: process.env.PATH, ...sandbox.env },
+    env: sandbox.childEnv(),
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }

@@ -92,8 +92,11 @@ So a condition has to be true or false of that one text, read on its own.
    reversible migration."
 2. **It names the text it is about.** Start with "The user's message ..." in a
    message check, and "This reply ..." in a reply check.
-3. **One situation.** If it needs "or", "and also" or a list, it is several
-   conditions. Give each its own line in the same rule.
+3. **One situation.** If it lists alternatives ("or", "and also", a list of
+   ways the situation shows up), each alternative is its own condition: give
+   each its own line in the same rule. Things that must all hold together stay
+   in one condition, as in "This reply reports a finished visual change and
+   gives no local link to the page."
 4. **Concrete.** It describes something you could point to in the text. "Asks
    Claude to rename a public function" can be pointed to; "is about code
    quality" cannot.
