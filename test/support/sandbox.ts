@@ -14,6 +14,11 @@ import { openStore } from "../../src/store.ts";
 export interface Sandbox {
   root: string;
   env: Env;
+  /**
+   * The environment for a child process: the sandbox's folders, PATH, and on
+   * Windows the system folder Node needs, and nothing else from the real one.
+   */
+  childEnv(extra?: Env): Env;
   /** Runs `fn` with the rules service on the sandbox database. */
   withRules<T>(fn: (rules: RulesService) => T): T;
   /** Adds a rule and publishes it; returns its id. */
@@ -41,6 +46,10 @@ export function createSandbox(): Sandbox {
   return {
     root,
     env,
+    childEnv(extra = {}) {
+      const system = process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {};
+      return { PATH: process.env.PATH, ...system, ...env, ...extra };
+    },
     withRules,
     liveRule(rule) {
       return withRules((rules) => {

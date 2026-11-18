@@ -50,7 +50,7 @@ describe("starting the app", () => {
     mkdirSync(webDir);
     writeFileSync(join(webDir, "index.html"), "<!doctype html><title>Sally</title>");
     const child = spawn(process.execPath, [join(import.meta.dirname, "..", "src", "cli.ts"), "app", "--port", "0"], {
-      env: { PATH: process.env.PATH, ...sandbox.env, SALLY_WEB_DIR: webDir },
+      env: sandbox.childEnv({ SALLY_WEB_DIR: webDir }),
     });
     try {
       const address = await new Promise<string>((resolve, reject) => {

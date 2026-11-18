@@ -17,7 +17,7 @@ const run = (stdin: string) =>
   spawnSync(process.execPath, [cli, "hook", "message"], {
     input: stdin,
     encoding: "utf8",
-    env: { PATH: process.env.PATH, ...sandbox.env },
+    env: sandbox.childEnv(),
   });
 
 it("prints nothing and exits successfully with no live rules", () => {
@@ -43,7 +43,7 @@ it("runs the reply hook: warns the user and exits successfully with a live reply
   const result = spawnSync(process.execPath, [cli, "hook", "reply"], {
     input: JSON.stringify({ session_id: "s", cwd: "/work/project", stop_hook_active: false, last_assistant_message: "Done." }),
     encoding: "utf8",
-    env: { PATH: process.env.PATH, ...sandbox.env },
+    env: sandbox.childEnv(),
   });
   expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout)).toEqual({
