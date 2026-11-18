@@ -159,11 +159,17 @@ function WrongMatchesAndMisses() {
       <h3>When a check fails</h3>
       <p>
         A check fails when Sally cannot get scores: Jev is slow or returns an error, or no
-        API key is set. The turn then goes on untouched, with no rules attached and
-        nothing sent back. Your conditional rules live only in Sally, not in a rules file,
-        so a turn whose check failed goes without them. The Activity screen lists failed
-        checks. If a rule must reach Claude on every turn, keep it in your rules file as
-        an always-rule.
+        API key is set. Your conditional rules live only in Sally, not in a rules file, so
+        a turn that went on without its check would go without them. Sally stops it
+        instead: a message whose check failed is not sent to Claude, and sending it again
+        retries; a reply whose check failed stands, with a warning that it was not
+        checked. The Activity screen lists failed checks.
+      </p>
+      <p>
+        To let turns go on without their rules when a check fails, switch off &ldquo;Stop
+        the turn when a check fails&rdquo; on the Settings screen, or run{" "}
+        <code>sally settings stop-on-failure off</code>. If a rule must reach Claude on
+        every turn whatever happens, keep it in your rules file as an always-rule.
       </p>
     </section>
   );

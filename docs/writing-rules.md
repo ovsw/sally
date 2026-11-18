@@ -45,8 +45,9 @@ Keep a passage in the rules file as an always-rule when any of these is true:
    things live, which tools it uses.
 
 Everything else is a candidate for Sally. Moving a rule into Sally means it
-reaches Claude only on the turns where it matches. When a check fails, that
-turn goes without it.
+reaches Claude only on the turns where it matches. When a check fails, Sally
+stops the turn rather than let it go on without its rules, unless you switch
+that off with the `stop-on-failure` setting.
 
 ### The three verdicts of an import
 
