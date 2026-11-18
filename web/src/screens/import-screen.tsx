@@ -17,11 +17,13 @@ import {
   TriangleAlert,
   Undo2,
   Upload,
+  X,
 } from "lucide-react";
 import * as React from "react";
 
 import { NewRuleDialog } from "@/components/new-rule-dialog";
-import { ConditionsField, InstructionField, SaveStatus } from "@/components/rule-fields";
+import { RescoreDialog } from "@/components/rescore-dialog";
+import { ConditionsField, InstructionField, NameField, SaveStatus } from "@/components/rule-fields";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -41,6 +43,7 @@ import { FieldGroup } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
 import {
   ApiError,
+  discardDraft,
   getImport,
   type ImportDetail,
   keepProposedRule,
@@ -49,7 +52,10 @@ import {
   type Passage,
   type PassageVerdict,
   type ProposedRule,
+  publish,
   publishProposedRule,
+  rescoreDraft,
+  type RescoreResult,
   type RuleDetail,
   type Scope,
   skipProposedRule,
@@ -171,7 +177,7 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
     <Card className="w-full">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle>{content.name}</CardTitle>
+          <CardTitle>{content.name.trim() || rule.name}</CardTitle>
           {kept ? <Badge variant="secondary">Kept as a draft</Badge> : <Badge variant="outline">To decide</Badge>}
         </div>
         <CardDescription>
@@ -182,6 +188,11 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
         {/* Closed while a decision runs, so an edit cannot change what is being published. */}
         <fieldset disabled={busy !== null} className="min-w-0">
           <FieldGroup>
+            <NameField
+              id={`name-${rule.id}`}
+              name={content.name}
+              onChange={(name) => edit({ ...content, name })}
+            />
             <ConditionsField
               conditions={content.conditions}
               checkType={rule.checkType}
@@ -227,7 +238,15 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
   );
 }
 
-function ProposedRuleCard({ proposed, decide }: { proposed: ProposedRule; decide: Decide }) {
+function ProposedRuleCard({
+  proposed,
+  importId,
+  decide,
+}: {
+  proposed: ProposedRule;
+  importId: number;
+  decide: Decide;
+}) {
   const rule = proposed.rule;
   if (!rule) {
     return (
@@ -243,6 +262,19 @@ function ProposedRuleCard({ proposed, decide }: { proposed: ProposedRule; decide
     );
   }
   if (proposed.decision !== "published") return <OpenRuleCard proposed={proposed} rule={rule} decide={decide} />;
+  return <PublishedRuleCard rule={rule} importId={importId} decide={decide} />;
+}
+
+/**
+ * A published rule: shown as it is live, with a way back into editing it here,
+ * so changing it does not take the user out of the import. A rule left with an
+ * unpublished draft opens in editing, so the draft is not hidden.
+ */
+function PublishedRuleCard({ rule, importId, decide }: { rule: RuleDetail; importId: number; decide: Decide }) {
+  const [editing, setEditing] = React.useState(rule.hasDraft);
+  if (editing) {
+    return <EditPublishedCard rule={rule} importId={importId} decide={decide} onDone={() => setEditing(false)} />;
+  }
   return (
     <Card className="w-full">
       <CardHeader>
@@ -261,9 +293,187 @@ function ProposedRuleCard({ proposed, decide }: { proposed: ProposedRule; decide
         <RuleBody version={rule.live!} />
       </CardContent>
       <CardFooter className="flex flex-wrap items-center justify-between gap-2">
-        <OpenRuleLink ruleId={rule.id} />
-        <span className="text-sm text-muted-foreground">Published. To change it, open the rule.</span>
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="text-sm text-muted-foreground hover:underline"
+        >
+          Edit the rule
+        </button>
       </CardFooter>
+    </Card>
+  );
+}
+
+/**
+ * A published rule opened for editing on the Import screen. Edits go into the
+ * rule's draft as on the Rule screen, and publishing it checks the saved cases
+ * first, the same way; the live version stays as it is until then.
+ */
+function EditPublishedCard({
+  rule,
+  importId,
+  decide,
+  onDone,
+}: {
+  rule: RuleDetail;
+  importId: number;
+  decide: Decide;
+  onDone: () => void;
+}) {
+  const [content, setContent] = React.useState(() => contentOf(rule));
+  const [hasDraft, setHasDraft] = React.useState(rule.hasDraft);
+  const [busy, setBusy] = React.useState<"publish" | "discard" | "open" | null>(null);
+  const [rescore, setRescore] = React.useState<Exclude<RescoreResult, { status: "no_cases" }> | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  // Read when discarding, after the saves already sent have been answered.
+  const draftSaved = React.useRef(rule.hasDraft);
+  const onSaved = React.useCallback((saved: RuleDetail) => {
+    draftSaved.current = saved.hasDraft;
+    setHasDraft(saved.hasDraft);
+  }, []);
+  const saver = useDraftSaver(rule.id, onSaved);
+  const saving = saver.state.kind === "pending" || saver.state.kind === "saving";
+
+  const edit = (next: VersionView) => {
+    setContent(next);
+    saver.saveSoon(next);
+  };
+
+  /**
+   * Closes the editor once a publish or discard has gone through, then shows
+   * the import as it now is. The change is done even if that refresh fails:
+   * the screen shows the refresh's error, and the editor does not offer to
+   * publish or discard again a draft that is gone.
+   */
+  const finish = () => {
+    onDone();
+    void decide(() => getImport(importId));
+  };
+
+  /** Publishes the draft; whether it went through. A refusal is shown on the card. */
+  async function publishNow() {
+    try {
+      await publish(rule.id);
+    } catch (e) {
+      setError(errorText(e));
+      return;
+    }
+    finish();
+  }
+
+  async function doPublish() {
+    setBusy("publish");
+    setError(null);
+    if (await saver.flush()) {
+      try {
+        const result = await rescoreDraft(rule.id);
+        if (result.status !== "no_cases") setRescore(result);
+        else await publishNow();
+      } catch (e) {
+        setError(errorText(e));
+      }
+    }
+    setBusy(null);
+  }
+
+  async function publishAnyway() {
+    setRescore(null);
+    setBusy("publish");
+    // The fields are closed while the draft is scored, so what was scored is what is published.
+    await publishNow();
+    setBusy(null);
+  }
+
+  /** Drops the draft, if there is one, and shows the live version again. */
+  async function discard() {
+    setBusy("discard");
+    setError(null);
+    let dropped = false;
+    try {
+      await saver.replacing(async () => {
+        if (!draftSaved.current) return;
+        await discardDraft(rule.id);
+        dropped = true;
+      });
+    } catch (e) {
+      setError(errorText(e));
+      setBusy(null);
+      return;
+    }
+    if (dropped) finish();
+    else onDone();
+  }
+
+  async function saveBeforeLeaving() {
+    setBusy("open");
+    const saved = await saver.flush();
+    if (!saved) setBusy(null);
+    return saved;
+  }
+
+  return (
+    <Card className="w-full">
+      <CardHeader>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle>{content.name.trim() || rule.name}</CardTitle>
+          <Badge className="gap-1">
+            <Check className="size-3" />
+            Published
+          </Badge>
+          {hasDraft && <Badge variant="secondary">Changes not published</Badge>}
+        </div>
+        <CardDescription>
+          {rule.checkType === "message" ? "User message" : "Agent reply"} · {scopeText(content.scope)}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <fieldset disabled={busy !== null || rescore !== null} className="min-w-0">
+          <FieldGroup>
+            <NameField
+              id={`name-${rule.id}`}
+              name={content.name}
+              onChange={(name) => edit({ ...content, name })}
+            />
+            <ConditionsField
+              conditions={content.conditions}
+              checkType={rule.checkType}
+              onChange={(conditions) => edit({ ...content, conditions })}
+            />
+            <InstructionField
+              id={`instruction-published-${rule.id}`}
+              instruction={content.instruction}
+              onChange={(instruction) => edit({ ...content, instruction })}
+            />
+          </FieldGroup>
+        </fieldset>
+        {(saver.state.kind === "error" || error) && (
+          <Alert variant="destructive" className="mt-4">
+            <TriangleAlert />
+            <AlertDescription>{saver.state.kind === "error" ? saver.state.message : error}</AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
+      <CardFooter className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-4">
+          <SaveStatus state={saver.state} hasDraft={hasDraft} />
+          <OpenRuleLink ruleId={rule.id} save={saveBeforeLeaving} />
+        </div>
+        <div className="ml-auto flex flex-wrap gap-2">
+          <Button variant="ghost" onClick={() => void discard()} disabled={busy !== null}>
+            {busy === "discard" ? <Loader2 className="animate-spin" /> : <X />}
+            {hasDraft || saving || saver.hasUnsent() ? "Discard changes" : "Cancel"}
+          </Button>
+          <Button
+            onClick={() => void doPublish()}
+            disabled={busy !== null || !(hasDraft || saving || saver.hasUnsent())}
+          >
+            {busy === "publish" ? <Loader2 className="animate-spin" /> : <Upload />}
+            Publish
+          </Button>
+        </div>
+      </CardFooter>
+      <RescoreDialog result={rescore} onPublish={() => void publishAnyway()} onBack={() => setRescore(null)} />
     </Card>
   );
 }
@@ -602,7 +812,7 @@ export function ImportScreen({ id, position }: { id: number; position?: number }
           <div className="space-y-4">
             {stays && <StaysCard passage={passage} />}
             {passage.rules.map((proposed) => (
-              <ProposedRuleCard key={proposed.id} proposed={proposed} decide={decide} />
+              <ProposedRuleCard key={proposed.id} proposed={proposed} importId={detail.id} decide={decide} />
             ))}
             {!stays && (
               <div className="flex justify-end">
