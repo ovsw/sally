@@ -191,6 +191,10 @@ file stays as it is. If `pendingCount` is zero, run
    than once, in one file or across the rules file and its pulled-in files,
    you cannot tell which copy the import took: leave every copy and tell the
    user, so they can take out the right one themselves.
+   The same holds when two passages of this import have the same text (compare
+   the `text` of the passages in `import show`), even if only one copy is
+   still in the files: the copy that is left may not be the one whose rules
+   were published. Leave it and tell the user.
 2. Work out the lines to remove:
    - `removeAll`: the passage's lines and one blank line beside them, plus a
      heading left with nothing under it. When a pulled-in file is left with
