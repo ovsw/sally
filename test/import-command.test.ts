@@ -190,6 +190,23 @@ describe("import show, for the removal", () => {
     });
   });
 
+  it("leaves a passage in the file while its published rule is switched off", () => {
+    const { id } = sallyJson<ImportSummary>(["start", globalFile()]);
+    const added = sallyJson<ImportDetail>(["add", String(id)], JSON.stringify([...PASSAGES, BUNDLED]));
+    const [screenshot, , bundled] = added.passages;
+    sandbox.withRules((rules) => {
+      rules.publish(screenshot!.rules[0]!.ruleId!);
+      rules.switchOff(screenshot!.rules[0]!.ruleId!);
+      for (const proposal of bundled!.rules) rules.publish(proposal.ruleId!);
+      rules.switchOff(bundled!.rules[0]!.ruleId!);
+    });
+
+    const shown = sallyJson<RemovalReport>(["show", String(id)]);
+    // The hooks skip a switched-off rule, so its passage is still what does the work.
+    expect(shown).toMatchObject({ removeAll: [], removePart: [3] });
+    expect(shown.passages[0]!.rules[0]).toMatchObject({ decision: "published", live: true, on: false });
+  });
+
   it("refuses an import that does not exist", () => {
     const result = sally(["show", "9"]);
     expect(result.status).toBe(1);

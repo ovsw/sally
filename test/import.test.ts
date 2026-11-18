@@ -55,20 +55,25 @@ describe("starting an import", () => {
     });
   });
 
-  it("gives a rules file in the user's rules folder to all projects, even when it is a link", () => {
-    const real = rulesFile(join(sandbox.root, "dotfiles", "style.md"));
-    mkdirSync(join(sandbox.root, ".claude", "rules"), { recursive: true });
-    const linked = join(sandbox.root, ".claude", "rules", "style.md");
-    symlinkSync(real, linked);
-    expect(sandbox.withImports((imports) => imports.startImport(linked))).toMatchObject({
-      rulesFile: linked,
-      scope: { kind: "all" },
-    });
-  });
+  // A file link needs a privilege Windows gives only to administrators or in Developer Mode.
+  it.skipIf(process.platform === "win32")(
+    "gives a rules file in the user's rules folder to all projects, even when it is a link",
+    () => {
+      const real = rulesFile(join(sandbox.root, "dotfiles", "style.md"));
+      mkdirSync(join(sandbox.root, ".claude", "rules"), { recursive: true });
+      const linked = join(sandbox.root, ".claude", "rules", "style.md");
+      symlinkSync(real, linked);
+      expect(sandbox.withImports((imports) => imports.startImport(linked))).toMatchObject({
+        rulesFile: linked,
+        scope: { kind: "all" },
+      });
+    },
+  );
 
   it("gives the global rules file to all projects when the Claude Code folder is a link", () => {
     rulesFile(join(sandbox.root, "dotfiles", "claude", "CLAUDE.md"));
-    symlinkSync(join(sandbox.root, "dotfiles", "claude"), join(sandbox.root, ".claude"));
+    // A junction on Windows, which needs no privilege; elsewhere the type is ignored.
+    symlinkSync(join(sandbox.root, "dotfiles", "claude"), join(sandbox.root, ".claude"), "junction");
     const real = join(sandbox.root, "dotfiles", "claude", "CLAUDE.md");
     expect(sandbox.withImports((imports) => imports.startImport(real)).scope).toEqual({ kind: "all" });
   });

@@ -26,8 +26,13 @@ export interface RemovalRule {
   name: string | null;
   /** The user's decision: published, kept as a draft, skipped, or not decided yet. */
   decision: ProposedRuleDecision;
-  /** Whether the rule has a live version now. Only live rules leave the rules file. */
+  /** Whether the rule has a live version now. */
   live: boolean;
+  /**
+   * Whether the rule is switched on. Only rules live and on leave the rules
+   * file: the hooks skip a switched-off rule, so its passage still does the work.
+   */
+  on: boolean;
   /** What the live version says, else the draft; null once skipped. */
   instruction: string | null;
   conditions: string[];
@@ -55,9 +60,9 @@ export interface RemovalReport {
   removedAt: string | null;
   passageCount: number;
   pendingCount: number;
-  /** Passages to take out of the rules file whole, by position. */
+  /** Passages to take out of the rules file whole, by position: every rule from them is live and on. */
   removeAll: number[];
-  /** Passages to take out only in part, by position: their unpublished rules stay. */
+  /** Passages to take out only in part, by position: the part covered by rules not live and on stays. */
   removePart: number[];
   /** In file order. */
   passages: RemovalPassage[];
@@ -75,13 +80,13 @@ export function removalReport(imports: ImportService, importId: number): Removal
         name: version?.name ?? null,
         decision: proposal.decision,
         live: proposal.rule?.live != null,
+        on: proposal.rule?.on ?? false,
         instruction: version?.instruction ?? null,
         conditions: version?.conditions ?? [],
       };
     });
-    const liveCount = rules.filter((rule) => rule.live).length;
-    const removal: PassageRemoval =
-      liveCount === 0 ? "none" : liveCount === rules.length ? "all" : "part";
+    const inEffect = rules.filter((rule) => rule.live && rule.on).length;
+    const removal: PassageRemoval = inEffect === 0 ? "none" : inEffect === rules.length ? "all" : "part";
     const stays = (passage.decision ?? (passage.verdict === "becomes_rule" ? "becomes_rule" : "stays")) === "stays";
     return {
       position: passage.position,

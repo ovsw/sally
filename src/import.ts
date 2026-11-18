@@ -491,40 +491,49 @@ function decisions(
     settle(proposal.id, "skipped");
   }
 
+  // Each decision reads what it checks and makes its change in one write
+  // transaction, so a change committed by another process in between (the
+  // command line, or a second app) cannot slip past the check.
   return {
     publishProposedRule(proposalId) {
-      const proposal = findProposal(proposalId);
-      if (proposal.rule_id === null) throw new RuleError(SKIPPED);
-      const rule = rules.getRule(proposal.rule_id);
-      if (rule.live === null || rule.draft !== null) rules.publish(proposal.rule_id);
-      return answer(proposal.import_id);
+      return transaction(db, () => {
+        const proposal = findProposal(proposalId);
+        if (proposal.rule_id === null) throw new RuleError(SKIPPED);
+        const rule = rules.getRule(proposal.rule_id);
+        if (rule.live === null || rule.draft !== null) rules.publish(proposal.rule_id);
+        return answer(proposal.import_id);
+      });
     },
 
     keepProposedRule(proposalId) {
-      const proposal = findProposal(proposalId);
-      if (proposal.rule_id === null) throw new RuleError(SKIPPED);
-      if (isLive(proposal.rule_id)) {
-        throw new RuleError("This rule is live already. Change it, switch it off or delete it on its rule screen.");
-      }
-      settle(proposal.id, "kept");
-      return answer(proposal.import_id);
+      return transaction(db, () => {
+        const proposal = findProposal(proposalId);
+        if (proposal.rule_id === null) throw new RuleError(SKIPPED);
+        if (isLive(proposal.rule_id)) {
+          throw new RuleError("This rule is live already. Change it, switch it off or delete it on its rule screen.");
+        }
+        settle(proposal.id, "kept");
+        return answer(proposal.import_id);
+      });
     },
 
     skipProposedRule(proposalId) {
-      const proposal = findProposal(proposalId);
-      if (proposal.rule_id !== null) {
-        if (isLive(proposal.rule_id)) {
-          throw new RuleError("This rule is live, so skipping cannot remove it. Delete it on its rule screen instead.");
+      return transaction(db, () => {
+        const proposal = findProposal(proposalId);
+        if (proposal.rule_id !== null) {
+          if (isLive(proposal.rule_id)) {
+            throw new RuleError("This rule is live, so skipping cannot remove it. Delete it on its rule screen instead.");
+          }
+          skip(proposal);
         }
-        transaction(db, () => skip(proposal));
-      }
-      return answer(proposal.import_id);
+        return answer(proposal.import_id);
+      });
     },
 
     writeRule(passageId, proposed) {
-      const passage = findPassage(passageId);
       if (typeof proposed !== "object" || proposed === null) throw new RuleError("Send the rule to write.");
       return transaction(db, () => {
+        const passage = findPassage(passageId);
         const { ruleId } = rules.createRule({
           name: proposed.name,
           checkType: proposed.checkType ?? "message",
@@ -547,16 +556,16 @@ function decisions(
     },
 
     markPassageStays(passageId) {
-      const passage = findPassage(passageId);
-      const proposals = db
-        .prepare("SELECT id, rule_id FROM passage_rules WHERE passage_id = ? ORDER BY position")
-        .all(passageId) as unknown as { id: number; rule_id: number | null }[];
-      if (proposals.some((proposal) => proposal.rule_id !== null && isLive(proposal.rule_id))) {
-        throw new RuleError(
-          "A rule from this passage is live, so the passage cannot also stay in the rules file. Delete that rule on its rule screen first.",
-        );
-      }
       return transaction(db, () => {
+        const passage = findPassage(passageId);
+        const proposals = db
+          .prepare("SELECT id, rule_id FROM passage_rules WHERE passage_id = ? ORDER BY position")
+          .all(passageId) as unknown as { id: number; rule_id: number | null }[];
+        if (proposals.some((proposal) => proposal.rule_id !== null && isLive(proposal.rule_id))) {
+          throw new RuleError(
+            "A rule from this passage is live, so the passage cannot also stay in the rules file. Delete that rule on its rule screen first.",
+          );
+        }
         for (const proposal of proposals) if (proposal.rule_id !== null) skip(proposal);
         db.prepare("UPDATE passages SET decision = 'stays', seen_at = COALESCE(seen_at, ?) WHERE id = ?").run(
           now(),

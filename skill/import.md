@@ -24,7 +24,9 @@ Hold to these throughout:
 
 If the user comes back to an import already under way ("I'm done reviewing",
 "remove what I published"), run `node "<cli>" import list`, take the newest
-import whose `removedAt` is null (ask if several), and go to step 7.
+import whose `removedAt` is null (ask if several), and go to step 7. Its
+removal may have happened in part already, when the user took out what was
+published before finishing the review.
 
 ## 1. Find the rules files
 
@@ -162,23 +164,33 @@ Run `node "<cli>" import show <id>`. In its output:
   counts until the user has looked at it). If it is above zero, say how many,
   and ask whether to take out what is published so far or to wait. **Stop and
   wait for the answer.**
-- `removeAll`: positions of passages whose rules are all live. The whole
-  passage leaves the file.
-- `removePart`: positions of passages where only some rules are live. Only the
-  part those live rules cover leaves; the rest stays.
-- Each passage's `rules` list each rule's `decision` and `live`, with the
-  instruction and conditions to tell which part of the text a live rule
-  covers.
+- `removeAll`: positions of passages whose rules are all live and switched
+  on. The whole passage leaves the file.
+- `removePart`: positions of passages where only some rules are live and on.
+  Only the part those rules cover leaves; the rest stays.
+- Each passage's `rules` list each rule's `decision`, `live` and `on`, with
+  the instruction and conditions to tell which part of the text a rule
+  covers. A rule that is live but switched off is not in effect, so its part
+  of the passage stays.
+
+The user may have changed a rule's instruction or conditions in review.
+Compare each rule that is live and on with its passage's text: a part of the
+passage that no such rule still asks for stays in the file, even for a
+passage in `removeAll`. When in doubt, leave the text.
 
 If both lists are empty, tell the user nothing was published, so the rules
-file stays as it is; run `node "<cli>" import removed <id>` and go to step 9.
+file stays as it is. If `pendingCount` is zero, run
+`node "<cli>" import removed <id>`. Go to step 9.
 
 ## 8. Remove what was published
 
 1. Read the rules file, and any pulled-in file holding a passage to remove,
    **as they are now**. Find each passage's text. If a passage's text is no
    longer there exactly, leave it, and tell the user it changed since the
-   import began.
+   import began or was taken out in an earlier round. If it is there more
+   than once, in one file or across the rules file and its pulled-in files,
+   you cannot tell which copy the import took: leave every copy and tell the
+   user, so they can take out the right one themselves.
 2. Work out the lines to remove:
    - `removeAll`: the passage's lines and one blank line beside them, plus a
      heading left with nothing under it. When a pulled-in file is left with
@@ -198,12 +210,21 @@ file stays as it is; run `node "<cli>" import removed <id>` and go to step 9.
 4. Show the user the exact lines, grouped by file, with their line numbers.
    Ask for one yes for this rules file, and say they can hold back any lines
    by number. **Stop and wait for the answer.**
-5. On a yes, run `node "<cli>" import backup <file>` for each file you will
-   edit and tell the user each backup's path.
-6. Edit the file, removing only the agreed lines.
-7. Check: compare each backup with its file (`diff <backup> <file>`). Only the
+5. On a yes, check again before touching anything, since the user may have
+   changed things while you waited: run `node "<cli>" import show <id>` and
+   read each file again. If a passage you would remove is no longer in
+   `removeAll` or `removePart` with the same rules live and on, or the agreed
+   lines no longer stand in the file exactly as you showed them, edit
+   nothing: work out the lines again from step 1, show them and ask again.
+6. Run `node "<cli>" import backup <file>` for each file you will edit and
+   tell the user each backup's path.
+7. Edit the file, removing only the agreed lines.
+8. Check: compare each backup with its file (`diff <backup> <file>`). Only the
    agreed lines are gone and nothing else changed.
-8. Run `node "<cli>" import removed <id>`.
+9. If `pendingCount` was zero, run `node "<cli>" import removed <id>`. If
+   passages were still pending, do not: the import stays open, so the user
+   can finish reviewing and come back to remove the rest, and passages
+   removed now are simply no longer found then.
 
 ## 9. Offer the next rules file
 
