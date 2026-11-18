@@ -23,7 +23,7 @@ async function main(args: string[]): Promise<number> {
     }
     return 0;
   }
-  if (group === "install" || group === "uninstall") {
+  if (group === "sally-install" || group === "sally-uninstall") {
     // Loaded only here, so the hooks never pay for it.
     const { runInstall, runUninstall } = await import("./install-command.ts");
     const io = {
@@ -31,7 +31,7 @@ async function main(args: string[]): Promise<number> {
       stdout: (text: string) => process.stdout.write(text),
       stderr: (text: string) => process.stderr.write(text),
     };
-    if (group === "uninstall") return runUninstall(args.slice(1), io);
+    if (group === "sally-uninstall") return runUninstall(args.slice(1), io);
     return runInstall(args.slice(1), { ...io, isTerminal: process.stdin.isTTY === true });
   }
   if (group === "wrong-match") {
@@ -65,6 +65,16 @@ async function main(args: string[]): Promise<number> {
       stderr: (text) => process.stderr.write(text),
     });
   }
+  if (group === "import") {
+    // Loaded only here, so the hooks never load any of the import.
+    const { runImportCommand } = await import("./import-command.ts");
+    return runImportCommand(args.slice(1), {
+      env: process.env,
+      stdout: (text) => process.stdout.write(text),
+      stderr: (text) => process.stderr.write(text),
+      readStdin,
+    });
+  }
   if (group === "evaluate") {
     // Loaded only here: the evaluation calls the real Jev and runs only on request.
     const { runEvaluation } = await import("./evaluate.ts");
@@ -75,7 +85,19 @@ async function main(args: string[]): Promise<number> {
     });
   }
   process.stderr.write(
-    'Usage: sally hook message|reply\n       sally install [--yes]\n       sally uninstall\n       sally rules list|show|create|edit\n       sally settings stop-on-failure [on|off]\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n       sally evaluate FILE [--scale]\n',
+    [
+      "Usage: node src/cli.ts sally-install [--yes]",
+      "       node src/cli.ts sally-uninstall",
+      "       node src/cli.ts app [--port N]",
+      "       node src/cli.ts settings stop-on-failure [on|off]",
+      '       node src/cli.ts wrong-match "<rule name>"',
+      "       node src/cli.ts rules list|show|create|edit",
+      "       node src/cli.ts import start|add|show|list|backup|removed",
+      "       node src/cli.ts evaluate FILE [--scale]",
+      "       node src/cli.ts hook message|reply",
+      "Run it in Sally's folder, or give the full path to src/cli.ts.",
+      "",
+    ].join("\n"),
   );
   return 1;
 }

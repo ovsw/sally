@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { install, uninstall } from "./install.ts";
+import { dependenciesPresent, dependencyCommand, runDownload, SALLY_DIR } from "./dependencies.ts";
+import { install, skillInstructionsPath, uninstall } from "./install.ts";
 import { createJevMatcher } from "./jev.ts";
 import type { Matcher } from "./matcher.ts";
 import { apiKeyPath, configDir, databasePath, type Env, findApiKey } from "./paths.ts";
@@ -28,6 +29,14 @@ export interface InstallCommandOptions {
   cliPath?: string;
   /** Returns what `claude --version` prints; defaults to running it. */
   claudeVersion?: () => string | undefined;
+  /** Sally's folder, whose dependencies install downloads; defaults to this checkout. */
+  sallyDir?: string;
+  /**
+   * Runs the command that downloads the dependencies in Sally's folder and
+   * returns whether it worked; defaults to running it, with the package
+   * manager's output let through.
+   */
+  downloadDependencies?: (command: string, dir: string) => boolean;
 }
 
 const isWindows = process.platform === "win32";
@@ -36,7 +45,33 @@ const isWindows = process.platform === "win32";
 function nodeProblem(version: string): string | undefined {
   const major = Number(/^v?(\d+)/.exec(version)?.[1]);
   if (major >= MIN_NODE_MAJOR) return undefined;
-  return `Sally needs Node ${MIN_NODE_MAJOR} or later, and this is Node ${version.replace(/^v/, "")}. Install a newer Node, then run "sally install" again. Nothing was changed.`;
+  return `Sally needs Node ${MIN_NODE_MAJOR} or later, and this is Node ${version.replace(/^v/, "")}. Install a newer Node, then run "node src/cli.ts sally-install" again in Sally's folder. Nothing was changed.`;
+}
+
+/**
+ * Downloads the dependencies the web app needs when they are not there yet,
+ * or not in step with the lockfile. A failed download does not stop the
+ * install: it returns what to tell the user at the end, with the command to
+ * retry, and the command then exits with 1. SALLY_SKIP_DEPENDENCIES skips the
+ * step, for tests that run the command line.
+ */
+function ensureDependencies(options: InstallCommandOptions): string | undefined {
+  const { env } = options;
+  const dir = options.sallyDir ?? SALLY_DIR;
+  if (env.SALLY_SKIP_DEPENDENCIES || dependenciesPresent(dir)) return undefined;
+  const command = dependencyCommand(dir, env);
+  options.stdout(`Downloading the dependencies Sally's web app needs (${command}). This can take a minute...\n`);
+  let worked: boolean;
+  try {
+    worked = (options.downloadDependencies ?? runDownload)(command, dir);
+  } catch {
+    worked = false;
+  }
+  if (worked) {
+    options.stdout("Downloaded the dependencies.\n");
+    return undefined;
+  }
+  return `The web app needs Sally's dependencies, and downloading them failed; everything else is installed. To retry, in Sally's folder, ${dir}, run: ${command}`;
 }
 
 /** Why a key test failed, in words that tell a wrong key from a network problem. */
@@ -112,6 +147,7 @@ async function askKey(prompt: Prompt): Promise<string> {
 async function guidedInstall(options: InstallCommandOptions, prompt: Prompt): Promise<number> {
   const { env, stdout, stderr } = options;
   const say = (line: string) => stdout(line + "\n");
+  const dependencyFailure = ensureDependencies(options);
   const matcherFor = options.matcherFor ?? ((apiKey: string) => createJevMatcher({ apiKey }));
   const keyPath = apiKeyPath(env);
 
@@ -158,29 +194,47 @@ async function guidedInstall(options: InstallCommandOptions, prompt: Prompt): Pr
   openStore(dbPath).close();
   say(existed ? `The database is at ${dbPath}.` : `Created the database at ${dbPath}.`);
 
-  const { changes, warnings } = install({ env, cliPath: options.cliPath, claudeVersion: options.claudeVersion });
+  const { changes, warnings, skillInstalled } = install({
+    env,
+    cliPath: options.cliPath,
+    claudeVersion: options.claudeVersion,
+  });
   for (const change of changes) say(change);
-  if (changes.length === 0) say("The hooks and the authority line were already in place.");
+  if (changes.length === 0) {
+    say(
+      skillInstalled
+        ? "The hooks, the import skill and the authority line were already in place."
+        : "The hooks and the authority line were already in place.",
+    );
+  }
   for (const warning of warnings) stderr(warning + "\n");
 
   say("");
   say("Sally is installed.");
-  say("Next step: import your rules. In Claude Code, ask Claude to import your rules file into Sally.");
-  say('To open the web app, run "sally app" and open the address it prints.');
-  return 0;
+  say(
+    skillInstalled
+      ? "Next step: import your rules. In Claude Code, type /sally-import, or ask Claude to import your rules file into Sally."
+      : `Next step: import your rules. Sally's import skill is not installed, so ask Claude in Claude Code to follow the import instructions at ${skillInstructionsPath(options.cliPath)}.`,
+  );
+  say('To open the web app, run "node src/cli.ts app" in Sally\'s folder and open the address it prints.');
+  if (dependencyFailure) stderr(dependencyFailure + "\n");
+  // Everything else is done, but the command did not finish its job.
+  return dependencyFailure ? 1 : 0;
 }
 
 /**
- * `sally install [--yes]`. In a terminal it is guided: it checks Node, finds
- * or asks for the API key, tests it, saves it, creates the database and
- * registers the hooks. With input that is not a terminal, or with `--yes`, it
- * asks nothing and only registers the hooks and the authority line.
+ * `node src/cli.ts sally-install [--yes]`. It first downloads the
+ * dependencies the web app needs, when they are missing. In a terminal it is
+ * guided: it checks Node, finds or asks for the API key, tests it, saves it,
+ * creates the database and registers the hooks and the import skill. With
+ * input that is not a terminal, or with `--yes`, it asks nothing and only
+ * registers the hooks, the import skill and the authority line.
  */
 export async function runInstall(args: string[], options: InstallCommandOptions): Promise<number> {
   const { stdout, stderr } = options;
   const unknown = args.filter((arg) => arg !== "--yes");
   if (unknown.length > 0) {
-    stderr(`Unknown option ${unknown[0]}. Usage: sally install [--yes]\n`);
+    stderr(`Unknown option ${unknown[0]}. Usage: node src/cli.ts sally-install [--yes]\n`);
     return 1;
   }
   const problem = nodeProblem(options.nodeVersion ?? process.versions.node);
@@ -197,6 +251,7 @@ export async function runInstall(args: string[], options: InstallCommandOptions)
         prompt.close();
       }
     }
+    const dependencyFailure = ensureDependencies(options);
     const { changes, warnings } = install({
       env: options.env,
       cliPath: options.cliPath,
@@ -204,7 +259,8 @@ export async function runInstall(args: string[], options: InstallCommandOptions)
     });
     for (const warning of warnings) stderr(warning + "\n");
     stdout((changes.length > 0 ? changes.join("\n") : "Sally is already installed.") + "\n");
-    return 0;
+    if (dependencyFailure) stderr(dependencyFailure + "\n");
+    return dependencyFailure ? 1 : 0;
   } catch (error) {
     stderr((error instanceof Error ? error.message : String(error)) + "\n");
     return 1;
@@ -212,17 +268,18 @@ export async function runInstall(args: string[], options: InstallCommandOptions)
 }
 
 /**
- * `sally uninstall`: removes the hooks and the authority line, and leaves the
+ * `node src/cli.ts sally-uninstall`: removes the hooks, the import skill and the authority line, and leaves the
  * API key and the database, saying where they are.
  */
 export function runUninstall(args: string[], options: Pick<InstallCommandOptions, "env" | "stdout" | "stderr">): number {
   const { env, stdout, stderr } = options;
   if (args.length > 0) {
-    stderr(`Unknown option ${args[0]}. Usage: sally uninstall\n`);
+    stderr(`Unknown option ${args[0]}. Usage: node src/cli.ts sally-uninstall\n`);
     return 1;
   }
   try {
-    const { changes } = uninstall({ env });
+    const { changes, warnings } = uninstall({ env });
+    for (const warning of warnings) stderr(warning + "\n");
     const lines = changes.length > 0 ? changes : ["Sally is not installed."];
     if (existsSync(apiKeyPath(env))) lines.push(`Your API key is still at ${apiKeyPath(env)}.`);
     if (existsSync(databasePath(env))) lines.push(`Your database, with your rules, is still at ${databasePath(env)}.`);

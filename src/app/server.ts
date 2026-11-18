@@ -2,6 +2,7 @@ import { createReadStream, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join, resolve, sep } from "node:path";
+import type { ImportService } from "../import.ts";
 import type { RulesService } from "../rules.ts";
 import { handleApi } from "./api.ts";
 
@@ -22,6 +23,7 @@ const CONTENT_TYPES: Record<string, string> = {
 
 export interface AppServerOptions {
   rules: RulesService;
+  imports: ImportService;
   /** The built web app. Without it only the API is served. */
   webDir?: string;
 }
@@ -93,7 +95,7 @@ export function createAppServer(options: AppServerOptions): Server {
         res.writeHead(403).end();
         return;
       }
-      void handleApi(options.rules, req, res, url);
+      void handleApi(options.rules, options.imports, req, res, url);
       return;
     }
     if (req.method !== "GET" && req.method !== "HEAD") {

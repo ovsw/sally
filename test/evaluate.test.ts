@@ -263,7 +263,7 @@ describe("the command", () => {
   it("explains itself", () => {
     const result = sally("--help");
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("sally evaluate FILE");
+    expect(result.stdout).toContain("node src/cli.ts evaluate FILE");
   });
 
   it("needs one evaluation file", () => {

@@ -1,4 +1,6 @@
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
@@ -62,7 +64,7 @@ it("lets the turn through with a warning and exits successfully on unreadable in
 
 it("switches stopping on a failed check off and on from the command line", () => {
   const settings = (...args: string[]) =>
-    spawnSync(process.execPath, [cli, "settings", ...args], { encoding: "utf8", env: { PATH: process.env.PATH, ...sandbox.env } });
+    spawnSync(process.execPath, [cli, "settings", ...args], { encoding: "utf8", env: sandbox.childEnv() });
   sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
 
   expect(settings("stop-on-failure").stdout).toBe("Stop on failure is on: when a check fails, Sally stops the turn.\n");
@@ -76,5 +78,28 @@ it("switches stopping on a failed check off and on from the command line", () =>
 
   const wrong = settings("stop-on-failure", "maybe");
   expect(wrong.status).toBe(1);
-  expect(wrong.stderr).toBe("Usage: sally settings stop-on-failure [on|off]\n");
+  expect(wrong.stderr).toBe("Usage: node src/cli.ts settings stop-on-failure [on|off]\n");
+});
+
+it("loads none of the import on the hook path", () => {
+  const loads = join(sandbox.root, "loads.txt");
+  sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+  for (const hook of ["message", "reply"]) {
+    const result = spawnSync(
+      process.execPath,
+      // A file URL: on Windows a bare absolute path reads as a URL with the scheme "c:".
+      ["--import", pathToFileURL(join(import.meta.dirname, "support", "record-loads.ts")).href, cli, "hook", hook],
+      {
+        input: hookInput("hello there"),
+        encoding: "utf8",
+        env: sandbox.childEnv({ SALLY_TEST_LOADS: loads }),
+      },
+    );
+    expect(result.status).toBe(0);
+  }
+  const loaded = readFileSync(loads, "utf8").split("\n").filter(Boolean);
+  // The recorder works: the hooks' own modules are listed.
+  expect(loaded.some((url) => url.endsWith("/src/message-hook.ts"))).toBe(true);
+  expect(loaded.filter((url) => /\/src\/(import|import-command)\.ts$/.test(url))).toEqual([]);
+  expect(loaded.filter((url) => url.includes("/src/app/"))).toEqual([]);
 });

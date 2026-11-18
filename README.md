@@ -121,10 +121,10 @@ more first, with the full time limit again.
   warning that it was not checked. Claude is not made to continue.
 
 To let turns through when a check fails, switch off "Stop the turn when a
-check fails" on the Settings screen, or run:
+check fails" on the Settings screen, or run this in Sally's folder:
 
 ```sh
-sally settings stop-on-failure off   # on switches it back; no value shows it
+node src/cli.ts settings stop-on-failure off   # on switches it back; no value shows it
 ```
 
 Having no live rules is not a failure: nothing is asked of Jev and nothing
@@ -133,8 +133,10 @@ say) never blocks you: the turn goes through, with a warning.
 
 ## Tending the rules: the web app
 
+Run this in Sally's folder:
+
 ```sh
-sally app            # or: node src/cli.ts app [--port N]
+node src/cli.ts app            # or: node src/cli.ts app --port N
 ```
 
 It prints its address (`http://127.0.0.1:4517` by default; `--port` or
@@ -196,10 +198,11 @@ with.
   it right. A match with no flag counts as right, so you never have to mark
   them all.
 - **Claude can report one too.** Sally's output ends with a line telling
-  Claude how:
+  Claude how. The command names Sally's command line by its full path, so it
+  runs from the folder Claude is working in:
 
   ```sh
-  sally wrong-match "<rule name>"
+  node "<Sally's folder>/src/cli.ts" wrong-match "<rule name>"
   ```
 
   It flags the session's most recent match of that rule as a wrong match
@@ -216,40 +219,105 @@ with.
 
 ## Install
 
+Sally runs on Linux, macOS and Windows.
+
+### What you need
+
+- **Node 24 or newer.** The database is SQLite, which ships with Node, so
+  there is nothing else to set up.
+- **git**, to get Sally and because a project is a git repository.
+- **Claude Code 2.1.139 or newer.** Install warns you when yours is older.
+- **A Jev API key from TypeSafe.** Jev is in early access.
+
+### Steps
+
+The same commands work in a terminal on Linux and macOS and in PowerShell on
+Windows.
+
 ```sh
-node src/cli.ts install     # from this checkout
-node src/cli.ts uninstall   # backs it out
+git clone https://github.com/ovsw/sally.git
+cd sally
+node src/cli.ts sally-install
 ```
 
-Install registers the message hook (`UserPromptSubmit`) and the reply hook
-(`Stop`) in `~/.claude/settings.json`, pointing at this checkout, and adds one
-line to `~/.claude/CLAUDE.md` saying that the rules Sally attaches are yours and
-carry the same authority as that file. Running it again changes nothing.
-Uninstall removes exactly those entries. Both leave everything else in the two
-files as it was, and both follow `CLAUDE_CONFIG_DIR` when it is set.
+Install then walks you through the rest:
+
+1. It checks your Node version.
+2. It downloads the dependencies the web app needs, with pnpm if you have it
+   and otherwise with pnpm fetched through npm for that one command, so you
+   get the tested versions without installing pnpm. This can take a minute.
+   If the download fails, install still does everything else and ends with
+   the command to retry it.
+3. It asks you to paste your API key. What you type is not shown. A key
+   already in `TYPESAFE_API_KEY` or in the key file is used instead.
+4. It tests the key with one call to Jev. If the test fails it says why, and
+   you can paste again or save the key anyway.
+5. It saves the key and creates the database.
+6. It registers the message hook (`UserPromptSubmit`) and the reply hook
+   (`Stop`) in `~/.claude/settings.json`, pointing at this checkout, and adds
+   one line to `~/.claude/CLAUDE.md` saying that the rules Sally attaches are
+   yours and carry the same authority as that file.
+7. It adds the `sally-import` skill to Claude Code.
+
+Sally has no rules yet, so it does nothing until you give it some. In Claude
+Code, type `/sally-import` to bring in the rules you already keep in your
+rules files; the Guide in the web app (`node src/cli.ts app`) explains the
+import and how to write a rule that matches well.
+
+Keep the checkout where it is: the hooks and the skill point at it. If you
+move it, run `node src/cli.ts sally-install` again from the new place.
+
+`node src/cli.ts sally-install --yes` asks nothing: it downloads the
+dependencies when they are missing, registers the hooks, the authority line
+and the skill, and leaves the key to you. Install does the same
+when it is not run in a terminal. Running install again changes nothing.
+
+### Uninstall
+
+```sh
+node src/cli.ts sally-uninstall
+```
+
+Uninstall removes the hooks, the authority line and the skill, and leaves
+everything else in those files as it was. It keeps your key and your database
+and tells you where they are. Both commands follow `CLAUDE_CONFIG_DIR` when it
+is set.
 
 ### Where things live
 
 - **API key**: the `TYPESAFE_API_KEY` environment variable, or the file
-  `~/.config/sally/api_key` (readable only by you: `chmod 600`). Without a key
+  `~/.config/sally/api_key`, which install writes readable only by you.
+  Without a key
   every check fails as soon as you have a live rule: see
   [When a check fails](#when-a-check-fails).
 - **Database**: `~/.local/share/sally/sally.db` (SQLite). It holds your rules
   and every check, including the full text of your messages, so it never
   belongs in a repository.
 
+- **Backups of rules files**: `~/.local/share/sally/backups/`, made before an
+  import removes anything from a rules file.
+
+On Windows `~` is your user folder (`%USERPROFILE%`), and the key file takes
+its access from that folder.
+
 `XDG_CONFIG_HOME` and `XDG_DATA_HOME` move these folders as usual;
 `SALLY_CONFIG_DIR` and `SALLY_DATA_DIR` override them outright.
 
 ## The command line
 
-- **`sally install` / `sally uninstall`:** see [Install](#install).
-- **`sally app`:** starts the web app.
-- **`sally settings stop-on-failure [on|off]`:** see
+Sally has no command of its own on your PATH. Run its command line with Node
+from Sally's folder, as `node src/cli.ts <command>`, or from anywhere with the
+full path: `node "<Sally's folder>/src/cli.ts" <command>`.
+
+- **`sally-install` / `sally-uninstall`:** see [Install](#install).
+- **`app`:** starts the web app.
+- **`settings stop-on-failure [on|off]`:** see
   [When a check fails](#when-a-check-fails).
-- **`sally wrong-match "<rule name>"`:** see [Wrong matches](#wrong-matches).
-- **`sally rules ...`:** lets an agent read your rules and prepare drafts.
-- **`sally evaluate`:** measures matching against the real Jev.
+- **`wrong-match "<rule name>"`:** see [Wrong matches](#wrong-matches).
+- **`rules ...`:** lets an agent read your rules and prepare drafts.
+- **`import ...`:** what the `sally-import` skill runs to record an
+  import, back up a rules file and note that it was cleaned up.
+- **`evaluate`:** measures matching against the real Jev.
 
 ### Commands for agents
 
@@ -258,20 +326,20 @@ or delete a rule. Those stay with you in the web app, where the agent's drafts
 show up like your own. Output is JSON.
 
 ```sh
-sally rules list [--search TEXT] [--check-type message|reply] [--state live|draft]
-sally rules show RULE            # id or exact name: live version beside draft
-sally rules create --name NAME --check-type message|reply \
+node src/cli.ts rules list [--search TEXT] [--check-type message|reply] [--state live|draft]
+node src/cli.ts rules show RULE   # id or exact name: live version beside draft
+node src/cli.ts rules create --name NAME --check-type message|reply \
   --instruction TEXT --condition TEXT [--condition TEXT ...]
-sally rules edit RULE [--name NAME] [--check-type message|reply] \
+node src/cli.ts rules edit RULE [--name NAME] [--check-type message|reply] \
   [--instruction TEXT] [--condition TEXT ...]
 ```
 
-`sally rules help` lists every option.
+`node src/cli.ts rules help` lists every option.
 
 ### Evaluation
 
 ```sh
-sally evaluate FILE [--scale]
+node src/cli.ts evaluate FILE [--scale]
 ```
 
 Runs a file of saved messages and replies, each with the rules expected to
@@ -300,15 +368,20 @@ pnpm install
 pnpm check   # typecheck, lint and tests
 ```
 
-The user-prompt-submit hook runs `sally hook message`; the stop hook runs
-`sally hook reply`.
+The user-prompt-submit hook runs `node <checkout>/src/cli.ts hook message`;
+the stop hook runs `node <checkout>/src/cli.ts hook reply`.
 
 `pnpm dev` runs the web app with hot reload on sample data: a database in
 `.dev/` and a stand-in matcher, so it needs no API key and never touches the
-real database. `pnpm dev --fresh` starts the sample data over.
+real database. `pnpm dev --fresh` starts the sample data over, and
+`pnpm dev --empty` starts with no rules, as a new user sees it.
+
+The advice on writing rules lives in one file,
+[`docs/writing-rules.md`](docs/writing-rules.md). The Guide page in the web
+app shows it, and the import skill reads it.
 
 The web app is React with shadcn/ui, in `web/`. `pnpm dev:web` serves it with
-hot reload and sends `/api` to a running `sally app`. Layouts and components
+hot reload and sends `/api` to a running `node src/cli.ts app`. Layouts and components
 come from shadcn blocks through the `@shadcnblocks` registry set up in
 `components.json`; adding one needs `SHADCNBLOCKS_API_KEY` in the environment
 (for example in `.env.local`, which is never committed):

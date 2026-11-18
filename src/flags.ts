@@ -5,7 +5,7 @@ import { type Store, transaction } from "./store.ts";
 /** A wrong match is a match of a rule that did not apply; a right match is a match of one that did. */
 export type Verdict = "wrong" | "right";
 
-/** Who raised a flag: Claude (with `sally wrong-match`) or the user in the app. */
+/** Who raised a flag: Claude (with the `wrong-match` command) or the user in the app. */
 export type RaisedBy = "claude" | "user";
 
 /** What a saved case expects of its rule on its text. */

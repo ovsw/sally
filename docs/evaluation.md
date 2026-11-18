@@ -1,21 +1,23 @@
 # Evaluation against the real Jev
 
-`sally evaluate` measures how well the engine matches on real text. It takes a
-file of saved messages and replies, each with the rules expected to match, runs
-every one through the engine with the real Jev matcher, and reports right
-matches, wrong matches and misses, with timing and tokens.
+The `evaluate` command measures how well the engine matches on real text. It
+takes a file of saved messages and replies, each with the rules expected to
+match, runs every one through the engine with the real Jev matcher, and reports
+right matches, wrong matches and misses, with timing and tokens.
 
 It calls Jev, so it needs an API key (`TYPESAFE_API_KEY` or
 `~/.config/sally/api_key`) and costs a little. It runs only when you ask for
 it. It is not part of `pnpm check` or CI, and the tests run it only with a
 stand-in matcher.
 
+Run it in Sally's folder:
+
 ```sh
-sally evaluate ~/sally-eval/evaluation.json             # or: node src/cli.ts evaluate FILE
-sally evaluate ~/sally-eval/evaluation.json --scale     # pad to 400 conditions per check type
-sally evaluate FILE --scale --conditions 800            # pad to 800 (needs your own padding)
-sally evaluate FILE --cutoff 0.7 --time-limit 5000
-sally evaluate FILE --json                              # every case, with scores, as JSON
+node src/cli.ts evaluate ~/sally-eval/evaluation.json           # or: pnpm evaluate FILE
+node src/cli.ts evaluate ~/sally-eval/evaluation.json --scale   # pad to 400 conditions per check type
+node src/cli.ts evaluate FILE --scale --conditions 800          # pad to 800 (needs your own padding)
+node src/cli.ts evaluate FILE --cutoff 0.7 --time-limit 5000
+node src/cli.ts evaluate FILE --json                            # every case, with scores, as JSON
 ```
 
 The rules come from the file, not from your database. The command builds them

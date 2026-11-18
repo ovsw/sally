@@ -1,12 +1,11 @@
 // The Rule screen: the live version beside the draft, then the version
 // history. The draft form follows the shadcnblocks block form-layouts-1
 // (vertical field layout).
+import { LabelWithHelp, ruleHelp } from "@/components/field-help";
 import {
   ArrowLeft,
-  Check,
   FilePen,
   Loader2,
-  Plus,
   Trash2,
   Undo2,
   Upload,
@@ -15,6 +14,7 @@ import {
 import * as React from "react";
 
 import { RescoreDialog } from "@/components/rescore-dialog";
+import { ConditionsField, InstructionField, SaveStatus } from "@/components/rule-fields";
 import { RuleAnalyticsPanel } from "@/components/rule-analytics";
 import {
   AlertDialog,
@@ -32,7 +32,6 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
-  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -46,7 +45,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import {
   deleteRule,
   discardDraft,
@@ -58,15 +56,14 @@ import {
   rescoreDraft,
   type RescoreResult,
   type RuleDetail,
-  saveDraft,
   startDraftFrom,
   switchRule,
   type Scope,
   type VersionView,
 } from "@/lib/api";
+import { errorText, useDraftSaver } from "@/lib/draft-saver";
 import { followLink, navigate } from "@/lib/router";
 
-const SAVE_DELAY_MS = 500;
 /** Typing in one field with pauses shorter than this is undone in one step. */
 const UNDO_GROUP_MS = 1000;
 const UNDO_LIMIT = 200;
@@ -79,41 +76,6 @@ interface UndoStep {
   content: VersionView;
   hadDraft: boolean;
   liveNumber: number | null;
-}
-
-type SaveState =
-  | { kind: "idle" }
-  | { kind: "pending" }
-  | { kind: "saving" }
-  | { kind: "saved" }
-  | { kind: "error"; message: string };
-
-function SaveStatus({ state, hasDraft }: { state: SaveState; hasDraft: boolean }) {
-  const text =
-    state.kind === "pending" || state.kind === "saving"
-      ? "Saving..."
-      : state.kind === "saved"
-        ? "Draft saved"
-        : state.kind === "error"
-          ? "Not saved"
-          : hasDraft
-            ? "Draft saved"
-            : "No draft";
-  return (
-    <span
-      className="flex items-center gap-1.5 text-sm text-muted-foreground"
-      aria-live="polite"
-    >
-      {state.kind === "pending" || state.kind === "saving" ? (
-        <Loader2 className="size-4 animate-spin" />
-      ) : state.kind === "error" ? (
-        <X className="size-4 text-destructive" />
-      ) : hasDraft ? (
-        <Check className="size-4" />
-      ) : null}
-      {text}
-    </span>
-  );
 }
 
 function LiveVersion({ rule }: { rule: RuleDetail }) {
@@ -208,7 +170,9 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
 
   return (
     <Field>
-      <FieldLabel htmlFor="draft-scope">Scope</FieldLabel>
+      <LabelWithHelp htmlFor="draft-scope" label="Scope">
+        {ruleHelp.scope}
+      </LabelWithHelp>
       <Select
         value={value.kind}
         onValueChange={(kind) =>
@@ -256,11 +220,6 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
             ))}
           </div>
         ))}
-      <FieldDescription>
-        A project is a git repository, named by its remote, so every worktree
-        of it counts as one project. Rules outside the session&apos;s project are
-        never checked.
-      </FieldDescription>
     </Field>
   );
 }
@@ -285,29 +244,12 @@ function DraftForm({
   projectsError,
   onRetryProjects,
 }: DraftFormProps) {
-  const setCondition = (index: number, text: string) =>
-    onChange(
-      {
-        ...value,
-        conditions: value.conditions.map((c, i) => (i === index ? text : c)),
-      },
-      `condition-${index}`,
-    );
-  const removeCondition = (index: number) =>
-    onChange(
-      {
-        ...value,
-        conditions: value.conditions.filter((_, i) => i !== index),
-      },
-      null,
-    );
-  const addCondition = () =>
-    onChange({ ...value, conditions: [...value.conditions, ""] }, null);
-
   return (
     <FieldGroup>
       <Field>
-        <FieldLabel htmlFor="draft-name">Name</FieldLabel>
+        <LabelWithHelp htmlFor="draft-name" label="Name">
+          {ruleHelp.name}
+        </LabelWithHelp>
         <Input
           id="draft-name"
           className="bg-background"
@@ -315,60 +257,16 @@ function DraftForm({
           onChange={(e) => onChange({ ...value, name: e.target.value }, "name")}
         />
       </Field>
-      <Field>
-        <FieldLabel>Conditions</FieldLabel>
-        <div className="space-y-2">
-          {value.conditions.map((condition, index) => (
-            <div key={index} className="flex items-start gap-2">
-              <Input
-                className="bg-background"
-                aria-label={`Condition ${index + 1}`}
-                value={condition}
-                onChange={(e) => setCondition(index, e.target.value)}
-                placeholder={
-                  checkType === "message"
-                    ? "The message asks for..."
-                    : "The reply reports..."
-                }
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="shrink-0"
-                aria-label={`Remove condition ${index + 1}`}
-                onClick={() => removeCondition(index)}
-              >
-                <X />
-              </Button>
-            </div>
-          ))}
-          <Button type="button" variant="outline" size="sm" onClick={addCondition}>
-            <Plus />
-            Add condition
-          </Button>
-        </div>
-        <FieldDescription>
-          The rule matches when any one condition holds. Write each as a short,
-          concrete statement about the{" "}
-          {checkType === "message" ? "user's message" : "final reply"}.
-        </FieldDescription>
-      </Field>
-      <Field>
-        <FieldLabel htmlFor="draft-instruction">Instruction</FieldLabel>
-        <Textarea
-          id="draft-instruction"
-          className="min-h-[140px] bg-background"
-          value={value.instruction}
-          onChange={(e) =>
-            onChange({ ...value, instruction: e.target.value }, "instruction")
-          }
-        />
-        <FieldDescription>
-          Claude receives this word for word. Worth having only when it is not
-          already implied by the text that triggers it.
-        </FieldDescription>
-      </Field>
+      <ConditionsField
+        conditions={value.conditions}
+        checkType={checkType}
+        onChange={(conditions, field) => onChange({ ...value, conditions }, field)}
+      />
+      <InstructionField
+        id="draft-instruction"
+        instruction={value.instruction}
+        onChange={(instruction) => onChange({ ...value, instruction }, "instruction")}
+      />
       <ScopeField
         value={value.scope}
         onChange={(scope) => onChange({ ...value, scope }, null)}
@@ -462,7 +360,6 @@ function VersionHistory({
   );
 }
 
-const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function RuleScreen({ id }: { id: number }) {
   const [rule, setRuleState] = React.useState<RuleDetail | null>(null);
@@ -471,7 +368,6 @@ export function RuleScreen({ id }: { id: number }) {
   const [projects, setProjects] = React.useState<Project[] | null>(null);
   const [projectsError, setProjectsError] = React.useState<string | null>(null);
   const [projectsAttempt, setProjectsAttempt] = React.useState(0);
-  const [save, setSave] = React.useState<SaveState>({ kind: "idle" });
   const [action, setAction] = React.useState<string | null>(null);
   /** The draft's re-score against the saved cases, shown before publishing. */
   const [rescore, setRescore] = React.useState<Exclude<RescoreResult, { status: "no_cases" }> | null>(
@@ -479,9 +375,6 @@ export function RuleScreen({ id }: { id: number }) {
   );
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [undoSteps, setUndoSteps] = React.useState(0);
-  const timer = React.useRef<number | undefined>(undefined);
-  const latest = React.useRef<VersionView | null>(null);
-  const inFlight = React.useRef<Promise<boolean>>(Promise.resolve(true));
   const ruleRef = React.useRef<RuleDetail | null>(null);
   const undoStack = React.useRef<UndoStep[]>([]);
   const lastTyped = React.useRef<{ field: string; at: number } | null>(null);
@@ -494,6 +387,8 @@ export function RuleScreen({ id }: { id: number }) {
     ruleRef.current = next;
     setRuleState(next);
   }, []);
+  const saver = useDraftSaver(id, setRule);
+  const { state: save, setState: setSave, flush, replacing: replacingDraft } = saver;
 
   React.useEffect(() => {
     let stale = false;
@@ -528,73 +423,6 @@ export function RuleScreen({ id }: { id: number }) {
     setProjectsAttempt((n) => n + 1);
   }, []);
 
-  /**
-   * Saves the latest edits now; saves run one after another. Resolves to
-   * whether the last save succeeded.
-   */
-  const flush = React.useCallback((): Promise<boolean> => {
-    window.clearTimeout(timer.current);
-    timer.current = undefined;
-    const content = latest.current;
-    if (!content) return inFlight.current;
-    latest.current = null;
-    inFlight.current = inFlight.current.then(async () => {
-      setSave({ kind: "saving" });
-      try {
-        const saved = await saveDraft(id, content);
-        setRule(saved);
-        setSave(latest.current ? { kind: "pending" } : { kind: "saved" });
-        return true;
-      } catch (e) {
-        setSave({ kind: "error", message: errorText(e) });
-        return false;
-      }
-    });
-    return inFlight.current;
-  }, [id, setRule]);
-
-  /**
-   * Holds back edits not yet sent, waits for the saves already sent, then runs
-   * `replace`, which replaces the draft. If `replace` fails, the held-back
-   * edits are scheduled to save again, so the form and the draft still agree.
-   */
-  const replacingDraft = async (replace: () => Promise<void>) => {
-    window.clearTimeout(timer.current);
-    timer.current = undefined;
-    const held = latest.current;
-    latest.current = null;
-    await inFlight.current;
-    try {
-      await replace();
-    } catch (e) {
-      if (held && !latest.current) {
-        latest.current = held;
-        setSave({ kind: "pending" });
-        timer.current = window.setTimeout(() => void flush(), SAVE_DELAY_MS);
-      }
-      throw e;
-    }
-  };
-
-  // Edits still waiting when the screen closes are saved straight away. When
-  // the page itself goes (tab closed, reload), the save is sent at once with
-  // keepalive so the browser lets it finish.
-  React.useEffect(() => {
-    const onPageHide = () => {
-      const content = latest.current;
-      if (!content) return;
-      window.clearTimeout(timer.current);
-      timer.current = undefined;
-      latest.current = null;
-      saveDraft(id, content, true).catch(() => undefined);
-    };
-    window.addEventListener("pagehide", onPageHide);
-    return () => {
-      window.removeEventListener("pagehide", onPageHide);
-      if (latest.current) void flush();
-    };
-  }, [id, flush]);
-
   const busySaving = save.kind === "pending" || save.kind === "saving";
   const showingDraft = (rule?.hasDraft ?? false) || busySaving;
 
@@ -615,10 +443,7 @@ export function RuleScreen({ id }: { id: number }) {
     setDraft(next);
     setActionError(null);
     edits.current += 1;
-    latest.current = next;
-    setSave({ kind: "pending" });
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => void flush(), SAVE_DELAY_MS);
+    saver.saveSoon(next);
   };
 
   const edit = (next: VersionView, field: string | null) => {
@@ -697,7 +522,7 @@ export function RuleScreen({ id }: { id: number }) {
     setRule(result.rule);
     // Edits typed while publishing stay in the form and are saved as the
     // next draft.
-    if (!latest.current) {
+    if (!saver.hasUnsent()) {
       setDraft(contentOf(result.rule));
       setSave({ kind: "idle" });
     }
@@ -737,13 +562,7 @@ export function RuleScreen({ id }: { id: number }) {
     act("switch", async () => {
       // In line with the saves, so a save answered earlier cannot show the
       // rule's old on or off after this.
-      const before = inFlight.current;
-      const switched = before.then(() => switchRule(id, on));
-      inFlight.current = switched.then(
-        () => before,
-        () => before,
-      );
-      setRule(await switched);
+      setRule(await saver.inLine(() => switchRule(id, on)));
     });
 
   const remove = () =>

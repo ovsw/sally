@@ -5,9 +5,9 @@ import { defineConfig } from "vite";
 
 const web = fileURLToPath(new URL("./web", import.meta.url));
 
-// The web app. `pnpm build` writes it to dist/web, which `sally app` serves.
+// The web app. `pnpm build` writes it to dist/web, which `node src/cli.ts app` serves.
 // `pnpm dev:web` serves it with hot reload and sends /api to a running
-// `sally app` (SALLY_API, default http://127.0.0.1:4517).
+// `node src/cli.ts app` (SALLY_API, default http://127.0.0.1:4517).
 export default defineConfig({
   root: web,
   plugins: [react(), tailwindcss()],

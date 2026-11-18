@@ -1,10 +1,11 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runMessageHook } from "../src/message-hook.ts";
 import { databasePath } from "../src/paths.ts";
 import { OLD_SCHEMA, OLD_SCHEMA_VERSION } from "./support/old-schema.ts";
+import { PREVIOUS_SCHEMA, PREVIOUS_SCHEMA_VERSION } from "./support/previous-schema.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { standInMatcher } from "./support/stand-in-matcher.ts";
 
@@ -134,7 +135,7 @@ describe("an old database", () => {
       { key: "stop_on_failure", value: 1 },
       { key: "time_limit_ms", value: 4000 },
     ]);
-    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 12 }]);
+    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 13 }]);
   });
 
   it("can have an attention reason cleared", () => {
@@ -153,6 +154,59 @@ describe("an old database", () => {
 
   it("ends in the same shape as a new database", () => {
     writeOldDatabase();
+    sandbox.withRules(() => undefined);
+
+    const fresh = createSandbox();
+    try {
+      fresh.withRules(() => undefined);
+      expect(schema(sandbox)).toEqual(schema(fresh));
+    } finally {
+      fresh.cleanup();
+    }
+  });
+});
+
+/** Writes a database in the shape before the import, holding one live rule. */
+function writePreviousDatabase(): void {
+  const path = databasePath(sandbox.env);
+  mkdirSync(dirname(path), { recursive: true });
+  const db = new DatabaseSync(path);
+  try {
+    db.exec(PREVIOUS_SCHEMA);
+    db.exec(`
+      INSERT INTO rules (id, name, check_type, created_at) VALUES (1, 'Kept rule', 'message', '${AT}');
+      INSERT INTO versions (id, rule_id, number, name, check_type, instruction, all_projects, created_at, published_at)
+        VALUES (1, 1, 1, 'Kept rule', 'message', 'Do the kept thing.', 1, '${AT}', '${AT}');
+      INSERT INTO conditions (id, version_id, position, text) VALUES (1, 1, 0, 'Condition K.');
+      PRAGMA user_version = ${PREVIOUS_SCHEMA_VERSION};
+    `);
+  } finally {
+    db.close();
+  }
+}
+
+describe("a database from before the import", () => {
+  it("upgrades, keeps its rules, and takes an import", () => {
+    writePreviousDatabase();
+
+    expect(sandbox.withRules((rules) => rules.liveRules("message"))).toMatchObject([
+      { ruleId: 1, name: "Kept rule", instruction: "Do the kept thing.", conditions: [{ text: "Condition K." }] },
+    ]);
+
+    const file = join(sandbox.root, ".claude", "CLAUDE.md");
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, "Always answer briefly.\n");
+    const detail = sandbox.withImports((imports) => {
+      const { id } = imports.startImport(file);
+      return imports.addPassages(id, [
+        { text: "Always answer briefly.", verdict: "always_rule", reason: "It applies on every turn." },
+      ]);
+    });
+    expect(detail.passages).toHaveLength(1);
+  });
+
+  it("ends in the same shape as a new database", () => {
+    writePreviousDatabase();
     sandbox.withRules(() => undefined);
 
     const fresh = createSandbox();

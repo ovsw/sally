@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ImportDetail, ImportSummary } from "../src/import.ts";
 import { runMessageHook } from "../src/message-hook.ts";
 import type { RuleDetail, RuleSummary } from "../src/rules.ts";
 import { type RunningApp, startApp } from "./support/app.ts";
@@ -425,5 +426,136 @@ describe("activity and analytics over HTTP", () => {
     });
     expect(cleared.rules).toEqual([]);
     expect((await app.json<{ rules: unknown[] }>("GET", "/api/attention")).rules).toEqual([]);
+  });
+});
+
+describe("the import", () => {
+  /** Starts an import of the sandbox's global rules file with one passage of each kind. */
+  function seedImport(): number {
+    const file = join(sandbox.root, ".claude", "CLAUDE.md");
+    mkdirSync(join(sandbox.root, ".claude"), { recursive: true });
+    writeFileSync(file, "Answer briefly.\n\nWhen a page changes, give the local link.\n");
+    return sandbox.withImports((imports) => {
+      const { id } = imports.startImport(file);
+      imports.addPassages(id, [
+        { text: "Answer briefly.", verdict: "always_rule", reason: "It applies on every turn." },
+        {
+          text: "When a page changes, give the local link.",
+          verdict: "becomes_rule",
+          reason: "Only some messages change a page.",
+          rules: [
+            {
+              name: "Local link",
+              instruction: "Give the local link.",
+              conditions: ["The message asks for a visual change."],
+            },
+          ],
+        },
+      ]);
+      return id;
+    });
+  }
+
+  it("lists imports with their pending count, and shows one with its passages in file order", async () => {
+    const id = seedImport();
+    const { imports } = await app.json<{ imports: ImportSummary[] }>("GET", "/api/imports");
+    expect(imports.map((i) => [i.id, i.passageCount, i.pendingCount])).toEqual([[id, 2, 2]]);
+
+    const detail = await app.json<ImportDetail>("GET", `/api/imports/${id}`);
+    expect(detail.scope).toEqual({ kind: "all" });
+    expect(detail.passages.map((p) => [p.position, p.verdict, p.text])).toEqual([
+      [1, "always_rule", "Answer briefly."],
+      [2, "becomes_rule", "When a page changes, give the local link."],
+    ]);
+    expect(detail.passages[1]!.rules[0]).toMatchObject({ decision: null, rule: { name: "Local link", state: "draft" } });
+  });
+
+  it("publishing a proposed rule makes it live from the next check and the passage no longer pending", async () => {
+    const id = seedImport();
+    const matcher = standInMatcher({ "The message asks for a visual change.": 0.9 });
+    expect(await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher })).toBe("");
+
+    const before = await app.json<ImportDetail>("GET", `/api/imports/${id}`);
+    const ruleId = before.passages[1]!.rules[0]!.ruleId!;
+    await app.json("POST", `/api/rules/${ruleId}/publish`, {});
+
+    const after = await app.json<ImportDetail>("GET", `/api/imports/${id}`);
+    expect(after.passages[1]!.rules[0]).toMatchObject({ decision: "published", rule: { state: "live" } });
+    expect(after.passages[1]!.pending).toBe(false);
+    expect(after.pendingCount).toBe(1);
+    expect(await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher })).toContain(
+      "Give the local link.",
+    );
+  });
+
+  it("records each decision and answers with the import, its pending count going down", async () => {
+    const id = seedImport();
+    const before = await app.json<ImportDetail>("GET", `/api/imports/${id}`);
+    const [stays, becomes] = before.passages;
+
+    const seen = await app.json<ImportDetail>("POST", `/api/passages/${stays!.id}/seen`, {});
+    expect(seen.passages[0]!.pending).toBe(false);
+    expect(seen.pendingCount).toBe(1);
+
+    const proposed = becomes!.rules[0]!;
+    await app.json("PUT", `/api/rules/${proposed.ruleId}/draft`, {
+      instruction: "Give the localhost link.",
+      conditions: ["The message asks for a visual change."],
+    });
+    const kept = await app.json<ImportDetail>("POST", `/api/proposed-rules/${proposed.id}/keep`, {});
+    expect(kept.passages[1]!.rules[0]).toMatchObject({
+      decision: "kept",
+      rule: { state: "draft", draft: { instruction: "Give the localhost link." } },
+    });
+    expect(kept.pendingCount).toBe(0);
+    expect((await app.json<{ imports: ImportSummary[] }>("GET", "/api/imports")).imports[0]!.pendingCount).toBe(0);
+
+    const published = await app.json<ImportDetail>("POST", `/api/proposed-rules/${proposed.id}/publish`, {});
+    expect(published.passages[1]!.rules[0]).toMatchObject({ decision: "published", rule: { state: "live" } });
+    const refused = await app.call("POST", `/api/proposed-rules/${proposed.id}/skip`, {});
+    expect(refused.status).toBe(400);
+  });
+
+  it("overrules a verdict both ways", async () => {
+    const id = seedImport();
+    const [stays, becomes] = (await app.json<ImportDetail>("GET", `/api/imports/${id}`)).passages;
+
+    const marked = await app.json<ImportDetail>("POST", `/api/passages/${becomes!.id}/stays`, {});
+    expect(marked.passages[1]).toMatchObject({ decision: "stays", pending: false });
+    expect(marked.passages[1]!.rules[0]!.decision).toBe("skipped");
+
+    const response = await app.call("POST", `/api/passages/${stays!.id}/rules`, {
+      name: "Brief answers",
+      checkType: "reply",
+      instruction: "Shorten the reply.",
+      conditions: ["The reply runs past three paragraphs."],
+    });
+    expect(response.status).toBe(201);
+    const written = (await response.json()) as ImportDetail;
+    expect(written.passages[0]).toMatchObject({ decision: "becomes_rule", pending: true });
+    expect(written.passages[0]!.rules[0]).toMatchObject({ decision: null, rule: { name: "Brief answers", state: "draft" } });
+
+    const skipped = await app.json<ImportDetail>(
+      "POST",
+      `/api/proposed-rules/${written.passages[0]!.rules[0]!.id}/skip`,
+      {},
+    );
+    expect(skipped.passages[0]!.rules[0]!.decision).toBe("skipped");
+    expect(skipped.pendingCount).toBe(0);
+  });
+
+  it("refuses a decision that is unknown, or about a passage or proposed rule that does not exist", async () => {
+    seedImport();
+    expect((await app.call("POST", "/api/proposed-rules/999/keep", {})).status).toBe(404);
+    expect((await app.call("POST", "/api/passages/999/seen", {})).status).toBe(404);
+    expect((await app.call("POST", "/api/passages/1/everything", {})).status).toBe(404);
+    expect((await app.call("POST", "/api/passages/1/rules", { name: "No body" })).status).toBe(400);
+  });
+
+  it("answers 404 for an import that does not exist", async () => {
+    const response = await app.call("GET", "/api/imports/42");
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "No import with id 42." });
+    expect((await app.call("GET", "/api/imports/abc")).status).toBe(404);
   });
 });

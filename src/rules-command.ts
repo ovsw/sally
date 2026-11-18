@@ -1,4 +1,4 @@
-// `sally rules ...`: the command line for agents. An agent can read rules and
+// `node src/cli.ts rules ...`: the command line for agents. An agent can read rules and
 // prepare drafts here; publishing, switching off and deleting stay with the
 // user in the web app. Everything goes through the rules service, so a draft
 // made here is the same draft the app shows.
@@ -22,13 +22,13 @@ export interface CommandIo {
 }
 
 export const RULES_USAGE = `Usage:
-  sally rules list [--search TEXT] [--check-type message|reply] [--state live|draft]
-                   [--with-draft | --without-draft]
-  sally rules show RULE
-  sally rules create --name NAME --check-type message|reply --instruction TEXT
-                     --condition TEXT [--condition TEXT ...]
-  sally rules edit RULE [--name NAME] [--check-type message|reply]
-                        [--instruction TEXT] [--condition TEXT ...]
+  node src/cli.ts rules list [--search TEXT] [--check-type message|reply] [--state live|draft]
+                             [--with-draft | --without-draft]
+  node src/cli.ts rules show RULE
+  node src/cli.ts rules create --name NAME --check-type message|reply --instruction TEXT
+                               --condition TEXT [--condition TEXT ...]
+  node src/cli.ts rules edit RULE [--name NAME] [--check-type message|reply]
+                                  [--instruction TEXT] [--condition TEXT ...]
 
 RULE is a rule's id or its exact name. Output is JSON.
 create makes a draft; edit changes the rule's draft, starting one from the
@@ -38,7 +38,7 @@ in Sally's web app, not by these commands.
 `;
 
 /** Commands an agent might try that are reserved for the user in the app. */
-const RESERVED: Record<string, string> = {
+export const RESERVED: Record<string, string> = {
   publish: "Publishing",
   "switch-off": "Switching off",
   off: "Switching off",
@@ -48,7 +48,7 @@ const RESERVED: Record<string, string> = {
   rm: "Deleting",
 };
 
-class UsageError extends Error {}
+export class UsageError extends Error {}
 
 const CHECK_TYPES: readonly CheckType[] = ["message", "reply"];
 const STATES: readonly RuleState[] = ["live", "draft"];
@@ -61,7 +61,7 @@ function oneOf<T extends string>(value: string | undefined, allowed: readonly T[
   return value as T;
 }
 
-function parse<T extends ParseArgsOptionsConfig>(args: string[], options: T) {
+export function parse<T extends ParseArgsOptionsConfig>(args: string[], options: T) {
   try {
     return parseArgs({ args, options, strict: true, allowPositionals: true });
   } catch (error) {
@@ -70,12 +70,12 @@ function parse<T extends ParseArgsOptionsConfig>(args: string[], options: T) {
 }
 
 function onePositional(positionals: string[], command: string): string {
-  if (positionals.length !== 1) throw new UsageError(`sally rules ${command} takes one rule: its id or its name.`);
+  if (positionals.length !== 1) throw new UsageError(`rules ${command} takes one rule: its id or its name.`);
   return positionals[0]!;
 }
 
 function noPositionals(positionals: string[], command: string): void {
-  if (positionals.length > 0) throw new UsageError(`sally rules ${command} takes no rule; got "${positionals[0]}".`);
+  if (positionals.length > 0) throw new UsageError(`rules ${command} takes no rule; got "${positionals[0]}".`);
 }
 
 /** Finds a rule by its id or by its exact name in force. */
@@ -86,7 +86,7 @@ function resolveRule(rules: RulesService, ref: string): number {
   return match.id;
 }
 
-const json = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
+export const json = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
 
 const editOptions = {
   name: { type: "string" },
@@ -125,7 +125,7 @@ function create(rules: RulesService, args: string[]): unknown {
   const { values, positionals } = parse(args, editOptions);
   noPositionals(positionals, "create");
   const missing = (["name", "check-type", "instruction", "condition"] as const).filter((key) => values[key] === undefined);
-  if (missing.length > 0) throw new UsageError(`sally rules create needs ${missing.map((key) => `--${key}`).join(", ")}.`);
+  if (missing.length > 0) throw new UsageError(`rules create needs ${missing.map((key) => `--${key}`).join(", ")}.`);
   const { ruleId } = rules.createRule({
     name: values.name!,
     checkType: oneOf(values["check-type"], CHECK_TYPES, "--check-type")!,
@@ -139,7 +139,7 @@ function edit(rules: RulesService, args: string[]): unknown {
   const { values, positionals } = parse(args, editOptions);
   const ruleId = resolveRule(rules, onePositional(positionals, "edit"));
   if (Object.values(values).every((value) => value === undefined)) {
-    throw new UsageError("sally rules edit needs at least one of --name, --check-type, --instruction, --condition.");
+    throw new UsageError("rules edit needs at least one of --name, --check-type, --instruction, --condition.");
   }
   const checkType = oneOf(values["check-type"], CHECK_TYPES, "--check-type");
   const rule = rules.getRule(ruleId);
@@ -157,7 +157,7 @@ function edit(rules: RulesService, args: string[]): unknown {
 
 const COMMANDS: Record<string, (rules: RulesService, args: string[]) => unknown> = { list, show, create, edit };
 
-/** Runs `sally rules <command> ...` and returns the exit code. */
+/** Runs `node src/cli.ts rules <command> ...` and returns the exit code. */
 export function runRulesCommand(args: string[], io: CommandIo): number {
   const [command, ...rest] = args;
   if (command === undefined || command === "help" || command === "--help" || command === "-h") {
@@ -167,14 +167,14 @@ export function runRulesCommand(args: string[], io: CommandIo): number {
   const reserved = RESERVED[command];
   if (reserved) {
     io.stderr(
-      `sally rules ${command}: ${reserved} a rule is done by the user in Sally's web app, not from the command line. ` +
+      `rules ${command}: ${reserved} a rule is done by the user in Sally's web app, not from the command line. ` +
         "These commands can list and show rules, and create or edit drafts. Nothing was changed.\n",
     );
     return 1;
   }
   const run = COMMANDS[command];
   if (!run) {
-    io.stderr(`Unknown command "sally rules ${command}".\n\n${RULES_USAGE}`);
+    io.stderr(`Unknown command "rules ${command}".\n\n${RULES_USAGE}`);
     return 1;
   }
   let store;

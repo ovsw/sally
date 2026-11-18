@@ -4,6 +4,19 @@ import { isAbsolute, join } from "node:path";
 
 export type Env = Record<string, string | undefined>;
 
+/** This checkout's command line: the program the hooks run. */
+export const CLI_PATH = join(import.meta.dirname, "cli.ts");
+
+/**
+ * Sally's command line as a command that runs from any folder:
+ * `node "<absolute path to src/cli.ts>"`. The path is written with forward
+ * slashes, so on Windows it works inside double quotes in both Git Bash and
+ * PowerShell.
+ */
+export function cliCommand(cliPath = CLI_PATH): string {
+  return `node "${cliPath.replaceAll("\\", "/")}"`;
+}
+
 function home(env: Env): string {
   return env.HOME || homedir();
 }

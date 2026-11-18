@@ -324,3 +324,87 @@ export type RescoreResult =
 export function rescoreDraft(id: number): Promise<RescoreResult> {
   return call("POST", `/api/rules/${id}/rescore`, {});
 }
+
+/** What the import proposes for a passage. */
+export type PassageVerdict = "becomes_rule" | "always_rule" | "too_vague";
+
+export interface ProposedRule {
+  id: number;
+  /** null once skipped. */
+  ruleId: number | null;
+  decision: "published" | "kept" | "skipped" | null;
+  rule: RuleDetail | null;
+}
+
+export interface Passage {
+  id: number;
+  /** Its place in the rules file: 1 for the first. */
+  position: number;
+  text: string;
+  verdict: PassageVerdict;
+  reason: string;
+  similarRule: string | null;
+  decision: "becomes_rule" | "stays" | null;
+  seenAt: string | null;
+  pending: boolean;
+  rules: ProposedRule[];
+}
+
+export interface ImportSummary {
+  id: number;
+  rulesFile: string;
+  scope: Scope;
+  createdAt: string;
+  removedAt: string | null;
+  passageCount: number;
+  pendingCount: number;
+}
+
+export interface ImportDetail extends ImportSummary {
+  passages: Passage[];
+}
+
+export function getImport(id: number): Promise<ImportDetail> {
+  return call("GET", `/api/imports/${id}`);
+}
+
+export function listImports(): Promise<ImportSummary[]> {
+  return call<{ imports: ImportSummary[] }>("GET", "/api/imports").then((r) => r.imports);
+}
+
+/** Tells the rest of the app, such as the sidebar's pending counts, that an import changed. */
+export const IMPORTS_CHANGED = "sally:imports-changed";
+
+/** Makes one decision in an import and answers with the import as it now is. */
+async function decide(path: string, body: unknown = {}): Promise<ImportDetail> {
+  const detail = await call<ImportDetail>("POST", path, body);
+  window.dispatchEvent(new Event(IMPORTS_CHANGED));
+  return detail;
+}
+
+export function publishProposedRule(proposalId: number): Promise<ImportDetail> {
+  return decide(`/api/proposed-rules/${proposalId}/publish`);
+}
+
+export function keepProposedRule(proposalId: number): Promise<ImportDetail> {
+  return decide(`/api/proposed-rules/${proposalId}/keep`);
+}
+
+export function skipProposedRule(proposalId: number): Promise<ImportDetail> {
+  return decide(`/api/proposed-rules/${proposalId}/skip`);
+}
+
+export function markPassageSeen(passageId: number): Promise<ImportDetail> {
+  return decide(`/api/passages/${passageId}/seen`);
+}
+
+export function markPassageStays(passageId: number): Promise<ImportDetail> {
+  return decide(`/api/passages/${passageId}/stays`);
+}
+
+export function writeRule(
+  passageId: number,
+  rule: { name: string; checkType: CheckType; instruction: string; conditions: string[] },
+): Promise<ImportDetail> {
+  return decide(`/api/passages/${passageId}/rules`, rule);
+}
