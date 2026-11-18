@@ -26,12 +26,22 @@ export function terminalPrompt(
       done();
     },
   });
-  const rl = createInterface({ input, output: gate, terminal: true });
+  // No history: a hidden answer must not come back with the Up key at a later question.
+  const rl = createInterface({ input, output: gate, terminal: true, historySize: 0 });
   rl.on("SIGINT", () => {
     output.write("\n");
     process.exit(130);
   });
-  const question = (text: string) => new Promise<string>((resolve) => rl.question(text, resolve));
+  // Input that ends before an answer (Ctrl-D, a closed pipe) fails the question instead of hanging.
+  const question = (text: string) =>
+    new Promise<string>((resolve, reject) => {
+      const closed = () => reject(new Error("Input ended before the question was answered."));
+      rl.once("close", closed);
+      rl.question(text, (answer) => {
+        rl.off("close", closed);
+        resolve(answer);
+      });
+    });
   return {
     ask: question,
     async askHidden(text) {

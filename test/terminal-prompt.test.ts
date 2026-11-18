@@ -29,9 +29,35 @@ it("shows an ordinary answer as it is typed", async () => {
   const prompt = terminalPrompt(terminal.input, terminal.output);
 
   const answer = prompt.ask("Paste again or save? ");
-  terminal.input.write("save\n");
+  terminal.input.write("anyway\n");
 
-  expect(await answer).toBe("save");
+  expect(await answer).toBe("anyway");
   prompt.close();
-  expect(terminal.shown()).toContain("save");
+  expect(terminal.shown()).toContain("anyway");
+});
+
+it("does not bring a hidden answer back with the Up key at the next question", async () => {
+  const terminal = fakeTerminal();
+  const prompt = terminalPrompt(terminal.input, terminal.output);
+
+  const hidden = prompt.askHidden("Paste your key: ");
+  terminal.input.write("sk-secret-123\n");
+  await hidden;
+
+  const next = prompt.ask("Paste again or save? ");
+  terminal.input.write("\x1b[A\n");
+
+  expect(await next).toBe("");
+  prompt.close();
+  expect(terminal.shown()).not.toContain("secret");
+});
+
+it("fails a question when the input ends before an answer", async () => {
+  const terminal = fakeTerminal();
+  const prompt = terminalPrompt(terminal.input, terminal.output);
+
+  const answer = prompt.ask("Paste again or save? ");
+  terminal.input.end();
+
+  await expect(answer).rejects.toThrow("Input ended");
 });
