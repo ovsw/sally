@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -86,7 +87,8 @@ it("loads none of the import on the hook path", () => {
   for (const hook of ["message", "reply"]) {
     const result = spawnSync(
       process.execPath,
-      ["--import", join(import.meta.dirname, "support", "record-loads.ts"), cli, "hook", hook],
+      // A file URL: on Windows a bare absolute path reads as a URL with the scheme "c:".
+      ["--import", pathToFileURL(join(import.meta.dirname, "support", "record-loads.ts")).href, cli, "hook", hook],
       {
         input: hookInput("hello there"),
         encoding: "utf8",
