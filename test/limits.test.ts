@@ -107,7 +107,7 @@ describe("splitting the conditions across requests", () => {
 describe("cutting a long text", () => {
   const longMessage = `START OF MESSAGE ${"word ".repeat(60_000)}END OF MESSAGE`;
 
-  it("cuts a message too long for one question to its last part and records the cut", async () => {
+  it("cuts the middle of a message too long for one question, keeping its start and end, and records the cut", async () => {
     sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
     const matcher = standInMatcher();
 
@@ -115,9 +115,33 @@ describe("cutting a long text", () => {
 
     const sent = matcher.calls[0]!.text;
     expect(sent.length).toBeLessThan(longMessage.length);
+    expect(sent.startsWith("START OF MESSAGE word")).toBe(true);
     expect(sent.endsWith("word END OF MESSAGE")).toBe(true);
-    expect(sent).not.toContain("START OF MESSAGE");
+    expect(sent).toContain("\n[…]\n");
     expect(checks()).toMatchObject([{ text: sent, cut: 1 }]);
+  });
+
+  it("masks addresses in a long text before cutting it, so no part of one reaches Jev", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+    // Addresses all through the text, so the cut lands inside one whichever way it falls.
+    const message = "write to someone.with.a.long.name@example.com ".repeat(20_000);
+
+    await runMessageHook(hookInput(message), { env: sandbox.env, matcher });
+
+    const sent = matcher.calls[0]!.text;
+    expect(sent).toContain("\n[…]\n");
+    expect(sent).not.toMatch(/someone|@example|long\.name/);
+  });
+
+  it("keeps a request that comes before a long pasted passage", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+    const message = `Give me a summary of the following transcript:\n${"Speaker: words words words.\n".repeat(20_000)}`;
+
+    await runMessageHook(hookInput(message), { env: sandbox.env, matcher });
+
+    expect(matcher.calls[0]!.text.startsWith("Give me a summary of the following transcript:")).toBe(true);
   });
 
   it("leaves more of the text when the longest condition is shorter", async () => {

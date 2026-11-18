@@ -40,3 +40,31 @@ export function messageText(message: string): MessageText {
   const words = rest.split(/\s+/u).filter((word) => /[\p{L}\p{N}]/u.test(word));
   return words.length >= MIN_WORDS_AFTER_COMMAND ? { kind: "check", text: rest } : { kind: "skip" };
 }
+
+/**
+ * Text pasted into a message, as T3 Code marks it: `<pasted_content id="x">`
+ * up to the closing tag with the same id, or plain `<pasted_content>` tags.
+ * Plain Claude Code marks nothing, so its pastes are not found.
+ */
+const PASTE =
+  /<pasted_content id="([^"]*)">([\s\S]*?)<\/pasted_content id="\1">|<pasted_content>([\s\S]*?)<\/pasted_content>/g;
+
+/** What a paste becomes before the message is checked. */
+export function pasteNote(lines: number): string {
+  return `[pasted text left out: ${lines.toLocaleString("en-US")} ${lines === 1 ? "line" : "lines"}]`;
+}
+
+/**
+ * The message with each marked paste replaced by a short note, so a rule is
+ * checked against what the user wrote, not against a document, log or
+ * transcript they pasted. A paste whose closing tag is missing is left in.
+ */
+export function leaveOutPastes(message: string): { text: string; pastes: number } {
+  let pastes = 0;
+  const text = message.replace(PASTE, (_, _id, withId: string | undefined, bare: string | undefined) => {
+    pastes++;
+    const body = (withId ?? bare ?? "").trim();
+    return pasteNote(body === "" ? 0 : body.split(/\r\n|\r|\n/).length);
+  });
+  return { text, pastes };
+}

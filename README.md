@@ -102,8 +102,15 @@ The words used here are defined in [GLOSSARY.md](GLOSSARY.md).
   skipped.
 - **Privacy:** email addresses are masked before text goes to Jev. Jev sees
   conditions, never instructions.
-- **Long text:** a text too long for Jev is cut to its last part, and the cut
-  is recorded.
+- **Pasted text:** in T3 Code, which marks what you paste, a pasted document,
+  log or transcript is left out of the message check, with a note such as
+  `[pasted text left out: 1,500 lines]` in its place. Rules are checked
+  against what you wrote, and the paste neither goes to Jev nor lands in the
+  database. Plain Claude Code does not mark pastes, so there they are checked
+  like the rest of the message.
+- **Long text:** a text too long for Jev keeps its start and its end and loses
+  its middle, since a request usually comes before or after a long passage.
+  The cut is recorded.
 - **Project scope:** a rule applies to all projects or only to the ones you
   pick. A project is the git repository the session runs in.
 

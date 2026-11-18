@@ -70,6 +70,10 @@ A check of the user's message, made before Claude starts work.
 **Reply check**:
 A check of Claude's final reply, made before the turn ends.
 
+**Pasted text**:
+Text the user pasted into a message, as their tool marks it. A message check leaves it out and puts a short note in its place, so rules are checked against what the user wrote.
+_Avoid_: Attachment, document
+
 **Score**:
 The probability, from 0 to 1, that a condition holds for the text being checked.
 _Avoid_: Confidence, match strength

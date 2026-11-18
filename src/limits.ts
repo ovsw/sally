@@ -41,24 +41,36 @@ export function textTokenBudget(conditions: MatcherCondition[]): number {
   return Math.max(MIN_TEXT_TOKENS, QUESTION_TOKEN_LIMIT - REQUEST_OVERHEAD_TOKENS - longest);
 }
 
+/** What stands in for the middle of a text that was cut. */
+export const CUT_NOTE = "\n[…]\n";
+
 /**
- * The text cut to its last part when it takes more than `maxTokens`, so the
- * end of a long message or reply, where the request usually is, is kept.
+ * The text cut to fit `maxTokens` when it takes more: its start and its end
+ * are kept and the middle goes, since what someone asks for usually comes
+ * before or after a long passage, not inside it.
  */
-export function cutToLastPart(text: string, maxTokens: number): { text: string; cut: boolean } {
+export function cutToFit(text: string, maxTokens: number): { text: string; cut: boolean } {
   if (estimateTokens(text) <= maxTokens) return { text, cut: false };
-  const maxBytes = maxTokens * 3;
-  // Walk back from the end by whole characters until the byte budget is spent.
+  const room = maxTokens * 3 - encoder.encode(CUT_NOTE).length;
+  // Whole characters only, from each end, half the room each.
   const chars = Array.from(text);
-  let bytes = 0;
-  let start = chars.length;
-  while (start > 0) {
-    const size = utf8Size(chars[start - 1]!.codePointAt(0)!);
-    if (bytes + size > maxBytes) break;
-    bytes += size;
-    start--;
+  let headBytes = 0;
+  let head = 0;
+  while (head < chars.length) {
+    const size = utf8Size(chars[head]!.codePointAt(0)!);
+    if (headBytes + size > room / 2) break;
+    headBytes += size;
+    head++;
   }
-  return { text: chars.slice(start).join(""), cut: true };
+  let tailBytes = 0;
+  let tail = chars.length;
+  while (tail > head) {
+    const size = utf8Size(chars[tail - 1]!.codePointAt(0)!);
+    if (headBytes + tailBytes + size > room) break;
+    tailBytes += size;
+    tail--;
+  }
+  return { text: chars.slice(0, head).join("") + CUT_NOTE + chars.slice(tail).join(""), cut: true };
 }
 
 /** The bytes one code point takes in UTF-8. A lone surrogate is written as U+FFFD, three bytes. */

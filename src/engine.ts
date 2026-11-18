@@ -1,9 +1,9 @@
-import { cutToLastPart, splitIntoRequests, textTokenBudget } from "./limits.ts";
+import { cutToFit, splitIntoRequests, textTokenBudget } from "./limits.ts";
 import { MalformedAnswerError, type Matcher, type MatcherCondition, type MatchResult } from "./matcher.ts";
 import { resolveProject } from "./project.ts";
 import type { CheckType, LiveRule, RulesService } from "./rules.ts";
 import { type Store, transaction } from "./store.ts";
-import { maskEmails, messageText } from "./text.ts";
+import { leaveOutPastes, maskEmails, messageText } from "./text.ts";
 
 export type Outcome = "nothing" | "attached" | "sent_back" | "skipped" | "failed";
 
@@ -113,7 +113,10 @@ function combineTokens(results: MatchResult[]): Tokens {
 /** What one check records about itself, besides its scores and matches. */
 interface CheckRecord {
   input: CheckInput;
-  /** The text the check judged: the message after any slash command, cut to its last part if too long. */
+  /**
+   * The text the check judged: the message after any slash command, with pastes
+   * left out, and its middle cut if too long.
+   */
   text: string;
   /** Whether the text was cut to fit Jev's per-question limit. */
   cut: boolean;
@@ -242,8 +245,12 @@ export function createEngine(options: EngineOptions): Engine {
       const { cutoff, timeLimitMs } = rules.settings();
       const project = projectOf(input);
 
-      // A message that starts with a slash command is judged only on what follows the command name.
-      const judged = input.checkType === "message" ? messageText(input.text) : { kind: "check" as const, text: input.text };
+      // Text the user pasted into a message is left out first: rules are about what they wrote.
+      // Then a message that starts with a slash command is judged only on what follows the command name.
+      const judged =
+        input.checkType === "message"
+          ? messageText(leaveOutPastes(input.text).text)
+          : { kind: "check" as const, text: input.text };
       if (judged.kind === "skip") {
         const checkId = record({ input, text: input.text, cut: false, project, startedAt, cutoff }, "skipped");
         return { outcome: "skipped", checkId, matches: [] };
@@ -260,8 +267,11 @@ export function createEngine(options: EngineOptions): Engine {
         rule.conditions.map((c) => ({ id: `c${c.id}`, text: maskEmails(c.text) })),
       );
 
-      // A text too long for Jev's per-question limit is cut to its last part, and the cut is recorded.
-      const { text, cut } = cutToLastPart(judged.text, textTokenBudget(conditions));
+      // A text too long for Jev's per-question limit keeps its start and end, and the cut is recorded.
+      // What goes to Jev is masked before it is cut, so a cut cannot split an address and leave half of it.
+      const budget = textTokenBudget(conditions);
+      const { text, cut } = cutToFit(judged.text, budget);
+      const sentText = cutToFit(maskEmails(judged.text), budget).text;
       const check: CheckRecord = { input, text, cut, project, startedAt, cutoff };
       // With no live rule there is nothing to ask Jev, and the answer is known: no rule matched.
       if (live.length === 0) {
@@ -272,7 +282,7 @@ export function createEngine(options: EngineOptions): Engine {
       const tryScoring = async (): Promise<{ scores: ScoreRow[]; tokens: Tokens }> => {
         let result;
         try {
-          result = await score(maskEmails(text), conditions, timeLimitMs);
+          result = await score(sentText, conditions, timeLimitMs);
         } catch (error) {
           throw new FailedTry(error);
         }
