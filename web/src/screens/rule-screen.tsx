@@ -1,6 +1,7 @@
 // The Rule screen: the live version beside the draft, then the version
 // history. The draft form follows the shadcnblocks block form-layouts-1
 // (vertical field layout).
+import { LabelWithHelp, ruleHelp } from "@/components/field-help";
 import {
   ArrowLeft,
   FilePen,
@@ -31,7 +32,6 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
-  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -170,7 +170,9 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
 
   return (
     <Field>
-      <FieldLabel htmlFor="draft-scope">Scope</FieldLabel>
+      <LabelWithHelp htmlFor="draft-scope" label="Scope">
+        {ruleHelp.scope}
+      </LabelWithHelp>
       <Select
         value={value.kind}
         onValueChange={(kind) =>
@@ -218,11 +220,6 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
             ))}
           </div>
         ))}
-      <FieldDescription>
-        A project is a git repository, named by its remote, so every worktree
-        of it counts as one project. Rules outside the session&apos;s project are
-        never checked.
-      </FieldDescription>
     </Field>
   );
 }
@@ -250,7 +247,9 @@ function DraftForm({
   return (
     <FieldGroup>
       <Field>
-        <FieldLabel htmlFor="draft-name">Name</FieldLabel>
+        <LabelWithHelp htmlFor="draft-name" label="Name">
+          {ruleHelp.name}
+        </LabelWithHelp>
         <Input
           id="draft-name"
           className="bg-background"

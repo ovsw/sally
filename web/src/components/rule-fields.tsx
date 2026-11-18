@@ -4,7 +4,8 @@
 import { Check, Loader2, Plus, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { LabelWithHelp, ruleHelp } from "@/components/field-help";
+import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { CheckType } from "@/lib/api";
@@ -45,7 +46,7 @@ interface ConditionsFieldProps {
 export function ConditionsField({ conditions, checkType, onChange }: ConditionsFieldProps) {
   return (
     <Field>
-      <FieldLabel>Conditions</FieldLabel>
+      <LabelWithHelp label="Conditions">{ruleHelp.condition(checkType)}</LabelWithHelp>
       <div className="space-y-2">
         {conditions.map((condition, index) => (
           <div key={index} className="flex items-start gap-2">
@@ -59,7 +60,11 @@ export function ConditionsField({ conditions, checkType, onChange }: ConditionsF
                   `condition-${index}`,
                 )
               }
-              placeholder={checkType === "message" ? "The message asks for..." : "The reply reports..."}
+              placeholder={
+                checkType === "message"
+                  ? "e.g. The message asks for a visual change to a page."
+                  : "e.g. The reply reports a finished visual change and gives no local link."
+              }
             />
             <Button
               type="button"
@@ -78,10 +83,6 @@ export function ConditionsField({ conditions, checkType, onChange }: ConditionsF
           Add condition
         </Button>
       </div>
-      <FieldDescription>
-        The rule matches when any one condition holds. Write each as a short, concrete statement about the{" "}
-        {checkType === "message" ? "user's message" : "final reply"}.
-      </FieldDescription>
     </Field>
   );
 }
@@ -95,17 +96,15 @@ interface InstructionFieldProps {
 export function InstructionField({ id, instruction, onChange }: InstructionFieldProps) {
   return (
     <Field>
-      <FieldLabel htmlFor={id}>Instruction</FieldLabel>
+      <LabelWithHelp htmlFor={id} label="Instruction">
+        {ruleHelp.instruction}
+      </LabelWithHelp>
       <Textarea
         id={id}
         className="min-h-[140px] bg-background"
         value={instruction}
         onChange={(e) => onChange(e.target.value)}
       />
-      <FieldDescription>
-        Claude receives this word for word. Worth having only when it is not already implied by the text that triggers
-        it.
-      </FieldDescription>
     </Field>
   );
 }

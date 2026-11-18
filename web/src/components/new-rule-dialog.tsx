@@ -13,7 +13,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { LabelWithHelp, ruleHelp } from "@/components/field-help";
 import {
   Select,
   SelectContent,
@@ -117,17 +117,21 @@ export function NewRuleDialog<T = RuleDetail>({
           <div className="space-y-4 px-6 pt-6 pb-6">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_200px]">
               <div className="space-y-2">
-                <Label htmlFor="new-rule-name">Name</Label>
+                <LabelWithHelp htmlFor="new-rule-name" label="Name">
+                  {ruleHelp.name}
+                </LabelWithHelp>
                 <Input
                   id="new-rule-name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Local link before a PR"
+                  placeholder="e.g. Local link before a PR"
                   autoFocus
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="new-rule-check">Check</Label>
+                <LabelWithHelp htmlFor="new-rule-check" label="Check">
+                  {ruleHelp.check}
+                </LabelWithHelp>
                 <Select
                   value={checkType}
                   onValueChange={(value) => setCheckType(value as CheckType)}
@@ -143,36 +147,35 @@ export function NewRuleDialog<T = RuleDetail>({
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="new-rule-condition">Condition</Label>
+              <LabelWithHelp htmlFor="new-rule-condition" label="Condition">
+                {ruleHelp.condition(checkType)} You can add more after creating the rule.
+              </LabelWithHelp>
               <Input
                 id="new-rule-condition"
                 value={condition}
                 onChange={(e) => setCondition(e.target.value)}
                 placeholder={
                   checkType === "message"
-                    ? "The message asks for a visual change to a page."
-                    : "The reply reports a finished visual change and gives no local link."
+                    ? "e.g. The message asks for a visual change to a page."
+                    : "e.g. The reply reports a finished visual change and gives no local link."
                 }
               />
-              <p className="text-xs text-muted-foreground">
-                A short statement that is true or false of the{" "}
-                {checkType === "message" ? "user's message" : "final reply"}.
-                You can add more conditions after creating the rule.
-              </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="new-rule-instruction">Instruction</Label>
+              <LabelWithHelp htmlFor="new-rule-instruction" label="Instruction">
+                {ruleHelp.instruction}
+              </LabelWithHelp>
               <Textarea
                 id="new-rule-instruction"
                 className="min-h-[100px] resize-none"
                 value={instruction}
                 onChange={(e) => setInstruction(e.target.value)}
-                placeholder="What Claude should do, word for word."
+                placeholder={
+                  checkType === "message"
+                    ? "e.g. Before you open a pull request, give me the localhost link to the page and wait for my OK."
+                    : "e.g. Add the localhost link to the page you changed."
+                }
               />
-              <p className="text-xs text-muted-foreground">
-                Worth writing only if the instruction is not already implied by
-                the text that triggers it.
-              </p>
             </div>
             {error && (
               <p role="alert" className="text-sm text-destructive">
