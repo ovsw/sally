@@ -135,7 +135,7 @@ describe("an old database", () => {
       { key: "stop_on_failure", value: 1 },
       { key: "time_limit_ms", value: 4000 },
     ]);
-    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 12 }]);
+    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 13 }]);
   });
 
   it("can have an attention reason cleared", () => {
