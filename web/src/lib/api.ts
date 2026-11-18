@@ -324,3 +324,46 @@ export type RescoreResult =
 export function rescoreDraft(id: number): Promise<RescoreResult> {
   return call("POST", `/api/rules/${id}/rescore`, {});
 }
+
+/** What the import proposes for a passage. */
+export type PassageVerdict = "becomes_rule" | "always_rule" | "too_vague";
+
+export interface ProposedRule {
+  id: number;
+  /** null once skipped. */
+  ruleId: number | null;
+  decision: "published" | "kept" | "skipped" | null;
+  rule: RuleDetail | null;
+}
+
+export interface Passage {
+  id: number;
+  /** Its place in the rules file: 1 for the first. */
+  position: number;
+  text: string;
+  verdict: PassageVerdict;
+  reason: string;
+  similarRule: string | null;
+  decision: "becomes_rule" | "stays" | null;
+  seenAt: string | null;
+  pending: boolean;
+  rules: ProposedRule[];
+}
+
+export interface ImportSummary {
+  id: number;
+  rulesFile: string;
+  scope: Scope;
+  createdAt: string;
+  removedAt: string | null;
+  passageCount: number;
+  pendingCount: number;
+}
+
+export interface ImportDetail extends ImportSummary {
+  passages: Passage[];
+}
+
+export function getImport(id: number): Promise<ImportDetail> {
+  return call("GET", `/api/imports/${id}`);
+}
