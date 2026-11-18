@@ -340,12 +340,27 @@ function EditPublishedCard({
     saver.saveSoon(next);
   };
 
-  /** Publishes the draft, then shows the import as it now is, with the new live version. */
-  const publishNow = () =>
-    decide(async () => {
+  /**
+   * Closes the editor once a publish or discard has gone through, then shows
+   * the import as it now is. The change is done even if that refresh fails:
+   * the screen shows the refresh's error, and the editor does not offer to
+   * publish or discard again a draft that is gone.
+   */
+  const finish = () => {
+    onDone();
+    void decide(() => getImport(importId));
+  };
+
+  /** Publishes the draft; whether it went through. A refusal is shown on the card. */
+  async function publishNow() {
+    try {
       await publish(rule.id);
-      return getImport(importId);
-    });
+    } catch (e) {
+      setError(errorText(e));
+      return;
+    }
+    finish();
+  }
 
   async function doPublish() {
     setBusy("publish");
@@ -354,7 +369,7 @@ function EditPublishedCard({
       try {
         const result = await rescoreDraft(rule.id);
         if (result.status !== "no_cases") setRescore(result);
-        else if (await publishNow()) onDone();
+        else await publishNow();
       } catch (e) {
         setError(errorText(e));
       }
@@ -366,28 +381,28 @@ function EditPublishedCard({
     setRescore(null);
     setBusy("publish");
     // The fields are closed while the draft is scored, so what was scored is what is published.
-    if (await publishNow()) onDone();
+    await publishNow();
     setBusy(null);
   }
 
   /** Drops the draft, if there is one, and shows the live version again. */
   async function discard() {
     setBusy("discard");
+    setError(null);
+    let dropped = false;
     try {
       await saver.replacing(async () => {
         if (!draftSaved.current) return;
-        const discarded = await decide(async () => {
-          await discardDraft(rule.id);
-          return getImport(importId);
-        });
-        if (!discarded) {
-          throw new Error("The discard failed.");
-        }
+        await discardDraft(rule.id);
+        dropped = true;
       });
-      onDone();
-    } catch {
+    } catch (e) {
+      setError(errorText(e));
       setBusy(null);
+      return;
     }
+    if (dropped) finish();
+    else onDone();
   }
 
   async function saveBeforeLeaving() {
@@ -447,11 +462,11 @@ function EditPublishedCard({
         <div className="ml-auto flex flex-wrap gap-2">
           <Button variant="ghost" onClick={() => void discard()} disabled={busy !== null}>
             {busy === "discard" ? <Loader2 className="animate-spin" /> : <X />}
-            {hasDraft || saving ? "Discard changes" : "Cancel"}
+            {hasDraft || saving || saver.hasUnsent() ? "Discard changes" : "Cancel"}
           </Button>
           <Button
             onClick={() => void doPublish()}
-            disabled={busy !== null || !(hasDraft || saving) || saver.state.kind === "error"}
+            disabled={busy !== null || !(hasDraft || saving || saver.hasUnsent())}
           >
             {busy === "publish" ? <Loader2 className="animate-spin" /> : <Upload />}
             Publish
