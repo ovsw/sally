@@ -10,14 +10,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 interface LabelWithHelpProps {
   /** The id of the control the label names; omit for a group of controls. */
   htmlFor?: string;
+  /** The label's own id, for a group of controls to be named by it. */
+  id?: string;
   label: string;
   children: React.ReactNode;
 }
 
-export function LabelWithHelp({ htmlFor, label, children }: LabelWithHelpProps) {
+export function LabelWithHelp({ htmlFor, id, label, children }: LabelWithHelpProps) {
   return (
     <div className="flex items-center gap-1.5">
-      <Label htmlFor={htmlFor}>{label}</Label>
+      <Label htmlFor={htmlFor} id={id}>
+        {label}
+      </Label>
       <Tooltip>
         <TooltipTrigger asChild>
           <button

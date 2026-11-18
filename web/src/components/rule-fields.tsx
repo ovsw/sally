@@ -2,6 +2,7 @@
 // its instruction, and how far the draft is from being saved. Used by the
 // Rule screen's draft form and by each proposed rule on the Import screen.
 import { Check, Loader2, Plus, X } from "lucide-react";
+import * as React from "react";
 
 import { Button } from "@/components/ui/button";
 import { LabelWithHelp, ruleHelp } from "@/components/field-help";
@@ -44,9 +45,13 @@ interface ConditionsFieldProps {
 }
 
 export function ConditionsField({ conditions, checkType, onChange }: ConditionsFieldProps) {
+  const labelId = React.useId();
   return (
-    <Field>
-      <LabelWithHelp label="Conditions">{ruleHelp.condition(checkType)}</LabelWithHelp>
+    // Named by its label, since the group holds several inputs and "Add condition".
+    <Field aria-labelledby={labelId}>
+      <LabelWithHelp id={labelId} label="Conditions">
+        {ruleHelp.condition(checkType)}
+      </LabelWithHelp>
       <div className="space-y-2">
         {conditions.map((condition, index) => (
           <div key={index} className="flex items-start gap-2">

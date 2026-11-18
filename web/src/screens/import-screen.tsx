@@ -57,7 +57,7 @@ import {
   writeRule,
 } from "@/lib/api";
 import { errorText, useDraftSaver } from "@/lib/draft-saver";
-import { followLink } from "@/lib/router";
+import { followLink, isPlainClick, navigate } from "@/lib/router";
 
 const VERDICTS: Record<PassageVerdict, string> = {
   becomes_rule: "Becomes a rule",
@@ -108,9 +108,20 @@ function RuleBody({ version }: { version: VersionView }) {
   );
 }
 
-function OpenRuleLink({ ruleId }: { ruleId: number }) {
+/**
+ * The link to the rule's own screen. With `save`, edits not yet sent are saved
+ * first, so the rule screen opens on them and cannot send the old text back;
+ * if the save fails, the user stays here with the edits and the error.
+ */
+function OpenRuleLink({ ruleId, save }: { ruleId: number; save?: () => Promise<boolean> }) {
+  const onClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!save || !isPlainClick(event)) return followLink(event);
+    event.preventDefault();
+    const href = event.currentTarget.pathname;
+    void save().then((ok) => ok && navigate(href));
+  };
   return (
-    <a href={`/rules/${ruleId}`} onClick={followLink} className="text-sm text-muted-foreground hover:underline">
+    <a href={`/rules/${ruleId}`} onClick={onClick} className="text-sm text-muted-foreground hover:underline">
       Open the rule
     </a>
   );
@@ -184,7 +195,7 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
       <CardFooter className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-4">
           <SaveStatus state={saver.state} hasDraft={hasDraft} />
-          <OpenRuleLink ruleId={rule.id} />
+          <OpenRuleLink ruleId={rule.id} save={saver.flush} />
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
           <Button variant="ghost" onClick={() => void act("skip")} disabled={busy !== null}>
@@ -254,7 +265,9 @@ function WriteRuleButton({ passage, decide, label }: { passage: Passage; decide:
       title="Write a rule for this passage"
       description="The rule starts as a draft with this import's scope. Publish, keep or skip it like any proposed rule."
       create={(rule) => writeRule(passage.id, rule)}
-      onCreated={(detail) => void decide(() => Promise.resolve(detail))}
+      // The import as it is now, not the answer to the create: that answer can
+      // arrive after a later decision, and applying it would undo that one.
+      onCreated={(detail) => void decide(() => getImport(detail.id))}
       trigger={
         <Button variant="outline">
           <Plus />

@@ -110,7 +110,9 @@ function Importing() {
           <strong>Finish in Claude Code.</strong> The skill shows the exact lines it would
           remove from the rules file and asks for your yes. It backs the file up first and
           tells you where the backup is. It removes only the rules you published; drafts
-          and skipped passages stay in the file, where they still work.
+          and skipped passages stay in the file, where they still work. A rules file
+          tracked in git is shared with everyone who reads it, so the skill leaves it
+          unchanged unless you tell it you are the only one using it.
         </li>
       </ol>
       <p>
@@ -215,7 +217,12 @@ export function GuideScreen() {
 
   // Arriving from another screen with an anchor, such as /guide#importing.
   React.useEffect(() => {
-    const id = decodeURIComponent(window.location.hash.slice(1));
+    let id: string;
+    try {
+      id = decodeURIComponent(window.location.hash.slice(1));
+    } catch {
+      return; // A malformed anchor, such as "#%": the Guide opens at the top.
+    }
     if (id) document.getElementById(id)?.scrollIntoView();
   }, []);
 
@@ -252,6 +259,7 @@ export function GuideScreen() {
                 <li key={section.id}>
                   <a
                     href={`#${section.id}`}
+                    aria-current={activeSection === section.id ? "location" : undefined}
                     className={cn(
                       "block py-1 transition-colors duration-200",
                       activeSection === section.id

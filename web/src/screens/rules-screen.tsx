@@ -171,6 +171,8 @@ const values = (filters: ColumnFiltersState, id: string) =>
 export function RulesScreen() {
   const [rules, setRules] = React.useState<RuleSummary[]>([]);
   const [loaded, setLoaded] = React.useState(false);
+  // Whether the rules shown came from a request with no search or filter.
+  const [shownUnfiltered, setShownUnfiltered] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const { table, globalFilter, columnFilters } = useDataTable({
     data: rules,
@@ -182,6 +184,7 @@ export function RulesScreen() {
 
   React.useEffect(() => {
     let stale = false;
+    const unfiltered = globalFilter === "" && columnFilters.length === 0;
     const timer = window.setTimeout(() => {
       listRules({
         search: globalFilter,
@@ -192,6 +195,7 @@ export function RulesScreen() {
         .then((next) => {
           if (stale) return;
           setRules(next);
+          setShownUnfiltered(unfiltered);
           setError(null);
         })
         .catch((e: unknown) => !stale && setError(String(e instanceof Error ? e.message : e)))
@@ -204,7 +208,9 @@ export function RulesScreen() {
   }, [globalFilter, columnFilters]);
 
   const filtering = globalFilter !== "" || columnFilters.length > 0;
-  const noRules = loaded && !error && !filtering && rules.length === 0;
+  // Only an unfiltered answer says there are no rules: right after a search is
+  // cleared, the empty result of that search is still showing.
+  const noRules = loaded && !error && !filtering && shownUnfiltered && rules.length === 0;
 
   return (
     <div className="w-full">
@@ -244,9 +250,12 @@ export function RulesScreen() {
               title="Draft"
               options={drafts}
             />
-            <div className="ml-auto">
-              <NewRuleDialog onCreated={(rule) => navigate(`/rules/${rule.id}`)} />
-            </div>
+            {/* Only once the first list is in: it may swap this toolbar for the first-run panel. */}
+            {loaded && (
+              <div className="ml-auto">
+                <NewRuleDialog onCreated={(rule) => navigate(`/rules/${rule.id}`)} />
+              </div>
+            )}
           </DataTableToolbar>
           {error && (
             <p role="alert" className="mb-4 text-sm text-destructive">
