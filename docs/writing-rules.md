@@ -104,6 +104,12 @@ So a condition has to be true or false of that one text, read on its own.
    mentions.** A message that only talks about migrations is not a request to
    write one. Sally's first prototype matched a rule to a message that merely
    discussed the rule's subject; conditions that name the request avoid this.
+   - Message check. Subject: "The message is about database migrations", which
+     also matches "how do migrations work here?". Request: "The user asks
+     Claude to write or change a database migration."
+   - Reply check. Subject: "The reply mentions tests", which matches any reply
+     that brings them up. Failure: "The reply says the work is done and does
+     not say the tests were run."
 6. **Short.** One sentence. If it needs a second sentence, it is probably two
    conditions.
 7. **Decidable from this text alone.** Avoid words that point outside the text:

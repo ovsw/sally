@@ -141,7 +141,12 @@ function WrongMatchesAndMisses() {
         </li>
         <li>
           To fix the rule, make the condition narrower: name the request or the failure,
-          not the subject. Edits go into a draft. When you publish, Sally first scores the
+          not the subject. For a message check, "The message is about database
+          migrations" also matches someone asking how migrations work; "The user asks
+          Claude to write or change a database migration" names the request. For a reply
+          check, "The reply mentions tests" matches any reply that brings them up; "The
+          reply says the work is done and does not say the tests were run" names the
+          failure. Edits go into a draft. When you publish, Sally first scores the
           draft against the rule's saved cases, so you can see whether the new wording
           stops the wrong match and keeps the right ones.
         </li>
