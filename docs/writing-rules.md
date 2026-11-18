@@ -45,9 +45,10 @@ Keep a passage in the rules file as an always-rule when any of these is true:
    things live, which tools it uses.
 
 Everything else is a candidate for Sally. Moving a rule into Sally means it
-reaches Claude only on the turns where it matches. When a check fails, Sally
-stops the turn rather than let it go on without its rules, unless you switch
-that off with the `stop-on-failure` setting.
+reaches Claude only on the turns where it matches. When a message check fails,
+Sally stops the message rather than let it go on without its rules, unless you
+switch that off with the `stop-on-failure` setting. A reply whose check failed
+stands, with a warning that it was not checked.
 
 ### The three verdicts of an import
 
@@ -73,7 +74,8 @@ Knowing what Jev sees explains most of the advice below.
   what Claude did during the turn.
 - **The text is one message or one reply.** In a message check it is your
   message as you sent it. A message that starts with a slash command is judged
-  on the words after the command name. In a reply check it is Claude's final
+  on the words after the command name, and not checked at all when fewer than
+  three words follow it: `/review migration` matches no rule. In a reply check it is Claude's final
   reply: not its reasoning, not its tool output.
 - **Each condition is its own yes-or-no question.** Jev answers it with a score
   from 0 to 1: how likely the condition is to hold of the text. Conditions are

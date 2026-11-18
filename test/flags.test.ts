@@ -120,7 +120,10 @@ describe("Claude's wrong-match report", () => {
     const noSession = wrongMatch(["Local link"], null);
     expect(noSession.status).toBe(1);
     expect(noSession.stderr).toContain("No session");
-    expect(wrongMatch([]).status).toBe(1);
+    const noName = wrongMatch([]);
+    expect(noName.status).toBe(1);
+    // The retry it suggests runs from Claude's folder too.
+    expect(noName.stderr).toContain(`Usage: node "${cli.replaceAll("\\", "/")}" wrong-match "<rule name>"`);
 
     expect(matches(ruleId)[0]!.flag).toBeNull();
     expect(cases(ruleId)).toEqual([]);

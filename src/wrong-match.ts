@@ -1,5 +1,5 @@
 import { RuleError } from "./errors.ts";
-import { databasePath, type Env } from "./paths.ts";
+import { cliCommand, databasePath, type Env } from "./paths.ts";
 import { createRulesService } from "./rules.ts";
 import { openStore } from "./store.ts";
 
@@ -9,7 +9,9 @@ export interface CommandResult {
   stderr: string;
 }
 
-const USAGE = 'Usage: node src/cli.ts wrong-match "<rule name>" [--session <id>]\n';
+// The absolute command, as the hook hands it to Claude: Claude runs it from its
+// own project folder, where "src/cli.ts" names nothing.
+const USAGE = `Usage: ${cliCommand()} wrong-match "<rule name>" [--session <id>]\n`;
 
 /**
  * `node src/cli.ts wrong-match "<rule name>"`: Claude's report that a rule it was handed

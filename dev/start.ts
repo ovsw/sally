@@ -26,7 +26,13 @@ if (empty) {
   rmSync(root, { recursive: true, force: true });
 } else if (process.argv.includes("--fresh") || !existsSync(database)) {
   console.log("Writing sample data to .dev/ ...");
-  await seed(root);
+  try {
+    await seed(root);
+  } catch (error) {
+    // No half-written sample data: the next start seeds again.
+    rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 const store = openStore(database);

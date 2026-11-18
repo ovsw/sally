@@ -208,7 +208,7 @@ export async function seed(root: string): Promise<void> {
             name: "Screenshot changed pages",
             checkType: "reply",
             instruction:
-              "Take a full-page screenshot of the changed page and compare it with the reference before saying it is done.",
+              "Take a full-page screenshot of the changed page, put it next to the reference and compare them before saying it is done.",
             conditions: ["The reply says a page's layout or styles were changed."],
           },
         ],

@@ -14,17 +14,19 @@ describe("the guidance on writing rules", () => {
     ]);
   });
 
-  it("has a working target for every link inside it", () => {
-    const html = renderMarkdown(guidance);
+  it("has a working target for every link inside it, in what the Guide renders", () => {
+    // The Guide leaves out everything before the first section.
+    const html = renderMarkdown(fromFirstSection(guidance));
     const ids = new Set([...html.matchAll(/ id="([^"]+)"/g)].map(([, id]) => id));
-    const anchors = [...guidance.matchAll(/\]\(#([^)]+)\)/g)].map(([, anchor]) => anchor);
+    const anchors = [...html.matchAll(/ href="#([^"]+)"/g)].map(([, anchor]) => anchor);
     expect(anchors.length).toBeGreaterThan(0);
     for (const anchor of anchors) expect(ids, `#${anchor}`).toContain(anchor);
   });
 
   it("is what the import skill's instructions point to, by headings that exist", () => {
     const instructions = readFileSync(new URL("../skill/import.md", import.meta.url), "utf8");
-    expect(instructions).toContain("docs/writing-rules.md");
+    // The step that has the agent read it, not only a mention.
+    expect(instructions).toMatch(/^- Read `docs\/writing-rules\.md`/m);
     const headings = new Set([...guidance.matchAll(/^#+ (.+)$/gm)].map(([, heading]) => heading));
     const cited = [...instructions.matchAll(/"([^"]+)" in the guide/g)].map(([, heading]) => heading);
     expect(cited.length).toBeGreaterThan(0);
