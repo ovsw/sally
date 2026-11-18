@@ -135,7 +135,7 @@ describe("an old database", () => {
       { key: "stop_on_failure", value: 1 },
       { key: "time_limit_ms", value: 4000 },
     ]);
-    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 13 }]);
+    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 14 }]);
   });
 
   it("can have an attention reason cleared", () => {
@@ -203,6 +203,21 @@ describe("a database from before the import", () => {
       ]);
     });
     expect(detail.passages).toHaveLength(1);
+  });
+
+  it("judges replies at the cutoff it had, when its cutoff was changed", () => {
+    writePreviousDatabase();
+    const previous = new DatabaseSync(databasePath(sandbox.env));
+    previous.exec("INSERT INTO settings (key, value) VALUES ('cutoff', 0.85)");
+    previous.close();
+
+    expect(sandbox.withRules((rules) => rules.settings())).toMatchObject({ cutoff: 0.85, replyCutoff: 0.85 });
+  });
+
+  it("takes the default reply cutoff when its cutoff was never changed", () => {
+    writePreviousDatabase();
+
+    expect(sandbox.withRules((rules) => rules.settings())).toMatchObject({ cutoff: 0.6, replyCutoff: 0.6 });
   });
 
   it("ends in the same shape as a new database", () => {
