@@ -361,6 +361,7 @@ describe("rules service", () => {
 
   const defaults = {
     cutoff: 0.6,
+    replyCutoff: 0.6,
     timeLimitMs: 10_000,
     stopOnFailure: true,
     recentChecks: 100,
@@ -398,6 +399,7 @@ describe("rules service", () => {
   it.each([
     [{ cutoff: 1.2 }],
     [{ cutoff: -0.1 }],
+    [{ replyCutoff: 1.5 }],
     [{ timeLimitMs: 0 }],
     [{ timeLimitMs: 10_001 }],
     [{ timeLimitMs: Number.NaN }],

@@ -118,8 +118,14 @@ export { RuleError, RuleNotFoundError };
 
 /** The engine's settings. */
 export interface Settings {
-  /** The score a condition must reach for its rule to match, 0 to 1. */
+  /** The score a condition must reach for its rule to match in a message check, 0 to 1. */
   cutoff: number;
+  /**
+   * The same for a reply check. Apart from the message cutoff because a reply
+   * check that matches costs a whole extra reply, and replies often touch a
+   * rule's topic without breaking it.
+   */
+  replyCutoff: number;
   /** How long a check may wait for the matcher before giving up. */
   timeLimitMs: number;
   /**
@@ -141,6 +147,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   cutoff: 0.6,
+  replyCutoff: 0.6,
   timeLimitMs: 10_000,
   stopOnFailure: true,
   recentChecks: 100,
@@ -152,6 +159,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
 /** Each setting's key in the settings table. */
 const SETTING_KEYS: Record<keyof Settings, string> = {
   cutoff: "cutoff",
+  replyCutoff: "reply_cutoff",
   timeLimitMs: "time_limit_ms",
   stopOnFailure: "stop_on_failure",
   recentChecks: "recent_checks",
@@ -162,6 +170,7 @@ const SETTING_KEYS: Record<keyof Settings, string> = {
 const SETTINGS = Object.keys(SETTING_KEYS) as (keyof Settings)[];
 const SETTING_RANGES: Record<keyof Settings, string> = {
   cutoff: "The cutoff is a score from 0 to 1.",
+  replyCutoff: "The reply cutoff is a score from 0 to 1.",
   timeLimitMs: "The time limit is a whole number of milliseconds, from 1 to 10000.",
   stopOnFailure: "Stopping the turn when a check fails is either on or off.",
   recentChecks: "The number of recent checks is a whole number of at least 1.",
@@ -170,13 +179,18 @@ const SETTING_RANGES: Record<keyof Settings, string> = {
   quietChecks: "The number of checks without a match is a whole number of at least 1.",
 };
 
+/** The cutoff a check of this type uses. */
+export function cutoffFor(checkType: CheckType, settings: Settings): number {
+  return checkType === "reply" ? settings.replyCutoff : settings.cutoff;
+}
+
 /** The longest time limit a check may have. */
 export const MAX_TIME_LIMIT_MS = 10_000;
 
 function validSetting(key: keyof Settings, value: unknown): boolean {
   if (key === "stopOnFailure") return typeof value === "boolean";
   if (typeof value !== "number" || !Number.isFinite(value)) return false;
-  if (key === "cutoff" || key === "closeMargin") return value >= 0 && value <= 1;
+  if (key === "cutoff" || key === "replyCutoff" || key === "closeMargin") return value >= 0 && value <= 1;
   if (key === "busyShare") return value > 0 && value <= 1;
   // Two tries at the time limit must fit inside the 30 seconds Claude Code gives a hook.
   if (key === "timeLimitMs") return Number.isInteger(value) && value >= 1 && value <= MAX_TIME_LIMIT_MS;
@@ -659,7 +673,7 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         matcher: options.matcher,
         conditions,
         cases: flags.savedCases(ruleId),
-        cutoff: readSettings().cutoff,
+        cutoff: cutoffFor(row.check_type, readSettings()),
       });
     },
 

@@ -186,7 +186,8 @@ than its sources.
 
 | Setting | Default | What it does |
 | :- | :- | :- |
-| **Cutoff** | 0.6 | The score a condition must reach for its rule to match. Raise it if rules match when they should not; lower it if they are missed. |
+| **Message cutoff** | 0.6 | The score a condition must reach for its rule to match in a message check. Raise it if rules match when they should not; lower it if they are missed. |
+| **Reply cutoff** | 0.6 | The same for a reply check. A match there makes Claude write a whole extra reply, so it is worth setting higher if replies are sent back when they did not break the rule. |
 | **Time limit** | 10,000 ms | How long a check waits for Jev before giving up. At most 10 seconds, so that two tries fit inside the 30 seconds Claude Code gives a hook. |
 | **Stop the turn when a check fails** | On | See [When a check fails](#when-a-check-fails). |
 | **Recent checks** | 100 | How many of the latest checks count as recent for the settings below. |

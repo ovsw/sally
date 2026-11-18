@@ -1,7 +1,7 @@
 import { cutToFit, splitIntoRequests, textTokenBudget } from "./limits.ts";
 import { MalformedAnswerError, type Matcher, type MatcherCondition, type MatchResult } from "./matcher.ts";
 import { resolveProject } from "./project.ts";
-import type { CheckType, LiveRule, RulesService } from "./rules.ts";
+import { type CheckType, cutoffFor, type LiveRule, type RulesService } from "./rules.ts";
 import { type Store, transaction } from "./store.ts";
 import { leaveOutPastes, maskEmails, messageText } from "./text.ts";
 
@@ -233,7 +233,7 @@ export function createEngine(options: EngineOptions): Engine {
   return {
     skip(input) {
       const startedAt = performance.now();
-      const { cutoff } = rules.settings();
+      const cutoff = cutoffFor(input.checkType, rules.settings());
       return record(
         { input, text: input.text, cut: false, project: projectOf(input), startedAt, cutoff },
         "skipped",
@@ -242,7 +242,9 @@ export function createEngine(options: EngineOptions): Engine {
 
     async check(input) {
       const startedAt = performance.now();
-      const { cutoff, timeLimitMs } = rules.settings();
+      const settings = rules.settings();
+      const { timeLimitMs } = settings;
+      const cutoff = cutoffFor(input.checkType, settings);
       const project = projectOf(input);
 
       // Text the user pasted into a message is left out first: rules are about what they wrote.

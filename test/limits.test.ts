@@ -200,6 +200,7 @@ describe("settings in the app", () => {
     const { settings } = await app.json<SettingsAnswer>("GET", "/api/settings");
     expect(settings).toEqual({
       cutoff: 0.6,
+      replyCutoff: 0.6,
       timeLimitMs: 10_000,
       stopOnFailure: true,
       recentChecks: 100,

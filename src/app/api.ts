@@ -82,6 +82,7 @@ function optionalScope(body: Record<string, unknown>, key: string): Scope | unde
 
 const SETTING_NAMES: (keyof Settings)[] = [
   "cutoff",
+  "replyCutoff",
   "timeLimitMs",
   "stopOnFailure",
   "recentChecks",
