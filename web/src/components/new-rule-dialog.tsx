@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { LabelWithHelp, ruleHelp } from "@/components/field-help";
+import { ConditionsField } from "@/components/rule-fields";
 import {
   Select,
   SelectContent,
@@ -46,7 +47,7 @@ export function NewRuleDialog<T = RuleDetail>({
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [checkType, setCheckType] = React.useState<CheckType>("message");
-  const [condition, setCondition] = React.useState("");
+  const [conditions, setConditions] = React.useState<string[]>([""]);
   const [instruction, setInstruction] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -58,7 +59,7 @@ export function NewRuleDialog<T = RuleDetail>({
   const reset = () => {
     setName("");
     setCheckType("message");
-    setCondition("");
+    setConditions([""]);
     setInstruction("");
     setError(null);
     setBusy(false);
@@ -74,7 +75,7 @@ export function NewRuleDialog<T = RuleDetail>({
         name,
         checkType,
         instruction,
-        conditions: [condition],
+        conditions,
       });
       if (session.current === mine) {
         session.current += 1;
@@ -146,21 +147,11 @@ export function NewRuleDialog<T = RuleDetail>({
                 </Select>
               </div>
             </div>
-            <div className="space-y-2">
-              <LabelWithHelp htmlFor="new-rule-condition" label="Condition">
-                {ruleHelp.condition(checkType)} You can add more after creating the rule.
-              </LabelWithHelp>
-              <Input
-                id="new-rule-condition"
-                value={condition}
-                onChange={(e) => setCondition(e.target.value)}
-                placeholder={
-                  checkType === "message"
-                    ? "e.g. The message asks for a visual change to a page."
-                    : "e.g. The reply reports a finished visual change and gives no local link."
-                }
-              />
-            </div>
+            <ConditionsField
+              conditions={conditions}
+              checkType={checkType}
+              onChange={(next) => setConditions(next)}
+            />
             <div className="space-y-2">
               <LabelWithHelp htmlFor="new-rule-instruction" label="Instruction">
                 {ruleHelp.instruction}
