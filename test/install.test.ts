@@ -2,8 +2,15 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, expect, it } from "vitest";
-import { AUTHORITY_LINE, hookEntry, install, MIN_CLAUDE_CODE_VERSION } from "../src/install.ts";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  AUTHORITY_LINE,
+  hookEntry,
+  install,
+  MIN_CLAUDE_CODE_VERSION,
+  skillInstructionsPath,
+  skillPath,
+} from "../src/install.ts";
 import type { Env } from "../src/paths.ts";
 import { createSandbox, type Sandbox } from "./support/sandbox.ts";
 
@@ -387,4 +394,75 @@ it("installs without a warning when Claude Code's version cannot be read", () =>
 
   expect(result.warnings).toEqual([]);
   expect(settings()).toEqual({ hooks: sallyHooks });
+});
+
+describe("the import skill", () => {
+  const skill = () => skillPath(sandbox.env);
+  const ownSkill = "---\nname: sally-import\ndescription: My own import.\n---\n\nDo it my way.\n";
+
+  it("install adds it at the user level: marked as Sally's, pointing to the instructions and the command line", () => {
+    const result = sally("install");
+
+    expect(result.status).toBe(0);
+    expect(skill()).toBe(join(sandbox.root, ".claude", "skills", "sally-import", "SKILL.md"));
+    const text = read(skill());
+    expect(text.startsWith("---\nname: sally-import\n")).toBe(true);
+    expect(text).toMatch(/^metadata:\n {2}installed-by: sally$/m);
+    expect(text).toMatch(/^description: .*only when the user asks/m);
+    expect(text).toContain(skillInstructionsPath());
+    expect(existsSync(skillInstructionsPath())).toBe(true);
+    expect(text).toContain(`node "${cli}"`);
+    expect(result.stdout).toContain(`Installed the import skill (/sally-import) at ${skill()}`);
+  });
+
+  it("a second install changes nothing; uninstall removes it and its folder", () => {
+    sally("install");
+    const before = read(skill());
+    const again = sally("install");
+    expect(again.stdout).toBe("Sally is already installed.\n");
+    expect(read(skill())).toBe(before);
+
+    const removed = sally("uninstall");
+    expect(removed.stdout).toContain("Removed the import skill (/sally-import)");
+    expect(existsSync(join(skill(), ".."))).toBe(false);
+    expect(existsSync(join(sandbox.root, ".claude", "skills"))).toBe(true);
+  });
+
+  it("install brings Sally's earlier skill up to date", () => {
+    writeFile(skill(), "---\nname: sally-import\nmetadata:\n  installed-by: sally\n---\n\nOld instructions.\n");
+    const result = sally("install");
+    expect(result.stdout).toContain("Updated the import skill");
+    expect(read(skill())).toContain(skillInstructionsPath());
+  });
+
+  it("leaves a user's own skill of the same name alone, on install and on uninstall", () => {
+    writeFile(skill(), ownSkill);
+
+    const installed = sally("install");
+    expect(installed.status).toBe(0);
+    expect(installed.stderr).toMatch(/already exists .* is not Sally's, so it was left alone/);
+    expect(read(skill())).toBe(ownSkill);
+    expect(read(rulesPath)).toBe(AUTHORITY_LINE + "\n");
+
+    const uninstalled = sally("uninstall");
+    expect(uninstalled.status).toBe(0);
+    expect(read(skill())).toBe(ownSkill);
+    expect(uninstalled.stdout).not.toContain("import skill");
+  });
+
+  it("leaves a folder of that name alone even without a SKILL.md", () => {
+    writeFile(join(skill(), "..", "notes.md"), "Mine.\n");
+    sally("install");
+    expect(existsSync(skill())).toBe(false);
+    sally("uninstall");
+    expect(read(join(skill(), "..", "notes.md"))).toBe("Mine.\n");
+  });
+
+  it("points to a checkout in a folder whose name has spaces", () => {
+    const cliPath = join(sandbox.root, "my code", "sally", "src", "cli.ts");
+    install({ env: sandbox.env, cliPath, claudeVersion: () => undefined });
+    const text = read(skill());
+    expect(text).toContain(`node "${cliPath}"`);
+    expect(text).toContain(join(sandbox.root, "my code", "sally", "skill", "import.md"));
+  });
 });

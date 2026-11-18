@@ -88,6 +88,18 @@ describe("starting an import", () => {
     expect(started.scope).toEqual({ kind: "projects", projects: ["example/shop"] });
   });
 
+  it("gives a rules file in the .claude folder of a project outside git to the project's folder", () => {
+    const project = join(sandbox.root, "notes");
+    const inside = rulesFile(join(project, ".claude", "rules", "style.md"));
+    const main = rulesFile(join(project, ".claude", "CLAUDE.md"));
+    for (const file of [inside, main]) {
+      expect(sandbox.withImports((imports) => imports.startImport(file)).scope).toEqual({
+        kind: "projects",
+        projects: [project],
+      });
+    }
+  });
+
   it("refuses a path with no file", () => {
     expect(() => sandbox.withImports((imports) => imports.startImport(join(sandbox.root, "nothing.md")))).toThrow(
       RuleError,

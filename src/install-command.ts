@@ -160,12 +160,12 @@ async function guidedInstall(options: InstallCommandOptions, prompt: Prompt): Pr
 
   const { changes, warnings } = install({ env, cliPath: options.cliPath, claudeVersion: options.claudeVersion });
   for (const change of changes) say(change);
-  if (changes.length === 0) say("The hooks and the authority line were already in place.");
+  if (changes.length === 0) say("The hooks, the import skill and the authority line were already in place.");
   for (const warning of warnings) stderr(warning + "\n");
 
   say("");
   say("Sally is installed.");
-  say("Next step: import your rules. In Claude Code, ask Claude to import your rules file into Sally.");
+  say("Next step: import your rules. In Claude Code, type /sally-import, or ask Claude to import your rules file into Sally.");
   say('To open the web app, run "sally app" and open the address it prints.');
   return 0;
 }
@@ -173,8 +173,9 @@ async function guidedInstall(options: InstallCommandOptions, prompt: Prompt): Pr
 /**
  * `sally install [--yes]`. In a terminal it is guided: it checks Node, finds
  * or asks for the API key, tests it, saves it, creates the database and
- * registers the hooks. With input that is not a terminal, or with `--yes`, it
- * asks nothing and only registers the hooks and the authority line.
+ * registers the hooks and the import skill. With input that is not a
+ * terminal, or with `--yes`, it asks nothing and only registers the hooks,
+ * the import skill and the authority line.
  */
 export async function runInstall(args: string[], options: InstallCommandOptions): Promise<number> {
   const { stdout, stderr } = options;
@@ -212,7 +213,7 @@ export async function runInstall(args: string[], options: InstallCommandOptions)
 }
 
 /**
- * `sally uninstall`: removes the hooks and the authority line, and leaves the
+ * `sally uninstall`: removes the hooks, the import skill and the authority line, and leaves the
  * API key and the database, saying where they are.
  */
 export function runUninstall(args: string[], options: Pick<InstallCommandOptions, "env" | "stdout" | "stderr">): number {
@@ -222,7 +223,8 @@ export function runUninstall(args: string[], options: Pick<InstallCommandOptions
     return 1;
   }
   try {
-    const { changes } = uninstall({ env });
+    const { changes, warnings } = uninstall({ env });
+    for (const warning of warnings) stderr(warning + "\n");
     const lines = changes.length > 0 ? changes : ["Sally is not installed."];
     if (existsSync(apiKeyPath(env))) lines.push(`Your API key is still at ${apiKeyPath(env)}.`);
     if (existsSync(databasePath(env))) lines.push(`Your database, with your rules, is still at ${databasePath(env)}.`);

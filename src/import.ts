@@ -4,7 +4,7 @@
 // rules service and goes through it for every rule, so the hooks, which load
 // only the rules service, never load any of it.
 import { realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { RuleError, RuleNotFoundError } from "./errors.ts";
 import { claudeDir, type Env } from "./paths.ts";
 import { resolveProject } from "./project.ts";
@@ -133,6 +133,18 @@ function isInside(folder: string, path: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+/**
+ * The folder whose project a rules file belongs to: the folder holding its
+ * `.claude` folder when it sits in one (such as `.claude/CLAUDE.md` or
+ * `.claude/rules/...`), so a project outside git is its own folder, as the
+ * hooks see it; otherwise the folder it sits in.
+ */
+function projectFolderOf(rulesFile: string): string {
+  const parts = dirname(rulesFile).split(sep);
+  const at = parts.lastIndexOf(".claude");
+  return at > 0 ? parts.slice(0, at).join(sep) || sep : dirname(rulesFile);
+}
+
 function requireText(value: unknown, what: string): string {
   if (typeof value !== "string" || !value.trim()) throw new RuleError(`${what} needs text.`);
   return value;
@@ -202,7 +214,7 @@ export function createImportService(db: Store, options: ImportServiceOptions): I
     // By where Claude Code loads it from, or where it really is: either may be a link.
     const folder = claudeDir(options.env);
     if (isInside(resolve(folder), rulesFile) || isInside(realPath(folder), realPath(rulesFile))) return { kind: "all" };
-    const project = resolveProject(dirname(rulesFile));
+    const project = resolveProject(projectFolderOf(rulesFile));
     db.prepare("INSERT INTO projects (name, first_seen_at) VALUES (?, ?) ON CONFLICT (name) DO NOTHING").run(
       project,
       now(),

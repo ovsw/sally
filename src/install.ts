@@ -1,7 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname, join } from "node:path";
-import { claudeSettingsPath, type Env, globalRulesPath } from "./paths.ts";
+import { dirname, join, resolve } from "node:path";
+import { claudeDir, claudeSettingsPath, type Env, globalRulesPath } from "./paths.ts";
 
 /** The one line install adds to the global rules file. */
 export const AUTHORITY_LINE =
@@ -33,6 +43,46 @@ export interface HookEntry {
  */
 export function hookEntry(hook: "message" | "reply", cliPath = CLI_PATH): HookEntry {
   return { type: "command", command: "node", args: [cliPath, "hook", hook] };
+}
+
+/** The import skill's name, which is also its folder and its command: /sally-import. */
+export const SKILL_NAME = "sally-import";
+
+/** The skill file install writes: a user-level Claude Code skill. */
+export function skillPath(env: Env): string {
+  return join(claudeDir(env), "skills", SKILL_NAME, "SKILL.md");
+}
+
+/** Sally's mark in the skill's frontmatter. A skill without it is the user's own. */
+const SKILL_MARK = /^[ \t]+installed-by:[ \t]*sally[ \t]*$/m;
+
+/** The full instructions the skill points to, in the checkout whose command line the hooks run. */
+export function skillInstructionsPath(cliPath = CLI_PATH): string {
+  return resolve(dirname(cliPath), "..", "skill", "import.md");
+}
+
+/**
+ * The installed skill: short, marked as Sally's, and pointing to the full
+ * instructions in the checkout, so updating the checkout updates the skill.
+ */
+export function skillContent(cliPath = CLI_PATH): string {
+  return `---
+name: ${SKILL_NAME}
+description: Imports one Claude Code rules file (a CLAUDE.md, CLAUDE.local.md or rules folder file) into Sally, turning its conditional rules into Sally rules the user reviews in Sally's web app, then removes what they published. Run it only when the user asks to import a rules file or their rules into Sally; never start it on your own during other work.
+metadata:
+  installed-by: sally
+---
+
+<!-- Installed by Sally. "sally uninstall" removes it. Change the instructions in Sally's checkout, not here. -->
+
+Read Sally's import instructions at \`${skillInstructionsPath(cliPath)}\` and follow them step by step.
+
+Wherever they say \`sally\`, run Sally's command line from its checkout, since \`sally\` may not be on the PATH:
+
+\`\`\`
+node "${cliPath}"
+\`\`\`
+`;
 }
 
 export interface SetupOptions {
@@ -267,7 +317,8 @@ const hasLine = (text: string, line: string) => text.split(/\r?\n/).some((l) => 
 
 /**
  * Registers the message hook and the reply hook in the user's Claude Code
- * settings and adds the authority line to the global rules file. Running it
+ * settings, installs the import skill, and adds the authority line to the
+ * global rules file. Running it
  * again changes nothing. Everything else in both files is left as it was.
  */
 export function install({ env, cliPath, claudeVersion = readClaudeVersion }: SetupOptions): SetupResult {
@@ -294,6 +345,8 @@ export function install({ env, cliPath, claudeVersion = readClaudeVersion }: Set
   }
   if (changes.length > 0) writeSettings(settingsFile);
 
+  const warnings = installSkill(env, cliPath ?? CLI_PATH, changes);
+
   if (!hasLine(rules, AUTHORITY_LINE)) {
     // A blank line before the authority line, which uninstall takes out again.
     let text = rules;
@@ -302,12 +355,50 @@ export function install({ env, cliPath, claudeVersion = readClaudeVersion }: Set
     writeRules(rulesPath, text + AUTHORITY_LINE + "\n", changes, "install");
     changes.push(`Added Sally's authority line to ${rulesPath}`);
   }
-  return { changes, warnings: claudeCodeWarning(claudeVersion) };
+  return { changes, warnings: [...warnings, ...claudeCodeWarning(claudeVersion)] };
+}
+
+const isSallySkill = (path: string) => existsSync(path) && SKILL_MARK.test(readFileSync(path, "utf8"));
+
+/** A warning that a skill of Sally's name is the user's own, and was left alone. */
+const notOurs = (folder: string, what: string) =>
+  `A skill named ${SKILL_NAME} already exists at ${folder} and is not Sally's, so it was left alone${what}.`;
+
+/**
+ * Writes the import skill, or brings Sally's earlier one up to date. A folder
+ * of that name without Sally's mark is the user's, and is left alone.
+ */
+function installSkill(env: Env, cliPath: string, changes: string[]): string[] {
+  const path = skillPath(env);
+  const folder = dirname(path);
+  const content = skillContent(cliPath);
+  const ours = isSallySkill(path);
+  if (!ours && existsSync(folder) && readdirSync(folder).length > 0) {
+    return [notOurs(folder, "; Sally's import skill is not installed")];
+  }
+  if (ours && readFileSync(path, "utf8") === content) return [];
+  writeRules(path, content, changes, "install");
+  changes.push(`${ours ? "Updated" : "Installed"} the import skill (/${SKILL_NAME}) at ${path}`);
+  return [];
+}
+
+/** Removes the import skill if it is Sally's; a skill of that name without Sally's mark stays. */
+function uninstallSkill(env: Env, changes: string[]): string[] {
+  const path = skillPath(env);
+  const folder = dirname(path);
+  if (!isSallySkill(path)) {
+    return existsSync(folder) && readdirSync(folder).length > 0 ? [notOurs(folder, "")] : [];
+  }
+  rmSync(path);
+  if (readdirSync(folder).length === 0) rmdirSync(folder);
+  changes.push(`Removed the import skill (/${SKILL_NAME}) from ${folder}`);
+  return [];
 }
 
 /**
  * Removes exactly what install added: Sally's two hooks, in either form, from
- * the settings and the authority line from the global rules file.
+ * the settings, Sally's import skill, and the authority line from the global
+ * rules file.
  */
 export function uninstall({ env, cliPath }: SetupOptions): SetupResult {
   const settingsFile = readSettings(claudeSettingsPath(env));
@@ -331,6 +422,8 @@ export function uninstall({ env, cliPath }: SetupOptions): SetupResult {
   }
   if (changes.length > 0) writeSettings(settingsFile);
 
+  const warnings = uninstallSkill(env, changes);
+
   if (hasLine(rules, AUTHORITY_LINE)) {
     const lines = rules.split("\n");
     const at = lines.findIndex((l) => l.replace(/\r$/, "").trim() === AUTHORITY_LINE);
@@ -340,5 +433,5 @@ export function uninstall({ env, cliPath }: SetupOptions): SetupResult {
     writeRules(rulesPath, lines.join("\n"), changes, "uninstall");
     changes.push(`Removed Sally's authority line from ${rulesPath}`);
   }
-  return { changes, warnings: [] };
+  return { changes, warnings };
 }

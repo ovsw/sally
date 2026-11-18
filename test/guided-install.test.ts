@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AUTHORITY_LINE, hookEntry } from "../src/install.ts";
+import { AUTHORITY_LINE, hookEntry, skillPath } from "../src/install.ts";
 import { type InstallCommandOptions, runInstall, runUninstall } from "../src/install-command.ts";
 import type { Matcher } from "../src/matcher.ts";
 import { apiKeyPath, configDir, databasePath, type Env } from "../src/paths.ts";
@@ -109,6 +109,8 @@ describe("guided install in a terminal", () => {
     });
     expect(read(rulesPath)).toBe(AUTHORITY_LINE + "\n");
     expect(result.stdout).toMatch(/Next step: import your rules/);
+    expect(result.stdout).toContain("/sally-import");
+    expect(existsSync(skillPath(sandbox.env))).toBe(true);
     expect(result.stdout).toContain("sally app");
     expect(result.stdout.trimEnd().split("\n").at(-2)).toMatch(/^Next step: import/);
   });
@@ -172,12 +174,14 @@ describe("guided install in a terminal", () => {
     await guided(scriptedPrompt([]), { env });
     const settingsBefore = read(settingsPath);
     const rulesBefore = read(rulesPath);
+    const skillBefore = read(skillPath(sandbox.env));
 
     const result = await guided(scriptedPrompt([]), { env });
 
     expect(result.stdout).toContain("already in place");
     expect(read(settingsPath)).toBe(settingsBefore);
     expect(read(rulesPath)).toBe(rulesBefore);
+    expect(read(skillPath(sandbox.env))).toBe(skillBefore);
   });
 });
 
@@ -201,6 +205,7 @@ describe("install that asks nothing", () => {
     expect(result.code).toBe(0);
     expect(keys.triedKeys).toEqual([]);
     expect(read(rulesPath)).toBe(AUTHORITY_LINE + "\n");
+    expect(existsSync(skillPath(sandbox.env))).toBe(true);
   });
 });
 
