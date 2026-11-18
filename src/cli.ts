@@ -85,7 +85,7 @@ async function main(args: string[]): Promise<number> {
     });
   }
   process.stderr.write(
-    'Usage: sally hook message|reply\n       sally install [--yes]\n       sally uninstall\n       sally rules list|show|create|edit\n       sally import start|add|show|list\n       sally settings stop-on-failure [on|off]\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n       sally evaluate FILE [--scale]\n',
+    'Usage: sally hook message|reply\n       sally install [--yes]\n       sally uninstall\n       sally rules list|show|create|edit\n       sally import start|add|show|list|backup|removed\n       sally settings stop-on-failure [on|off]\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n       sally evaluate FILE [--scale]\n',
   );
   return 1;
 }

@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ImportDetail, ImportSummary } from "../src/import.ts";
+import type { RemovalReport } from "../src/import-removal.ts";
 import { gitRepo } from "./support/git.ts";
 import { createSandbox, type Sandbox } from "./support/sandbox.ts";
 
@@ -147,6 +148,102 @@ describe("sally import add", () => {
   it("refuses an import that does not exist, or an id that is not one", () => {
     expect(sally(["add", "7"], JSON.stringify(PASSAGES)).stderr).toBe("No import with id 7.\n");
     expect(sally(["add", "seven"], "[]").stderr).toMatch(/An import's id is a whole number/);
+  });
+});
+
+// A passage that bundles two situations, so it proposes two rules.
+const BUNDLED = {
+  text: "Before a release, run the tests. After a release, post the notes.",
+  verdict: "becomes_rule",
+  reason: "Two situations, so two rules, each with its own condition.",
+  rules: [
+    { name: "Test before release", instruction: "Run the tests first.", conditions: ["The user asks to release."] },
+    { name: "Notes after release", instruction: "Post the release notes.", conditions: ["The reply says a release went out."] },
+  ],
+};
+
+describe("sally import show, for the removal", () => {
+  it("reports each passage's decisions, which rules are live, and what to remove", () => {
+    const { id } = sallyJson<ImportSummary>(["start", globalFile()]);
+    const added = sallyJson<ImportDetail>(["add", String(id)], JSON.stringify([...PASSAGES, BUNDLED]));
+    const [screenshot, , bundled] = added.passages;
+    // The user publishes the screenshot rule and one of the two bundled rules in the web app.
+    sandbox.withRules((rules) => {
+      rules.publish(screenshot!.rules[0]!.ruleId!);
+      rules.publish(bundled!.rules[1]!.ruleId!);
+    });
+
+    const shown = sallyJson<RemovalReport>(["show", String(id)]);
+    expect(shown).toMatchObject({ id, removedAt: null, removeAll: [1], removePart: [3] });
+    expect(shown.passages.map((p) => [p.position, p.stays, p.removal])).toEqual([
+      [1, false, "all"],
+      [2, true, "none"],
+      [3, false, "part"],
+    ]);
+    expect(shown.passages[2]!.rules.map((r) => [r.name, r.decision, r.live])).toEqual([
+      ["Test before release", null, false],
+      ["Notes after release", "published", true],
+    ]);
+    expect(shown.passages[0]!.rules[0]).toMatchObject({
+      instruction: "Take a full-page screenshot of the changed page.",
+      conditions: ["The reply says a page's layout changed."],
+    });
+  });
+
+  it("refuses an import that does not exist", () => {
+    const result = sally(["show", "9"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("No import with id 9.\n");
+  });
+});
+
+describe("sally import backup", () => {
+  it("copies the rules file into the data folder under a dated name and prints the path", () => {
+    const file = globalFile();
+    const { rulesFile, backup } = sallyJson<{ rulesFile: string; backup: string }>(["backup", file]);
+    expect(rulesFile).toBe(file);
+    expect(backup.startsWith(join(sandbox.env.SALLY_DATA_DIR!, "backups"))).toBe(true);
+    expect(backup).toMatch(/\d{4}-\d{2}-\d{2}-\.claude-CLAUDE\.md$/);
+    expect(readFileSync(backup, "utf8")).toBe(readFileSync(file, "utf8"));
+    // Nothing is written beside the rules file.
+    expect(readdirSync(join(file, ".."))).toEqual(["CLAUDE.md"]);
+  });
+
+  it("never overwrites an earlier backup of the same file on the same day", () => {
+    const file = globalFile();
+    const first = sallyJson<{ backup: string }>(["backup", file]).backup;
+    writeFileSync(file, "# Rules\n\nChanged since.\n");
+    const second = sallyJson<{ backup: string }>(["backup", file]).backup;
+    expect(second).not.toBe(first);
+    expect(readFileSync(first, "utf8")).toBe("# Rules\n\nAnswer briefly.\n");
+    expect(readFileSync(second, "utf8")).toBe("# Rules\n\nChanged since.\n");
+  });
+
+  it("refuses a missing file, or no file at all", () => {
+    const missing = sally(["backup", join(sandbox.root, "nowhere.md")]);
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toBe(`There is no rules file at ${join(sandbox.root, "nowhere.md")}.\n`);
+    const none = sally(["backup"]);
+    expect(none.status).toBe(1);
+    expect(none.stderr).toMatch(/takes one rules file/);
+  });
+});
+
+describe("sally import removed", () => {
+  it("records that the removal happened, keeping the first time when recorded again", () => {
+    const { id } = sallyJson<ImportSummary>(["start", globalFile()]);
+    const recorded = sallyJson<{ id: number; removedAt: string }>(["removed", String(id)]);
+    expect(recorded.id).toBe(id);
+    expect(sallyJson<RemovalReport>(["show", String(id)]).removedAt).toBe(recorded.removedAt);
+    expect(sallyJson<{ removedAt: string }>(["removed", String(id)]).removedAt).toBe(recorded.removedAt);
+    // An import whose removal happened takes no more passages.
+    expect(sally(["add", String(id)], JSON.stringify(PASSAGES)).stderr).toMatch(/removal has happened/);
+  });
+
+  it("refuses an import that does not exist", () => {
+    const result = sally(["removed", "4"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("No import with id 4.\n");
   });
 });
 
