@@ -18,6 +18,14 @@ _Avoid_: Memory file, config, context file
 A rule that applies on every turn, and so stays in a rules file instead of Sally.
 _Avoid_: Global rule, core rule, base rule
 
+**Import**:
+Turning the conditional rules in a rules file into drafts in Sally. Always-rules stay in the file.
+_Avoid_: Migration (that is a change to the database between versions), move, conversion
+
+**Passage**:
+A piece of a rules file that says one thing, as an import found it. A passage is text in a file; a rule lives in Sally.
+_Avoid_: Rule (for text still in a rules file), entry, item
+
 **Condition**:
 A short, concrete statement that is true or false of the text being checked.
 _Avoid_: Trigger, question, pattern
