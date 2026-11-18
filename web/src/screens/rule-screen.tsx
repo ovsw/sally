@@ -13,7 +13,7 @@ import {
 import * as React from "react";
 
 import { RescoreDialog } from "@/components/rescore-dialog";
-import { ConditionsField, InstructionField, SaveStatus } from "@/components/rule-fields";
+import { ConditionsField, InstructionField, NameField, SaveStatus } from "@/components/rule-fields";
 import { RuleAnalyticsPanel } from "@/components/rule-analytics";
 import { RuleStatus } from "@/components/rule-status";
 import {
@@ -36,7 +36,6 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -245,17 +244,7 @@ function DraftForm({
 }: DraftFormProps) {
   return (
     <FieldGroup>
-      <Field>
-        <LabelWithHelp htmlFor="draft-name" label="Name">
-          {ruleHelp.name}
-        </LabelWithHelp>
-        <Input
-          id="draft-name"
-          className="bg-background"
-          value={value.name}
-          onChange={(e) => onChange({ ...value, name: e.target.value }, "name")}
-        />
-      </Field>
+      <NameField id="draft-name" name={value.name} onChange={(name) => onChange({ ...value, name }, "name")} />
       <ConditionsField
         conditions={value.conditions}
         checkType={checkType}

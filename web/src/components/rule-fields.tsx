@@ -1,5 +1,5 @@
-// The fields of a rule's draft that every editor shares: its conditions and
-// its instruction, and how far the draft is from being saved. Used by the
+// The fields of a rule's draft that every editor shares: its name, its
+// conditions and its instruction, and how far the draft is from being saved. Used by the
 // Rule screen's draft form and by each proposed rule on the Import screen.
 import { Check, Loader2, Plus, X } from "lucide-react";
 import * as React from "react";
@@ -88,6 +88,23 @@ export function ConditionsField({ conditions, checkType, onChange }: ConditionsF
           Add condition
         </Button>
       </div>
+    </Field>
+  );
+}
+
+interface NameFieldProps {
+  id: string;
+  name: string;
+  onChange: (name: string) => void;
+}
+
+export function NameField({ id, name, onChange }: NameFieldProps) {
+  return (
+    <Field>
+      <LabelWithHelp htmlFor={id} label="Name">
+        {ruleHelp.name}
+      </LabelWithHelp>
+      <Input id={id} className="bg-background" value={name} onChange={(e) => onChange(e.target.value)} />
     </Field>
   );
 }
