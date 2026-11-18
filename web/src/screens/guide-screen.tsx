@@ -55,7 +55,8 @@ function WhatSallyDoes() {
         </li>
         <li>
           <strong>Claude finishes its reply.</strong> Sally runs a <em>reply check</em> on
-          the final reply against your reply-check rules. When one matches, the reply is
+          the final reply against your reply-check rules, with its own cutoff, also set in
+          Settings. When one matches, the reply is
           sent back: Claude gets the instruction and one chance to revise before the turn
           ends.
         </li>

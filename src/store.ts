@@ -288,6 +288,14 @@ const migrations: string[] = [
     UNIQUE (passage_id, position)
   );
   `,
+  `
+  -- Reply checks get their own cutoff. A database whose cutoff was changed
+  -- keeps judging replies at that cutoff, as it did before; one that never
+  -- changed it takes the default for both.
+  INSERT INTO settings (key, value)
+    SELECT 'reply_cutoff', value FROM settings WHERE key = 'cutoff'
+    ON CONFLICT (key) DO NOTHING;
+  `,
 ];
 
 /**

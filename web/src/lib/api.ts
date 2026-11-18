@@ -140,6 +140,7 @@ export function listProjects(): Promise<Project[]> {
 /** The engine's settings: matching, then the attention thresholds. */
 export interface Settings {
   cutoff: number;
+  replyCutoff: number;
   timeLimitMs: number;
   /** Whether a failed check stops the turn. */
   stopOnFailure: boolean;

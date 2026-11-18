@@ -99,6 +99,29 @@ describe("reply check", () => {
     expect(turns()).toMatchObject([{ reply: "All done.", revised_reply: null }]);
   });
 
+  it("judges a reply against the reply cutoff, apart from the message cutoff", async () => {
+    replyRule();
+    sandbox.withRules((rules) => rules.updateSettings({ cutoff: 0.5, replyCutoff: 0.8 }));
+    const matcher = standInMatcher({ "The reply reports a visual change with no local link.": 0.75 });
+
+    const below = await runReplyHook(stopInput({ last_assistant_message: "The header is smaller." }), {
+      env: sandbox.env,
+      matcher,
+    });
+    expect(below).toBe("");
+
+    sandbox.withRules((rules) => rules.updateSettings({ replyCutoff: 0.7 }));
+    const above = await runReplyHook(stopInput({ last_assistant_message: "The footer is smaller." }), {
+      env: sandbox.env,
+      matcher,
+    });
+    expect(JSON.parse(above).decision).toBe("block");
+    expect(sandbox.query("SELECT outcome, cutoff FROM checks ORDER BY id")).toEqual([
+      { outcome: "nothing", cutoff: 0.8 },
+      { outcome: "sent_back", cutoff: 0.7 },
+    ]);
+  });
+
   it("scores only reply-check rules", async () => {
     replyRule("Reply rule", ["The reply is unfinished."]);
     sandbox.liveRule({ name: "Message rule", conditions: ["The message is a question."] });

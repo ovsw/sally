@@ -79,7 +79,7 @@ The probability, from 0 to 1, that a condition holds for the text being checked.
 _Avoid_: Confidence, match strength
 
 **Cutoff**:
-The score a condition must reach for its rule to match.
+The score a condition must reach for its rule to match. Message checks and reply checks each have their own.
 _Avoid_: Threshold
 
 **Match**:

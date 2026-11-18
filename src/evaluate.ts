@@ -241,7 +241,11 @@ function parseOptions(args: string[]): Options {
   const settings: Partial<Settings> = {};
   const cutoff = number(values.cutoff, "--cutoff", false);
   const timeLimitMs = number(values["time-limit"], "--time-limit", true);
-  if (cutoff !== undefined) settings.cutoff = cutoff;
+  // One cutoff for the run: it applies to message and reply checks alike.
+  if (cutoff !== undefined) {
+    settings.cutoff = cutoff;
+    settings.replyCutoff = cutoff;
+  }
   if (timeLimitMs !== undefined) settings.timeLimitMs = timeLimitMs;
   return {
     file: positionals[0]!,

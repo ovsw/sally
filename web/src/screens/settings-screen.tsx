@@ -46,9 +46,18 @@ interface FieldSpec {
 const matching: FieldSpec[] = [
   {
     key: "cutoff",
-    label: "Cutoff",
+    label: "Message cutoff",
     description:
-      "The score, from 0 to 1, a condition must reach for its rule to match.",
+      "The score, from 0 to 1, a condition must reach for its rule to match in a message check.",
+    step: "0.01",
+    min: "0",
+    max: "1",
+  },
+  {
+    key: "replyCutoff",
+    label: "Reply cutoff",
+    description:
+      "The same for a reply check. A match there costs Claude a whole extra reply, so it can be set higher than the message cutoff.",
     step: "0.01",
     min: "0",
     max: "1",
