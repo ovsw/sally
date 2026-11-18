@@ -24,13 +24,25 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { type CheckType, createRule, type RuleDetail } from "@/lib/api";
 
-interface NewRuleDialogProps {
-  onCreated: (rule: RuleDetail) => void;
+type NewRule = { name: string; checkType: CheckType; instruction: string; conditions: string[] };
+
+interface NewRuleDialogProps<T> {
+  onCreated: (created: T) => void;
   /** The button that opens the dialog; a small "New rule" button by default. */
   trigger?: React.ReactNode;
+  /** Creates the rule; a plain new rule by default. */
+  create?: (rule: NewRule) => Promise<T>;
+  title?: string;
+  description?: string;
 }
 
-export function NewRuleDialog({ onCreated, trigger }: NewRuleDialogProps) {
+export function NewRuleDialog<T = RuleDetail>({
+  onCreated,
+  trigger,
+  create = createRule as unknown as (rule: NewRule) => Promise<T>,
+  title = "New rule",
+  description = "The rule starts as a draft. It is not live until you publish it.",
+}: NewRuleDialogProps<T>) {
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [checkType, setCheckType] = React.useState<CheckType>("message");
@@ -58,7 +70,7 @@ export function NewRuleDialog({ onCreated, trigger }: NewRuleDialogProps) {
     setBusy(true);
     setError(null);
     try {
-      const rule = await createRule({
+      const rule = await create({
         name,
         checkType,
         instruction,
@@ -99,10 +111,8 @@ export function NewRuleDialog({ onCreated, trigger }: NewRuleDialogProps) {
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-0 sm:max-w-2xl">
         <form onSubmit={submit}>
           <DialogHeader className="px-6 pt-6 pb-0">
-            <DialogTitle>New rule</DialogTitle>
-            <DialogDescription>
-              The rule starts as a draft. It is not live until you publish it.
-            </DialogDescription>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 px-6 pt-6 pb-6">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_200px]">
