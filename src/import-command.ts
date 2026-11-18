@@ -1,4 +1,4 @@
-// `sally import ...`: the command line the import skill calls. It starts an
+// `node src/cli.ts import ...`: the command line the import skill calls. It starts an
 // import for a rules file and adds the passages the skill found, each with its
 // verdict, reason and proposed rules, which become drafts. Publishing stays
 // with the user in the web app. Once the user has decided, show reports what
@@ -18,12 +18,12 @@ export interface ImportCommandIo extends CommandIo {
 }
 
 export const IMPORT_USAGE = `Usage:
-  sally import start RULES_FILE
-  sally import add IMPORT [--file PATH]
-  sally import show IMPORT
-  sally import list
-  sally import backup RULES_FILE
-  sally import removed IMPORT
+  node src/cli.ts import start RULES_FILE
+  node src/cli.ts import add IMPORT [--file PATH]
+  node src/cli.ts import show IMPORT
+  node src/cli.ts import list
+  node src/cli.ts import backup RULES_FILE
+  node src/cli.ts import removed IMPORT
 
 IMPORT is an import's id, as start prints it. Output is JSON.
 start begins an import for one rules file. Its rules apply to all projects when
@@ -56,14 +56,14 @@ commands.
 `;
 
 function importId(positionals: string[], command: string): number {
-  if (positionals.length !== 1) throw new UsageError(`sally import ${command} takes one import: its id.`);
+  if (positionals.length !== 1) throw new UsageError(`import ${command} takes one import: its id.`);
   const id = Number(positionals[0]);
   if (!Number.isSafeInteger(id) || id < 1) throw new UsageError(`An import's id is a whole number; got "${positionals[0]}".`);
   return id;
 }
 
 function noPositionals(positionals: string[], command: string): void {
-  if (positionals.length > 0) throw new UsageError(`sally import ${command} takes nothing more; got "${positionals[0]}".`);
+  if (positionals.length > 0) throw new UsageError(`import ${command} takes nothing more; got "${positionals[0]}".`);
 }
 
 /** The passages in the JSON given to add: a list, or an object holding one under "passages". */
@@ -89,7 +89,7 @@ type Command = (imports: ImportService, args: string[], io: ImportCommandIo, sto
 const COMMANDS: Record<string, Command> = {
   start(imports, args) {
     const { positionals } = parse(args, {});
-    if (positionals.length !== 1) throw new UsageError("sally import start takes one rules file: its path.");
+    if (positionals.length !== 1) throw new UsageError("import start takes one rules file: its path.");
     return imports.startImport(positionals[0]!);
   },
   async add(imports, args, io) {
@@ -119,7 +119,7 @@ const COMMANDS: Record<string, Command> = {
   },
   backup(_imports, args, io) {
     const { positionals } = parse(args, {});
-    if (positionals.length !== 1) throw new UsageError("sally import backup takes one rules file: its path.");
+    if (positionals.length !== 1) throw new UsageError("import backup takes one rules file: its path.");
     return backupRulesFile(io.env, positionals[0]!);
   },
   removed(_imports, args, _io, store) {
@@ -128,7 +128,7 @@ const COMMANDS: Record<string, Command> = {
   },
 };
 
-/** Runs `sally import <command> ...` and returns the exit code. */
+/** Runs `node src/cli.ts import <command> ...` and returns the exit code. */
 export async function runImportCommand(args: string[], io: ImportCommandIo): Promise<number> {
   const [command, ...rest] = args;
   if (command === undefined || command === "help" || command === "--help" || command === "-h") {
@@ -138,14 +138,14 @@ export async function runImportCommand(args: string[], io: ImportCommandIo): Pro
   const reserved = RESERVED[command];
   if (reserved) {
     io.stderr(
-      `sally import ${command}: ${reserved} a rule is done by the user in Sally's web app, not from the command line. ` +
+      `import ${command}: ${reserved} a rule is done by the user in Sally's web app, not from the command line. ` +
         "These commands can start an import, add its passages, show it, back up its rules file and record the removal. Nothing was changed.\n",
     );
     return 1;
   }
   const run = COMMANDS[command];
   if (!run) {
-    io.stderr(`Unknown command "sally import ${command}".\n\n${IMPORT_USAGE}`);
+    io.stderr(`Unknown command "import ${command}".\n\n${IMPORT_USAGE}`);
     return 1;
   }
   let store;

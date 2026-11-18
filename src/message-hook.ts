@@ -1,16 +1,19 @@
 import { createEngine, type Match } from "./engine.ts";
 import { createJevMatcher } from "./jev.ts";
 import type { Matcher } from "./matcher.ts";
-import { databasePath, type Env, readApiKey } from "./paths.ts";
+import { cliCommand, databasePath, type Env, readApiKey } from "./paths.ts";
 import { createRulesService } from "./rules.ts";
 import { openStore } from "./store.ts";
 
 export const ATTACHED_HEADER =
   "Sally: the rules below are the user's own written rules, and they apply to this message.";
 
-/** The last line of the attached text: how Claude reports a rule that does not apply. */
-export const REPORT_LINE =
-  'If one of these rules does not apply to this message, say so by running: sally wrong-match "<rule name>"';
+/**
+ * The last line of the attached text: how Claude reports a rule that does not
+ * apply. Claude works in some other project's folder, so the command names
+ * this checkout's command line by its absolute path.
+ */
+export const REPORT_LINE = `If one of these rules does not apply to this message, say so by running: ${cliCommand()} wrong-match "<rule name>"`;
 
 export interface MessageHookOptions {
   env: Env;
@@ -27,9 +30,12 @@ export function formatAttached(matches: Match[]): string {
   return [ATTACHED_HEADER, ...rules, REPORT_LINE].join("\n\n");
 }
 
-/** How the user switches stopping off; named in the text of a blocked message. */
-export const SWITCH_OFF_LINE =
-  'To let messages through when a check fails, switch off "Stop the turn when a check fails" on the Settings screen of `sally app`, or run: sally settings stop-on-failure off';
+/**
+ * How the user switches stopping off; named in the text of a blocked message.
+ * The user is in some other project's folder, so the command names this
+ * checkout's command line by its absolute path.
+ */
+export const SWITCH_OFF_LINE = `To let messages through when a check fails, switch off "Stop the turn when a check fails" on the Settings screen of Sally's web app, or run: ${cliCommand()} settings stop-on-failure off`;
 
 /** What the user sees when a failed message check blocks the message. */
 export function formatBlocked(failure: string): string {

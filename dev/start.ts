@@ -38,7 +38,7 @@ const api = createAppServer({
   // Pages come from Vite; the app serves only /api here.
   webDir: join(packageRoot, "dist", "web"),
 });
-// Any free port, so this runs next to a real `sally app`.
+// Any free port, so this runs next to a real `node src/cli.ts app`.
 process.env.SALLY_API = await listen(api, 0);
 
 const vite = await createServer({ configFile: join(packageRoot, "vite.config.ts") });

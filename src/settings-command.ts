@@ -3,7 +3,7 @@ import { createRulesService } from "./rules.ts";
 import { openStore } from "./store.ts";
 import type { CommandResult } from "./wrong-match.ts";
 
-const USAGE = "Usage: sally settings stop-on-failure [on|off]\n";
+const USAGE = "Usage: node src/cli.ts settings stop-on-failure [on|off]\n";
 
 const describe = (on: boolean) =>
   on
@@ -11,7 +11,7 @@ const describe = (on: boolean) =>
     : "Stop on failure is off: when a check fails, the turn goes through without your rules.\n";
 
 /**
- * `sally settings stop-on-failure [on|off]`: shows or changes whether a failed
+ * `node src/cli.ts settings stop-on-failure [on|off]`: shows or changes whether a failed
  * check stops the turn. It is the way to switch stopping off from a terminal,
  * for when the web app is out of reach.
  */

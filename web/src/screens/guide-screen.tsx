@@ -132,8 +132,9 @@ function WrongMatchesAndMisses() {
       </p>
       <ul>
         <li>
-          Claude can report one itself. Sally's output tells it how:{" "}
-          <code>sally wrong-match "&lt;rule name&gt;"</code>.
+          Claude can report one itself. Sally's output tells it how, naming Sally's command
+          line by its full path so it runs from any folder:{" "}
+          <code>node "&lt;Sally's folder&gt;/src/cli.ts" wrong-match "&lt;rule name&gt;"</code>.
         </li>
         <li>
           You can flag a match as wrong or right on the rule's page, under Matches. Each
@@ -173,7 +174,8 @@ function WrongMatchesAndMisses() {
       <p>
         To let turns go on without their rules when a check fails, switch off &ldquo;Stop
         the turn when a check fails&rdquo; on the Settings screen, or run{" "}
-        <code>sally settings stop-on-failure off</code>. If a rule must reach Claude on
+        <code>node src/cli.ts settings stop-on-failure off</code> in Sally's folder.
+        If a rule must reach Claude on
         every turn whatever happens, keep it in your rules file as an always-rule.
       </p>
     </section>

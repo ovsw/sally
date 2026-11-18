@@ -9,10 +9,10 @@ export interface CommandResult {
   stderr: string;
 }
 
-const USAGE = 'Usage: sally wrong-match "<rule name>" [--session <id>]\n';
+const USAGE = 'Usage: node src/cli.ts wrong-match "<rule name>" [--session <id>]\n';
 
 /**
- * `sally wrong-match "<rule name>"`: Claude's report that a rule it was handed
+ * `node src/cli.ts wrong-match "<rule name>"`: Claude's report that a rule it was handed
  * did not apply. Flags the session's most recent match of the rule as a
  * wrong match raised by Claude. The session is the one Claude Code runs the
  * command in (CLAUDE_CODE_SESSION_ID), unless --session names another.

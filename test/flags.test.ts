@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RuleAnalytics } from "../src/analytics.ts";
@@ -34,7 +35,7 @@ const reply = (text: string, matcher: StandIn, sessionId = "session-1") =>
     { env: sandbox.env, matcher },
   );
 
-/** Runs `sally wrong-match` as Claude would, from inside a Claude Code session. */
+/** Runs the `wrong-match` command as Claude would, from inside a Claude Code session. */
 const wrongMatch = (args: string[], sessionId: string | null = "session-1") =>
   spawnSync(process.execPath, [cli, "wrong-match", ...args], {
     encoding: "utf8",
@@ -50,6 +51,25 @@ const matches = (ruleId: number) =>
     .reverse();
 
 describe("Claude's wrong-match report", () => {
+  it("runs as the attached text writes it, from the folder Claude works in", async () => {
+    const ruleId = sandbox.liveRule({ name: "Local link", conditions: ["Asks for a visual change."] });
+    const output = await message("make the button blue", standInMatcher({ "Asks for a visual change.": 0.8 }));
+    const attached: string = JSON.parse(output).hookSpecificOutput.additionalContext;
+    const command = /running: (.+)$/.exec(attached)![1]!.replace("<rule name>", "Local link");
+
+    expect(command).toBe(`node "${cli.replaceAll("\\", "/")}" wrong-match "Local link"`);
+    const project = join(sandbox.root, "some project");
+    mkdirSync(project);
+    const result = spawnSync(command, {
+      shell: true,
+      cwd: project,
+      encoding: "utf8",
+      env: sandbox.childEnv({ CLAUDE_CODE_SESSION_ID: "session-1" }),
+    });
+    expect(result.stdout).toBe('Recorded a wrong match for "Local link".\n');
+    expect(matches(ruleId).map((m) => m.flag)).toEqual([{ verdict: "wrong", raisedBy: "claude" }]);
+  });
+
   it("flags the session's most recent match of the rule as a wrong match raised by Claude", async () => {
     const ruleId = sandbox.liveRule({ name: "Local link", conditions: ["Asks for a visual change."] });
     const matcher = standInMatcher({ "Asks for a visual change.": 0.8 });

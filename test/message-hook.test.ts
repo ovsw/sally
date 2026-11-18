@@ -244,7 +244,8 @@ describe("a failed message check", () => {
   const BLOCKED = (failure: string) =>
     `Sally could not check this message against your rules: ${failure}. It was not sent to Claude.\n` +
     "Send it again to retry.\n" +
-    'To let messages through when a check fails, switch off "Stop the turn when a check fails" on the Settings screen of `sally app`, or run: sally settings stop-on-failure off';
+    'To let messages through when a check fails, switch off "Stop the turn when a check fails" on the Settings screen of Sally\'s web app, or run: ' +
+    `node "${join(import.meta.dirname, "..", "src", "cli.ts").replaceAll("\\", "/")}" settings stop-on-failure off`;
 
   /** The block Claude Code is told to make: the reason is what the user sees. */
   const blocked = (output: string): string => {

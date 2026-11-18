@@ -1,4 +1,4 @@
-// `sally evaluate FILE`: measures how well the engine matches on real text.
+// `node src/cli.ts evaluate FILE`: measures how well the engine matches on real text.
 // It runs every saved message and reply in the evaluation file through the
 // engine with the real Jev matcher, against the file's rules in a throwaway
 // database, and compares what matched with what was expected. It needs an API
@@ -20,8 +20,8 @@ import { openStore } from "./store.ts";
 export const DEFAULT_SCALE_CONDITIONS = 400;
 
 export const EVALUATE_USAGE = `Usage:
-  sally evaluate FILE [--scale] [--conditions N] [--cutoff X]
-                      [--time-limit MS] [--json]
+  node src/cli.ts evaluate FILE [--scale] [--conditions N] [--cutoff X]
+                                [--time-limit MS] [--json]
 
 Runs every case in the evaluation file through the engine with the real Jev
 matcher and reports right matches, wrong matches and misses, with timing and
@@ -235,7 +235,7 @@ function parseOptions(args: string[]): Options {
     throw new UsageError(error instanceof Error ? error.message : String(error));
   }
   const { values, positionals } = parsed;
-  if (positionals.length !== 1) throw new UsageError("sally evaluate takes one evaluation file.");
+  if (positionals.length !== 1) throw new UsageError("evaluate takes one evaluation file.");
   const conditions = number(values.conditions, "--conditions", true);
   if (conditions !== undefined && conditions < 1) throw new UsageError("--conditions takes a whole number of at least 1.");
   const settings: Partial<Settings> = {};

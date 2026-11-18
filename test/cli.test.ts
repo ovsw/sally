@@ -77,7 +77,7 @@ it("switches stopping on a failed check off and on from the command line", () =>
 
   const wrong = settings("stop-on-failure", "maybe");
   expect(wrong.status).toBe(1);
-  expect(wrong.stderr).toBe("Usage: sally settings stop-on-failure [on|off]\n");
+  expect(wrong.stderr).toBe("Usage: node src/cli.ts settings stop-on-failure [on|off]\n");
 });
 
 it("loads none of the import on the hook path", () => {

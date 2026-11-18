@@ -5,10 +5,12 @@ user's rules files into draft rules in Sally, lets the user review them in
 Sally's web app, and then takes what they published out of the rules file.
 Always-rules stay in the file.
 
-`sally` below means the command the installed skill gave you (`node "<path to
-Sally's checkout>/src/cli.ts"`). Every `sally import` and `sally rules` command
-prints JSON. The checkout is the folder above the one holding this file;
-`docs/writing-rules.md` in it is the guidance on writing rules.
+Sally's command line is run by its absolute path, so it works from any folder:
+in the commands below, `node "<cli>"` stands for the command the installed
+skill gave you (`node "<path to Sally's checkout>/src/cli.ts"`). Its `import`
+and `rules` commands print JSON. The checkout is the folder above the one
+holding this file; `docs/writing-rules.md` in it is the guidance on writing
+rules.
 
 Hold to these throughout:
 
@@ -17,12 +19,12 @@ Hold to these throughout:
 - **The user publishes.** The command line creates drafts only. Publishing,
   keeping and skipping happen in the web app, by the user.
 - **The rules file changes only in step 8**, and only after a backup made with
-  `sally import backup` and the user's yes for that file. Only rules that are
-  live leave the file.
+  `node "<cli>" import backup` and the user's yes for that file. Only rules
+  that are live leave the file.
 
 If the user comes back to an import already under way ("I'm done reviewing",
-"remove what I published"), run `sally import list`, take the newest import
-whose `removedAt` is null (ask if several), and go to step 7.
+"remove what I published"), run `node "<cli>" import list`, take the newest
+import whose `removedAt` is null (ask if several), and go to step 7.
 
 ## 1. Find the rules files
 
@@ -81,7 +83,7 @@ project." Carry on; you ask about removal in step 8.
 
 - Read `docs/writing-rules.md` in Sally's checkout, all of it. Every verdict,
   condition and instruction you write follows it.
-- Run `sally rules list` and keep the rules' names, instructions and
+- Run `node "<cli>" rules list` and keep the rules' names, instructions and
   conditions in mind for step 4.
 
 ## 4. Split it into passages and propose
@@ -122,21 +124,24 @@ blank lines, `@path` lines and Sally's line, sits in exactly one passage.
 
 ## 5. Record the import
 
-1. Run `sally import start <absolute path of the chosen file>`. Keep the `id`.
+1. Run `node "<cli>" import start <absolute path of the chosen file>`. Keep
+   the `id`.
 2. Write the passages as a JSON list to a file in the system's temporary
    folder (never in the project):
    `[{ "text", "verdict", "reason", "similarRule"?, "rules"?: [{ "name",
    "checkType", "instruction", "conditions": [...] }] }]`
-3. Run `sally import add <id> --file <that file>`. It adds all the passages or
-   none; if it refuses, fix what the message names and run it again.
-4. Run `sally import show <id>` and check that `passageCount` is the number of
-   passages you wrote. Delete the temporary file.
+3. Run `node "<cli>" import add <id> --file <that file>`. It adds all the
+   passages or none; if it refuses, fix what the message names and run it
+   again.
+4. Run `node "<cli>" import show <id>` and check that `passageCount` is the
+   number of passages you wrote. Delete the temporary file.
 
 ## 6. Send the user to review
 
 Make sure the web app is running: `curl -s http://localhost:${SALLY_PORT:-4517}/api/imports`
-answers when it is. If it does not, start `sally app` in the background and
-use the address it prints (another port when `SALLY_PORT` is set).
+answers when it is. If it does not, start `node "<cli>" app` in the
+background and use the address it prints (another port when `SALLY_PORT` is
+set).
 
 Tell the user, in a few lines:
 
@@ -151,7 +156,7 @@ Tell the user, in a few lines:
 
 ## 7. Read the user's decisions
 
-Run `sally import show <id>`. In its output:
+Run `node "<cli>" import show <id>`. In its output:
 
 - `pendingCount`: passages the user has not finished (a passage that stays
   counts until the user has looked at it). If it is above zero, say how many,
@@ -166,7 +171,7 @@ Run `sally import show <id>`. In its output:
   covers.
 
 If both lists are empty, tell the user nothing was published, so the rules
-file stays as it is; run `sally import removed <id>` and go to step 9.
+file stays as it is; run `node "<cli>" import removed <id>` and go to step 9.
 
 ## 8. Remove what was published
 
@@ -189,16 +194,16 @@ file stays as it is; run `sally import removed <id>` and go to step 9.
    the only one using that file, ask: "<file> is tracked in git. Remove these
    lines from it anyway? Only say yes if you are the only one using this
    file." Without that yes, leave that file unchanged. If no file is left to
-   edit, run `sally import removed <id>` and go to step 9.
+   edit, run `node "<cli>" import removed <id>` and go to step 9.
 4. Show the user the exact lines, grouped by file, with their line numbers.
    Ask for one yes for this rules file, and say they can hold back any lines
    by number. **Stop and wait for the answer.**
-5. On a yes, run `sally import backup <file>` for each file you will edit and
-   tell the user each backup's path.
+5. On a yes, run `node "<cli>" import backup <file>` for each file you will
+   edit and tell the user each backup's path.
 6. Edit the file, removing only the agreed lines.
 7. Check: compare each backup with its file (`diff <backup> <file>`). Only the
    agreed lines are gone and nothing else changed.
-8. Run `sally import removed <id>`.
+8. Run `node "<cli>" import removed <id>`.
 
 ## 9. Offer the next rules file
 

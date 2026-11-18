@@ -58,7 +58,7 @@ const PASSAGES = [
   { text: "Answer briefly.", verdict: "always_rule", reason: "It applies on every turn." },
 ];
 
-describe("sally import start", () => {
+describe("import start", () => {
   it("starts an import for a rules file and prints it as JSON", () => {
     const file = globalFile();
     const started = sallyJson<ImportSummary>(["start", file]);
@@ -89,7 +89,7 @@ describe("sally import start", () => {
   });
 });
 
-describe("sally import add", () => {
+describe("import add", () => {
   it("reads passages from standard input and adds them with their proposed rules as drafts", () => {
     const { id } = sallyJson<ImportSummary>(["start", globalFile()]);
     const detail = sallyJson<ImportDetail>(["add", String(id)], JSON.stringify(PASSAGES));
@@ -162,7 +162,7 @@ const BUNDLED = {
   ],
 };
 
-describe("sally import show, for the removal", () => {
+describe("import show, for the removal", () => {
   it("reports each passage's decisions, which rules are live, and what to remove", () => {
     const { id } = sallyJson<ImportSummary>(["start", globalFile()]);
     const added = sallyJson<ImportDetail>(["add", String(id)], JSON.stringify([...PASSAGES, BUNDLED]));
@@ -197,7 +197,7 @@ describe("sally import show, for the removal", () => {
   });
 });
 
-describe("sally import backup", () => {
+describe("import backup", () => {
   it("copies the rules file into the data folder under a dated name and prints the path", () => {
     const file = globalFile();
     const { rulesFile, backup } = sallyJson<{ rulesFile: string; backup: string }>(["backup", file]);
@@ -229,7 +229,7 @@ describe("sally import backup", () => {
   });
 });
 
-describe("sally import removed", () => {
+describe("import removed", () => {
   it("records that the removal happened, keeping the first time when recorded again", () => {
     const { id } = sallyJson<ImportSummary>(["start", globalFile()]);
     const recorded = sallyJson<{ id: number; removedAt: string }>(["removed", String(id)]);
@@ -266,8 +266,8 @@ describe("publishing", () => {
 });
 
 it("prints the usage for help, and refuses an unknown command", () => {
-  expect(sally(["help"]).stdout).toMatch(/sally import start RULES_FILE/);
+  expect(sally(["help"]).stdout).toMatch(/node src\/cli\.ts import start RULES_FILE/);
   const unknown = sally(["merge"]);
   expect(unknown.status).toBe(1);
-  expect(unknown.stderr).toMatch(/Unknown command "sally import merge"/);
+  expect(unknown.stderr).toMatch(/Unknown command "import merge"/);
 });
