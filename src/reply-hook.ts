@@ -41,14 +41,14 @@ function finalReply(input: StopInput): string | undefined {
 // Sent back after Claude has replied, so it reaches Claude where a new message
 // would. It says it is not one, and what to do with the reply in either case,
 // so Claude neither answers Sally nor writes about it.
-export const SENT_BACK_HEADER =
+const SENT_BACK_HEADER =
   "Sally, an automatic check on the reply you just wrote, not a message to answer: the rules below are the user's own written rules, and they may bear on that reply.";
 
-export const REVISE_LINE =
+const REVISE_LINE =
   "Reread your reply against them. If it breaks one, write the corrected reply, to the user and about their request. If it already follows them, give the user its short version again. Either way, do not mention Sally, these rules or this check.";
 
 /** The text a sent-back reply gets: the header, each rule's name and instruction, what to do, and how to report a rule that does not fit. */
-export function formatSentBack(matches: Match[]): string {
+function formatSentBack(matches: Match[]): string {
   const rules = matches.map((f) => `Rule: ${f.name}\n${f.instruction}`);
   return [SENT_BACK_HEADER, ...rules, REVISE_LINE, REPORT_LINE].join("\n\n");
 }

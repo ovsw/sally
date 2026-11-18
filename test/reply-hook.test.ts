@@ -1,8 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { REPORT_LINE, runMessageHook } from "../src/message-hook.ts";
-import { formatSentBack, REVISE_LINE, runReplyHook, SENT_BACK_HEADER } from "../src/reply-hook.ts";
+import { runMessageHook } from "../src/message-hook.ts";
+import { runReplyHook } from "../src/reply-hook.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { standInMatcher } from "./support/stand-in-matcher.ts";
 
@@ -77,12 +77,12 @@ describe("reply check", () => {
 
     const parsed = JSON.parse(output);
     expect(parsed.decision).toBe("block");
-    expect(parsed.reason).toBe(
-      formatSentBack([{ ruleId: 0, name: "Local link", instruction, score: 0.8 }]),
-    );
-    expect(parsed.reason.startsWith(SENT_BACK_HEADER)).toBe(true);
+    expect(parsed.reason).toMatch(/^Sally, an automatic check on the reply you just wrote, not a message to answer/);
     expect(parsed.reason).toContain(`Rule: Local link\n${instruction}`);
-    expect(parsed.reason.endsWith(`${REVISE_LINE}\n\n${REPORT_LINE}`)).toBe(true);
+    expect(parsed.reason).toContain("If it breaks one, write the corrected reply, to the user and about their request.");
+    expect(parsed.reason).toContain("If it already follows them, give the user its short version again.");
+    expect(parsed.reason).toContain("do not mention Sally, these rules or this check.");
+    expect(parsed.reason).toMatch(/If one of these rules does not fit, run this and leave it out of your reply: .+ wrong-match "<rule name>"$/);
     expect(matcher.calls).toHaveLength(1);
     expect(matcher.calls[0]!.text).toBe("Done, the header is smaller.");
     expect(checks()).toMatchObject([{ check_type: "reply", text: "Done, the header is smaller.", outcome: "sent_back" }]);
