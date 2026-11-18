@@ -1,9 +1,9 @@
-import { cutToLastPart, splitIntoRequests, textTokenBudget } from "./limits.ts";
+import { cutToFit, splitIntoRequests, textTokenBudget } from "./limits.ts";
 import { MalformedAnswerError, type Matcher, type MatcherCondition, type MatchResult } from "./matcher.ts";
 import { resolveProject } from "./project.ts";
 import type { CheckType, LiveRule, RulesService } from "./rules.ts";
 import { type Store, transaction } from "./store.ts";
-import { maskEmails, messageText } from "./text.ts";
+import { leaveOutPastes, maskEmails, messageText } from "./text.ts";
 
 export type Outcome = "nothing" | "attached" | "sent_back" | "skipped" | "failed";
 
@@ -113,7 +113,10 @@ function combineTokens(results: MatchResult[]): Tokens {
 /** What one check records about itself, besides its scores and matches. */
 interface CheckRecord {
   input: CheckInput;
-  /** The text the check judged: the message after any slash command, cut to its last part if too long. */
+  /**
+   * The text the check judged: the message after any slash command, with pastes
+   * left out, and its middle cut if too long.
+   */
   text: string;
   /** Whether the text was cut to fit Jev's per-question limit. */
   cut: boolean;
@@ -260,8 +263,10 @@ export function createEngine(options: EngineOptions): Engine {
         rule.conditions.map((c) => ({ id: `c${c.id}`, text: maskEmails(c.text) })),
       );
 
-      // A text too long for Jev's per-question limit is cut to its last part, and the cut is recorded.
-      const { text, cut } = cutToLastPart(judged.text, textTokenBudget(conditions));
+      // Text the user pasted into a message is left out: rules are about what they wrote.
+      const own = input.checkType === "message" ? leaveOutPastes(judged.text).text : judged.text;
+      // A text too long for Jev's per-question limit keeps its start and end, and the cut is recorded.
+      const { text, cut } = cutToFit(own, textTokenBudget(conditions));
       const check: CheckRecord = { input, text, cut, project, startedAt, cutoff };
       // With no live rule there is nothing to ask Jev, and the answer is known: no rule matched.
       if (live.length === 0) {

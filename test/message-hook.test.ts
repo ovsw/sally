@@ -583,11 +583,11 @@ describe("email masking", () => {
     await runMessageHook(hookInput(`look at ${word} please`), { env: sandbox.env, matcher });
 
     expect(Date.now() - started).toBeLessThan(1000);
-    // A message this long is cut to its last part before checking.
+    // A message this long keeps its start and end before checking.
     const sent = matcher.calls[0]!.text;
     expect(sent.length).toBeLessThan(`look at ${word} please`.length);
+    expect(sent.startsWith("look at a")).toBe(true);
     expect(sent.endsWith("a please")).toBe(true);
-    expect(`look at ${word} please`.endsWith(sent)).toBe(true);
   });
 
   it("still records the message as written on the local machine", async () => {
@@ -649,5 +649,62 @@ describe("slash commands", () => {
     });
 
     expect(context(output)).toContain("Visual");
+  });
+});
+
+describe("pasted text", () => {
+  const paste = (id: string, body: string) => `<pasted_content id="${id}">\n${body}\n</pasted_content id="${id}">`;
+
+  it("leaves a marked paste out of the text checked and the text recorded, with a note in its place", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+    const transcript = Array.from({ length: 1500 }, (_, i) => `Speaker ${i}: something said`).join("\n");
+
+    await runMessageHook(hookInput(`Give me a summary of this transcript:\n${paste("d3bc", transcript)}`), {
+      env: sandbox.env,
+      matcher,
+    });
+
+    const sent = "Give me a summary of this transcript:\n[pasted text left out: 1,500 lines]";
+    expect(matcher.calls[0]!.text).toBe(sent);
+    expect(checks()).toMatchObject([{ text: sent, cut: 0 }]);
+  });
+
+  it("leaves out every paste and keeps the words between them", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+
+    await runMessageHook(hookInput(`Compare ${paste("a1", "one")} with ${paste("b2", "two\nthree")} please`), {
+      env: sandbox.env,
+      matcher,
+    });
+
+    expect(matcher.calls[0]!.text).toBe(
+      "Compare [pasted text left out: 1 line] with [pasted text left out: 2 lines] please",
+    );
+  });
+
+  it("leaves out a paste marked without an id", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+
+    await runMessageHook(hookInput("Fix this <pasted_content>\nError: boom\n</pasted_content>"), {
+      env: sandbox.env,
+      matcher,
+    });
+
+    expect(matcher.calls[0]!.text).toBe("Fix this [pasted text left out: 1 line]");
+  });
+
+  it("keeps a paste whose closing tag is missing or belongs to another paste", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+    const unclosed = 'Look at <pasted_content id="a1">\nhalf a paste';
+    const mismatched = 'Look at <pasted_content id="a1">\ntext\n</pasted_content id="b2">';
+
+    await runMessageHook(hookInput(unclosed), { env: sandbox.env, matcher });
+    await runMessageHook(hookInput(mismatched), { env: sandbox.env, matcher });
+
+    expect(matcher.calls.map((call) => call.text)).toEqual([unclosed, mismatched]);
   });
 });

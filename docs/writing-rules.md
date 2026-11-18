@@ -82,8 +82,9 @@ Knowing what Jev sees explains most of the advice below.
   scored one by one, so a rule's other conditions do not help or hurt.
 - **A rule matches when any one of its conditions reaches the cutoff.** The
   cutoff is 0.6 unless it was changed in Settings.
-- Email addresses are replaced with `[email]` before anything is sent. A very
-  long text is cut to its last part.
+- Email addresses are replaced with `[email]` before anything is sent. Text
+  pasted into a message in T3 Code is left out, with a note in its place. A
+  very long text keeps its start and end and loses its middle.
 
 So a condition has to be true or false of that one text, read on its own.
 

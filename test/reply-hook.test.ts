@@ -240,11 +240,11 @@ describe("reading the final reply", () => {
 
     await runReplyHook(stopInput({ transcript_path: path }), { env: sandbox.env, matcher });
 
-    // A reply this long is cut to its last part before checking.
+    // A reply this long keeps its start and end before checking.
     const sent = matcher.calls[0]!.text;
     expect(sent.length).toBeLessThan(finalReply.length);
+    expect(sent.startsWith("yyy")).toBe(true);
     expect(sent.endsWith("y The end.")).toBe(true);
-    expect(finalReply.endsWith(sent)).toBe(true);
   });
 
   it("does nothing when there is no reply text", async () => {
