@@ -149,6 +149,34 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/** One of the user's decisions in an import (see ImportDecisions). */
+async function handleDecision(
+  imports: ImportService,
+  parts: string[],
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const id = Number(parts[1]);
+  if (parts.length !== 3 || !Number.isSafeInteger(id)) throw new HttpError(404, "Not found.");
+  const body = await readJson(req);
+  const action = `${parts[0]}/${parts[2]}`;
+  if (action === "proposed-rules/publish") return send(res, 200, imports.publishProposedRule(id));
+  if (action === "proposed-rules/keep") return send(res, 200, imports.keepProposedRule(id));
+  if (action === "proposed-rules/skip") return send(res, 200, imports.skipProposedRule(id));
+  if (action === "passages/seen") return send(res, 200, imports.markPassageSeen(id));
+  if (action === "passages/stays") return send(res, 200, imports.markPassageStays(id));
+  if (action === "passages/rules") {
+    const detail = imports.writeRule(id, {
+      name: text(body, "name"),
+      checkType: text(body, "checkType") as CheckType,
+      instruction: text(body, "instruction"),
+      conditions: textList(body, "conditions"),
+    });
+    return send(res, 201, detail);
+  }
+  throw new HttpError(404, "Not found.");
+}
+
 /**
  * The rules service over HTTP, under /api:
  *
@@ -175,6 +203,11 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  *                                                        answers like GET /api/attention
  * - GET  /api/imports                                    every import, newest first, with its pending count
  * - GET  /api/imports/:id                                an import, its passages and the rules they produced
+ * - POST /api/proposed-rules/:id/publish|keep|skip       decide one proposed rule
+ * - POST /api/passages/:id/seen                          the user has seen the passage
+ * - POST /api/passages/:id/stays                         the passage stays in the rules file; its rules are skipped
+ * - POST /api/passages/:id/rules                         write a rule for the passage { name, checkType, instruction, conditions }
+ *   Each import decision answers with the import as it now is.
  *
  * Every change answers with the rule as it now is, except a delete, which
  * answers { deleted: true }, a flag, which answers with the match's flag,
@@ -197,6 +230,9 @@ export async function handleApi(
       const importId = Number(parts[1]);
       if (parts.length === 2 && Number.isSafeInteger(importId)) return send(res, 200, imports.getImport(importId));
       throw new HttpError(404, "Not found.");
+    }
+    if ((parts[0] === "proposed-rules" || parts[0] === "passages") && method === "POST") {
+      return await handleDecision(imports, parts, req, res);
     }
     if (parts.length === 1 && parts[0] === "projects" && method === "GET") {
       return send(res, 200, { projects: rules.projects() });

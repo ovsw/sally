@@ -92,7 +92,48 @@ export interface ImportDetail extends ImportSummary {
   passages: PassageView[];
 }
 
-export interface ImportService {
+/**
+ * The user's decisions in an import. Every one answers with the import as it
+ * now is. A proposed rule is named by its proposal id (ProposedRuleView.id),
+ * a passage by its id. Editing a proposed rule's conditions and instruction is
+ * saving its draft through the rules service, as on the rule screen.
+ *
+ * Changing a decision afterwards:
+ * - a rule kept as a draft can still be edited, published or skipped;
+ * - a published rule is live: the import cannot keep or skip it; it is
+ *   changed, switched off or deleted on its rule screen;
+ * - a skipped rule's draft is gone, so it cannot come back: the user writes a
+ *   new rule for the passage instead;
+ * - a passage marked as staying can get a rule written for it, and a passage
+ *   given a written rule can be marked as staying again.
+ */
+export interface ImportDecisions {
+  /** Publishes the proposed rule's draft. A rule already live with no draft is left as it is. Refuses a skipped rule. */
+  publishProposedRule(proposalId: number): ImportDetail;
+  /** Leaves the proposed rule as a draft and settles it for the import. Refuses a skipped or live rule. */
+  keepProposedRule(proposalId: number): ImportDetail;
+  /**
+   * Deletes the proposed rule, which was never live, and settles it for the
+   * import. Skipping a skipped rule changes nothing. Refuses a live rule.
+   */
+  skipProposedRule(proposalId: number): ImportDetail;
+  /**
+   * Writes a rule for the passage, as a draft with the import's scope, after
+   * its other rules. Overrules a verdict that the passage stays: it now
+   * becomes a rule.
+   */
+  writeRule(passageId: number, rule: ProposedRule): ImportDetail;
+  /**
+   * Overrules the verdict the other way: the passage stays in the rules file,
+   * and its rules not yet published are skipped. Refuses a passage with a live
+   * rule, which would then be both in the file and in Sally.
+   */
+  markPassageStays(passageId: number): ImportDetail;
+  /** Records that the user has seen the passage; a passage that stays is pending until then. */
+  markPassageSeen(passageId: number): ImportDetail;
+}
+
+export interface ImportService extends ImportDecisions {
   /**
    * Starts an import for the rules file at this path. A rules file in the
    * user's Claude Code folder gives its rules to all projects; any other gives
@@ -386,6 +427,149 @@ export function createImportService(db: Store, options: ImportServiceOptions): I
           )
           .all() as unknown as ImportRow[]
       ).map(summary);
+    },
+
+    ...decisions(db, rules, scopeOf, requireImport, detail),
+  };
+}
+
+interface DecisionPassageRow {
+  id: number;
+  import_id: number;
+  verdict: PassageVerdict;
+  decision: PassageDecision | null;
+}
+
+interface DecisionProposalRow {
+  id: number;
+  passage_id: number;
+  import_id: number;
+  rule_id: number | null;
+}
+
+/** The user's decisions in an import (see ImportDecisions), over the import service's own reads. */
+function decisions(
+  db: Store,
+  rules: RulesService,
+  scopeOf: (row: ImportRow) => Scope,
+  requireImport: (importId: number) => ImportRow,
+  detail: (row: ImportRow) => ImportDetail,
+): ImportDecisions {
+  const answer = (importId: number) => detail(requireImport(importId));
+
+  function findPassage(passageId: number): DecisionPassageRow {
+    const row = db
+      .prepare("SELECT id, import_id, verdict, decision FROM passages WHERE id = ?")
+      .get(passageId) as DecisionPassageRow | undefined;
+    if (!row) throw new RuleNotFoundError(`No passage with id ${passageId}.`);
+    return row;
+  }
+
+  function findProposal(proposalId: number): DecisionProposalRow {
+    const row = db
+      .prepare(
+        `SELECT pr.id, pr.passage_id, p.import_id, pr.rule_id
+           FROM passage_rules pr JOIN passages p ON p.id = pr.passage_id WHERE pr.id = ?`,
+      )
+      .get(proposalId) as DecisionProposalRow | undefined;
+    if (!row) throw new RuleNotFoundError(`No proposed rule with id ${proposalId}.`);
+    return row;
+  }
+
+  const SKIPPED = "This rule was skipped, so its draft is gone. Write a new rule for the passage instead.";
+  const isLive = (ruleId: number) => rules.getRule(ruleId).live !== null;
+
+  const settle = (proposalId: number, decision: "kept" | "skipped") =>
+    db
+      .prepare("UPDATE passage_rules SET decision = ?, decided_at = ? WHERE id = ?")
+      .run(decision, now(), proposalId);
+
+  /** Deletes the proposal's draft rule and records it as skipped. */
+  function skip(proposal: { id: number; rule_id: number | null }): void {
+    if (proposal.rule_id !== null) rules.deleteRule(proposal.rule_id);
+    db.prepare("UPDATE passage_rules SET rule_id = NULL WHERE id = ?").run(proposal.id);
+    settle(proposal.id, "skipped");
+  }
+
+  return {
+    publishProposedRule(proposalId) {
+      const proposal = findProposal(proposalId);
+      if (proposal.rule_id === null) throw new RuleError(SKIPPED);
+      const rule = rules.getRule(proposal.rule_id);
+      if (rule.live === null || rule.draft !== null) rules.publish(proposal.rule_id);
+      return answer(proposal.import_id);
+    },
+
+    keepProposedRule(proposalId) {
+      const proposal = findProposal(proposalId);
+      if (proposal.rule_id === null) throw new RuleError(SKIPPED);
+      if (isLive(proposal.rule_id)) {
+        throw new RuleError("This rule is live already. Change it, switch it off or delete it on its rule screen.");
+      }
+      settle(proposal.id, "kept");
+      return answer(proposal.import_id);
+    },
+
+    skipProposedRule(proposalId) {
+      const proposal = findProposal(proposalId);
+      if (proposal.rule_id !== null) {
+        if (isLive(proposal.rule_id)) {
+          throw new RuleError("This rule is live, so skipping cannot remove it. Delete it on its rule screen instead.");
+        }
+        transaction(db, () => skip(proposal));
+      }
+      return answer(proposal.import_id);
+    },
+
+    writeRule(passageId, proposed) {
+      const passage = findPassage(passageId);
+      if (typeof proposed !== "object" || proposed === null) throw new RuleError("Send the rule to write.");
+      return transaction(db, () => {
+        const { ruleId } = rules.createRule({
+          name: proposed.name,
+          checkType: proposed.checkType ?? "message",
+          instruction: proposed.instruction,
+          conditions: proposed.conditions,
+          scope: scopeOf(requireImport(passage.import_id)),
+        });
+        const { next } = db
+          .prepare("SELECT COALESCE(MAX(position), -1) + 1 AS next FROM passage_rules WHERE passage_id = ?")
+          .get(passageId) as { next: number };
+        db.prepare("INSERT INTO passage_rules (passage_id, position, rule_id) VALUES (?, ?, ?)").run(
+          passageId,
+          next,
+          ruleId,
+        );
+        const stays = (passage.decision ?? (passage.verdict === "becomes_rule" ? "becomes_rule" : "stays")) === "stays";
+        if (stays) db.prepare("UPDATE passages SET decision = 'becomes_rule' WHERE id = ?").run(passageId);
+        return answer(passage.import_id);
+      });
+    },
+
+    markPassageStays(passageId) {
+      const passage = findPassage(passageId);
+      const proposals = db
+        .prepare("SELECT id, rule_id FROM passage_rules WHERE passage_id = ? ORDER BY position")
+        .all(passageId) as unknown as { id: number; rule_id: number | null }[];
+      if (proposals.some((proposal) => proposal.rule_id !== null && isLive(proposal.rule_id))) {
+        throw new RuleError(
+          "A rule from this passage is live, so the passage cannot also stay in the rules file. Delete that rule on its rule screen first.",
+        );
+      }
+      return transaction(db, () => {
+        for (const proposal of proposals) if (proposal.rule_id !== null) skip(proposal);
+        db.prepare("UPDATE passages SET decision = 'stays', seen_at = COALESCE(seen_at, ?) WHERE id = ?").run(
+          now(),
+          passageId,
+        );
+        return answer(passage.import_id);
+      });
+    },
+
+    markPassageSeen(passageId) {
+      const passage = findPassage(passageId);
+      db.prepare("UPDATE passages SET seen_at = ? WHERE id = ? AND seen_at IS NULL").run(now(), passageId);
+      return answer(passage.import_id);
     },
   };
 }

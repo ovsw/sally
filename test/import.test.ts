@@ -258,3 +258,205 @@ describe("pending passages", () => {
     expect(after.pending).toBe(false);
   });
 });
+
+describe("decisions", () => {
+  const twoRules: NewPassage = {
+    ...becomesRule("Links"),
+    rules: [
+      { name: "One", instruction: "Do one.", conditions: ["One applies."] },
+      { name: "Two", instruction: "Do two.", conditions: ["Two applies."] },
+      { name: "Three", instruction: "Do three.", conditions: ["Three applies."] },
+    ],
+  };
+
+  /** Starts an import of the global rules file with these passages and returns it. */
+  const importOf = (...passages: NewPassage[]) =>
+    sandbox.withImports((imports) => imports.addPassages(imports.startImport(globalFile()).id, passages));
+
+  const ruleNames = () => sandbox.withRules((rules) => rules.listRules()).map((r) => r.name);
+
+  it("publishes an edited proposed rule with the edits", () => {
+    const [passage] = importOf(becomesRule("Links")).passages;
+    const proposed = passage!.rules[0]!;
+    sandbox.withRules((rules) =>
+      rules.saveDraft(proposed.ruleId!, { instruction: "Give the local link.", conditions: ["The message asks for a link."] }),
+    );
+    const after = sandbox.withImports((imports) => imports.publishProposedRule(proposed.id));
+    expect(after.passages[0]!.rules[0]).toMatchObject({
+      decision: "published",
+      rule: { state: "live", live: { instruction: "Give the local link.", conditions: ["The message asks for a link."] } },
+    });
+    expect(after.passages[0]!.pending).toBe(false);
+  });
+
+  it("refuses to publish a proposed rule that is not complete, leaving it undecided", () => {
+    const detail = importOf(becomesRule("Links"));
+    const proposed = detail.passages[0]!.rules[0]!;
+    sandbox.withRules((rules) => rules.saveDraft(proposed.ruleId!, { instruction: "", conditions: [] }));
+    expect(() => sandbox.withImports((imports) => imports.publishProposedRule(proposed.id))).toThrow(RuleError);
+    expect(sandbox.withImports((imports) => imports.getImport(detail.id)).passages[0]!.rules[0]!.decision).toBeNull();
+  });
+
+  it("keeps a proposed rule as a draft, settling it, and can publish it later", () => {
+    const detail = importOf(becomesRule("Links"));
+    const proposed = detail.passages[0]!.rules[0]!;
+    const kept = sandbox.withImports((imports) => imports.keepProposedRule(proposed.id));
+    expect(kept.passages[0]!.rules[0]).toMatchObject({ decision: "kept", rule: { state: "draft" } });
+    expect(kept.passages[0]!.pending).toBe(false);
+    expect(kept.pendingCount).toBe(0);
+    expect(sandbox.withRules((rules) => rules.liveRules("message"))).toEqual([]);
+
+    const published = sandbox.withImports((imports) => imports.publishProposedRule(proposed.id));
+    expect(published.passages[0]!.rules[0]!.decision).toBe("published");
+  });
+
+  it("skips a proposed rule by deleting its draft, settling it for good", () => {
+    const detail = importOf(becomesRule("Links"));
+    const proposed = detail.passages[0]!.rules[0]!;
+    const skipped = sandbox.withImports((imports) => imports.skipProposedRule(proposed.id));
+    expect(skipped.passages[0]!.rules[0]).toEqual({ id: proposed.id, ruleId: null, decision: "skipped", rule: null });
+    expect(skipped.passages[0]!.pending).toBe(false);
+    expect(ruleNames()).toEqual([]);
+
+    expect(() => sandbox.withImports((imports) => imports.keepProposedRule(proposed.id))).toThrow(/Write a new rule/);
+    expect(() => sandbox.withImports((imports) => imports.publishProposedRule(proposed.id))).toThrow(/Write a new rule/);
+    expect(sandbox.withImports((imports) => imports.skipProposedRule(proposed.id)).passages[0]!.rules[0]!.decision).toBe(
+      "skipped",
+    );
+  });
+
+  it("skips a rule that was kept as a draft", () => {
+    const proposed = importOf(becomesRule("Links")).passages[0]!.rules[0]!;
+    sandbox.withImports((imports) => imports.keepProposedRule(proposed.id));
+    const skipped = sandbox.withImports((imports) => imports.skipProposedRule(proposed.id));
+    expect(skipped.passages[0]!.rules[0]!.decision).toBe("skipped");
+    expect(ruleNames()).toEqual([]);
+  });
+
+  it("refuses to keep or skip a published rule, which is live", () => {
+    const proposed = importOf(becomesRule("Links")).passages[0]!.rules[0]!;
+    sandbox.withImports((imports) => imports.publishProposedRule(proposed.id));
+    expect(() => sandbox.withImports((imports) => imports.keepProposedRule(proposed.id))).toThrow(/live/);
+    expect(() => sandbox.withImports((imports) => imports.skipProposedRule(proposed.id))).toThrow(/live/);
+    expect(ruleNames()).toEqual(["Links"]);
+  });
+
+  it("decides each of a passage's rules on its own, pending until the last is settled", () => {
+    const [passage] = importOf(twoRules).passages;
+    const [one, two, three] = passage!.rules;
+    sandbox.withImports((imports) => imports.publishProposedRule(one!.id));
+    const afterKeep = sandbox.withImports((imports) => imports.keepProposedRule(two!.id));
+    expect(afterKeep.passages[0]!.rules.map((r) => r.decision)).toEqual(["published", "kept", null]);
+    expect(afterKeep.passages[0]!.pending).toBe(true);
+
+    const done = sandbox.withImports((imports) => imports.skipProposedRule(three!.id));
+    expect(done.passages[0]!.rules.map((r) => r.decision)).toEqual(["published", "kept", "skipped"]);
+    expect(done.passages[0]!.pending).toBe(false);
+    expect(ruleNames()).toEqual(["One", "Two"]);
+  });
+
+  it("shows passages that stay with their reason, pending until seen", () => {
+    const detail = importOf(alwaysRule, tooVague);
+    expect(detail.passages.map((p) => [p.verdict, p.reason, p.pending])).toEqual([
+      ["always_rule", alwaysRule.reason, true],
+      ["too_vague", tooVague.reason, true],
+    ]);
+    const seen = sandbox.withImports((imports) => imports.markPassageSeen(detail.passages[0]!.id));
+    expect(seen.passages.map((p) => p.pending)).toEqual([false, true]);
+    expect(seen.passages[0]!.seenAt).not.toBeNull();
+    expect(seen.pendingCount).toBe(1);
+  });
+
+  it("seeing a passage that becomes a rule does not settle it", () => {
+    const detail = importOf(becomesRule("Links"));
+    const seen = sandbox.withImports((imports) => imports.markPassageSeen(detail.passages[0]!.id));
+    expect(seen.passages[0]!.pending).toBe(true);
+  });
+
+  it("writes a rule for a passage that was to stay, with the import's scope, pending until it is settled", () => {
+    const detail = importOf(alwaysRule);
+    const passage = detail.passages[0]!;
+    sandbox.withImports((imports) => imports.markPassageSeen(passage.id));
+    const written = sandbox.withImports((imports) =>
+      imports.writeRule(passage.id, {
+        name: "Plain words",
+        checkType: "reply",
+        instruction: "Rewrite the reply in plain words.",
+        conditions: ["The reply uses jargon."],
+      }),
+    );
+    const after = written.passages[0]!;
+    expect(after.decision).toBe("becomes_rule");
+    expect(after.rules).toHaveLength(1);
+    expect(after.rules[0]).toMatchObject({
+      decision: null,
+      rule: { name: "Plain words", checkType: "reply", state: "draft", draft: { scope: { kind: "all" } } },
+    });
+    expect(after.pending).toBe(true);
+
+    const published = sandbox.withImports((imports) => imports.publishProposedRule(after.rules[0]!.id));
+    expect(published.passages[0]!.pending).toBe(false);
+  });
+
+  it("writes a new rule for a passage whose proposed rule was skipped, after it", () => {
+    const proposed = importOf(becomesRule("Links")).passages[0]!.rules[0]!;
+    const skipped = sandbox.withImports((imports) => imports.skipProposedRule(proposed.id));
+    const written = sandbox.withImports((imports) =>
+      imports.writeRule(skipped.passages[0]!.id, {
+        name: "Links again",
+        instruction: "Give the link.",
+        conditions: ["The message asks for a link."],
+      }),
+    );
+    expect(written.passages[0]!.decision).toBeNull();
+    expect(written.passages[0]!.rules.map((r) => r.decision)).toEqual(["skipped", null]);
+    expect(written.passages[0]!.pending).toBe(true);
+  });
+
+  it("refuses to write a rule that is not complete or whose name is taken", () => {
+    const detail = importOf(alwaysRule);
+    const passage = detail.passages[0]!;
+    sandbox.liveRule({ name: "Taken" });
+    const write = (name: string, instruction: string) =>
+      sandbox.withImports((imports) =>
+        imports.writeRule(passage.id, { name, instruction, conditions: ["The message asks."] }),
+      );
+    expect(() => write("New", "")).toThrow(RuleError);
+    expect(() => write("Taken", "Do it.")).toThrow(RuleError);
+    const after = sandbox.withImports((imports) => imports.getImport(detail.id)).passages[0]!;
+    expect(after.decision).toBeNull();
+    expect(after.rules).toEqual([]);
+  });
+
+  it("marks a passage as staying, skipping its rules not yet published, including kept drafts", () => {
+    const [passage] = importOf(twoRules).passages;
+    sandbox.withImports((imports) => imports.keepProposedRule(passage!.rules[0]!.id));
+    const stays = sandbox.withImports((imports) => imports.markPassageStays(passage!.id));
+    expect(stays.passages[0]!).toMatchObject({ decision: "stays", pending: false });
+    expect(stays.passages[0]!.seenAt).not.toBeNull();
+    expect(stays.passages[0]!.rules.map((r) => r.decision)).toEqual(["skipped", "skipped", "skipped"]);
+    expect(ruleNames()).toEqual([]);
+  });
+
+  it("refuses to mark a passage as staying while one of its rules is live", () => {
+    const [passage] = importOf(twoRules).passages;
+    sandbox.withImports((imports) => imports.publishProposedRule(passage!.rules[0]!.id));
+    expect(() => sandbox.withImports((imports) => imports.markPassageStays(passage!.id))).toThrow(/live/);
+    expect(ruleNames()).toEqual(["One", "Three", "Two"]);
+  });
+
+  it("lets a passage marked as staying become a rule again by writing one", () => {
+    const [passage] = importOf(becomesRule("Links")).passages;
+    sandbox.withImports((imports) => imports.markPassageStays(passage!.id));
+    const written = sandbox.withImports((imports) =>
+      imports.writeRule(passage!.id, { name: "Links", instruction: "Do it.", conditions: ["Links come up."] }),
+    );
+    expect(written.passages[0]!.decision).toBe("becomes_rule");
+    expect(written.passages[0]!.rules.map((r) => r.decision)).toEqual(["skipped", null]);
+  });
+
+  it("refuses decisions on a passage or proposed rule that does not exist", () => {
+    expect(() => sandbox.withImports((imports) => imports.markPassageSeen(999))).toThrow(/No passage/);
+    expect(() => sandbox.withImports((imports) => imports.keepProposedRule(999))).toThrow(/No proposed rule/);
+  });
+});
