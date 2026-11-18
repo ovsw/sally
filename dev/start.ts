@@ -3,7 +3,9 @@
 // Runs the app's API and the Vite dev server in one process, on a database in
 // .dev/ (git-ignored) and the stand-in matcher. It never reads the real
 // database or the Jev API key. `pnpm dev --fresh` starts the sample data over.
-import { existsSync } from "node:fs";
+// `pnpm dev --empty` starts on an empty database instead, in .dev/empty/, to
+// show what a new user sees; it is wiped on every start.
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
@@ -16,10 +18,13 @@ import { devMatcher } from "./matcher.ts";
 import { devEnv, seed } from "./seed.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
-const root = join(packageRoot, ".dev");
+const empty = process.argv.includes("--empty");
+const root = join(packageRoot, ".dev", ...(empty ? ["empty"] : []));
 const database = databasePath({ SALLY_DATA_DIR: join(root, "data") });
 
-if (process.argv.includes("--fresh") || !existsSync(database)) {
+if (empty) {
+  rmSync(root, { recursive: true, force: true });
+} else if (process.argv.includes("--fresh") || !existsSync(database)) {
   console.log("Writing sample data to .dev/ ...");
   await seed(root);
 }
@@ -38,7 +43,7 @@ process.env.SALLY_API = await listen(api, 0);
 
 const vite = await createServer({ configFile: join(packageRoot, "vite.config.ts") });
 await vite.listen();
-console.log("Sally (sample data) is running at:");
+console.log(`Sally (${empty ? "no rules" : "sample data"}) is running at:`);
 vite.printUrls();
 
 const stop = () => {

@@ -12,8 +12,10 @@ export function usePath(): string {
   return React.useSyncExternalStore(subscribe, () => window.location.pathname);
 }
 
+/** Goes to a path within the app; a path may end in "#anchor". */
 export function navigate(path: string): void {
-  if (path === window.location.pathname) return;
+  const { pathname, hash } = window.location;
+  if (path === pathname + hash) return;
   window.history.pushState(null, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
@@ -24,5 +26,5 @@ export function followLink(event: React.MouseEvent<HTMLAnchorElement>): void {
     return;
   }
   event.preventDefault();
-  navigate(event.currentTarget.pathname);
+  navigate(event.currentTarget.pathname + event.currentTarget.hash);
 }

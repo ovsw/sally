@@ -6,6 +6,7 @@ import { navigate, usePath } from "@/lib/router";
 import { ActivityScreen } from "@/screens/activity-screen";
 import { AttentionScreen } from "@/screens/attention-screen";
 import { ImportScreen } from "@/screens/import-screen";
+import { GuideScreen } from "@/screens/guide-screen";
 import { RuleScreen } from "@/screens/rule-screen";
 import { RulesScreen } from "@/screens/rules-screen";
 import { SettingsScreen } from "@/screens/settings-screen";
@@ -20,6 +21,7 @@ function Screen({ path }: { path: string }) {
   }
   if (path === "/settings") return <SettingsScreen />;
   if (path === "/activity") return <ActivityScreen />;
+  if (path === "/guide") return <GuideScreen />;
   if (path === "/attention" || path === "/" || path === "/index.html") return <AttentionScreen />;
   return <RulesScreen />;
 }

@@ -26,9 +26,11 @@ import { type CheckType, createRule, type RuleDetail } from "@/lib/api";
 
 interface NewRuleDialogProps {
   onCreated: (rule: RuleDetail) => void;
+  /** The button that opens the dialog; a small "New rule" button by default. */
+  trigger?: React.ReactNode;
 }
 
-export function NewRuleDialog({ onCreated }: NewRuleDialogProps) {
+export function NewRuleDialog({ onCreated, trigger }: NewRuleDialogProps) {
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [checkType, setCheckType] = React.useState<CheckType>("message");
@@ -87,10 +89,12 @@ export function NewRuleDialog({ onCreated }: NewRuleDialogProps) {
       }}
     >
       <DialogTrigger asChild>
-        <Button size="sm" className="h-8">
-          <Plus />
-          New rule
-        </Button>
+        {trigger ?? (
+          <Button size="sm" className="h-8">
+            <Plus />
+            New rule
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-0 sm:max-w-2xl">
         <form onSubmit={submit}>

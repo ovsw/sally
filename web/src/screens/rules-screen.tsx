@@ -1,7 +1,7 @@
 // The Rules screen, built on the shadcnblocks block data-table12 (faceted
 // filter data table).
 import type { ColumnDef, ColumnFiltersState } from "@tanstack/react-table";
-import { CircleDot, CirclePause, FileEdit, MessageSquare, Reply } from "lucide-react";
+import { BookOpen, CircleDot, CirclePause, FileEdit, ListChecks, MessageSquare, PenLine, Reply } from "lucide-react";
 import * as React from "react";
 
 import {
@@ -14,6 +14,15 @@ import {
 } from "@/components/data-table";
 import { NewRuleDialog } from "@/components/new-rule-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import {
   type CheckType,
@@ -114,6 +123,48 @@ const columns: ColumnDef<RuleSummary>[] = [
   },
 ];
 
+// Built on the shadcnblocks block empty-actions-2 (empty state with two
+// actions): a new user is pointed to the import and to writing a first rule.
+function NoRulesYet() {
+  return (
+    <Empty className="border">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <ListChecks />
+        </EmptyMedia>
+        <EmptyTitle>No rules yet</EmptyTitle>
+        <EmptyDescription>
+          Sally does nothing until it has rules. Import the rules you already have
+          in your rules files, or write your first rule here.
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button asChild>
+            <a href="/guide#importing" onClick={followLink}>
+              <BookOpen />
+              Import your rules
+            </a>
+          </Button>
+          <NewRuleDialog
+            onCreated={(rule) => navigate(`/rules/${rule.id}`)}
+            trigger={
+              <Button variant="outline">
+                <PenLine />
+                Write your first rule
+              </Button>
+            }
+          />
+        </div>
+        <p className="text-sm text-muted-foreground">
+          To import, type <code className="rounded bg-muted px-1 py-0.5 text-foreground">/sally-import</code> in
+          Claude Code.
+        </p>
+      </EmptyContent>
+    </Empty>
+  );
+}
+
 const values = (filters: ColumnFiltersState, id: string) =>
   filters.find((f) => f.id === id)?.value as string[] | undefined;
 
@@ -153,6 +204,7 @@ export function RulesScreen() {
   }, [globalFilter, columnFilters]);
 
   const filtering = globalFilter !== "" || columnFilters.length > 0;
+  const noRules = loaded && !error && !filtering && rules.length === 0;
 
   return (
     <div className="w-full">
@@ -165,50 +217,54 @@ export function RulesScreen() {
           </p>
         </div>
       </div>
-      <DataTableToolbar table={table}>
-        <Input
-          placeholder="Search names, conditions and instructions..."
-          value={globalFilter}
-          onChange={(event) => table.setGlobalFilter(event.target.value)}
-          className="h-8 w-full lg:w-[320px]"
-          aria-label="Search rules"
-        />
-        <DataTableFacetedFilter
-          column={table.getColumn("checkType")}
-          title="Check"
-          options={checkTypes}
-        />
-        <DataTableFacetedFilter
-          column={table.getColumn("state")}
-          title="State"
-          options={states}
-        />
-        <DataTableFacetedFilter
-          column={table.getColumn("hasDraft")}
-          title="Draft"
-          options={drafts}
-        />
-        <div className="ml-auto">
-          <NewRuleDialog onCreated={(rule) => navigate(`/rules/${rule.id}`)} />
-        </div>
-      </DataTableToolbar>
-      {error && (
-        <p role="alert" className="mb-4 text-sm text-destructive">
-          {error}
-        </p>
+      {noRules ? (
+        <NoRulesYet />
+      ) : (
+        <>
+          <DataTableToolbar table={table}>
+            <Input
+              placeholder="Search names, conditions and instructions..."
+              value={globalFilter}
+              onChange={(event) => table.setGlobalFilter(event.target.value)}
+              className="h-8 w-full lg:w-[320px]"
+              aria-label="Search rules"
+            />
+            <DataTableFacetedFilter
+              column={table.getColumn("checkType")}
+              title="Check"
+              options={checkTypes}
+            />
+            <DataTableFacetedFilter
+              column={table.getColumn("state")}
+              title="State"
+              options={states}
+            />
+            <DataTableFacetedFilter
+              column={table.getColumn("hasDraft")}
+              title="Draft"
+              options={drafts}
+            />
+            <div className="ml-auto">
+              <NewRuleDialog onCreated={(rule) => navigate(`/rules/${rule.id}`)} />
+            </div>
+          </DataTableToolbar>
+          {error && (
+            <p role="alert" className="mb-4 text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <DataTable
+            table={table}
+            onRowClick={(rule) => navigate(`/rules/${rule.id}`)}
+            emptyMessage={
+              !loaded
+                ? "Loading..."
+                : "No rules match."
+            }
+          />
+          <DataTablePagination table={table} />
+        </>
       )}
-      <DataTable
-        table={table}
-        onRowClick={(rule) => navigate(`/rules/${rule.id}`)}
-        emptyMessage={
-          !loaded
-            ? "Loading..."
-            : filtering
-              ? "No rules match."
-              : "No rules yet. Create one with New rule."
-        }
-      />
-      <DataTablePagination table={table} />
     </div>
   );
 }
