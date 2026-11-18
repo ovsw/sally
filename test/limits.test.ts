@@ -121,6 +121,19 @@ describe("cutting a long text", () => {
     expect(checks()).toMatchObject([{ text: sent, cut: 1 }]);
   });
 
+  it("masks addresses in a long text before cutting it, so no part of one reaches Jev", async () => {
+    sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
+    const matcher = standInMatcher();
+    // Addresses all through the text, so the cut lands inside one whichever way it falls.
+    const message = "write to someone.with.a.long.name@example.com ".repeat(20_000);
+
+    await runMessageHook(hookInput(message), { env: sandbox.env, matcher });
+
+    const sent = matcher.calls[0]!.text;
+    expect(sent).toContain("\n[…]\n");
+    expect(sent).not.toMatch(/someone|@example|long\.name/);
+  });
+
   it("keeps a request that comes before a long pasted passage", async () => {
     sandbox.liveRule({ name: "Rule", conditions: ["Condition A."] });
     const matcher = standInMatcher();

@@ -245,8 +245,12 @@ export function createEngine(options: EngineOptions): Engine {
       const { cutoff, timeLimitMs } = rules.settings();
       const project = projectOf(input);
 
-      // A message that starts with a slash command is judged only on what follows the command name.
-      const judged = input.checkType === "message" ? messageText(input.text) : { kind: "check" as const, text: input.text };
+      // Text the user pasted into a message is left out first: rules are about what they wrote.
+      // Then a message that starts with a slash command is judged only on what follows the command name.
+      const judged =
+        input.checkType === "message"
+          ? messageText(leaveOutPastes(input.text).text)
+          : { kind: "check" as const, text: input.text };
       if (judged.kind === "skip") {
         const checkId = record({ input, text: input.text, cut: false, project, startedAt, cutoff }, "skipped");
         return { outcome: "skipped", checkId, matches: [] };
@@ -263,10 +267,11 @@ export function createEngine(options: EngineOptions): Engine {
         rule.conditions.map((c) => ({ id: `c${c.id}`, text: maskEmails(c.text) })),
       );
 
-      // Text the user pasted into a message is left out: rules are about what they wrote.
-      const own = input.checkType === "message" ? leaveOutPastes(judged.text).text : judged.text;
       // A text too long for Jev's per-question limit keeps its start and end, and the cut is recorded.
-      const { text, cut } = cutToFit(own, textTokenBudget(conditions));
+      // What goes to Jev is masked before it is cut, so a cut cannot split an address and leave half of it.
+      const budget = textTokenBudget(conditions);
+      const { text, cut } = cutToFit(judged.text, budget);
+      const sentText = cutToFit(maskEmails(judged.text), budget).text;
       const check: CheckRecord = { input, text, cut, project, startedAt, cutoff };
       // With no live rule there is nothing to ask Jev, and the answer is known: no rule matched.
       if (live.length === 0) {
@@ -277,7 +282,7 @@ export function createEngine(options: EngineOptions): Engine {
       const tryScoring = async (): Promise<{ scores: ScoreRow[]; tokens: Tokens }> => {
         let result;
         try {
-          result = await score(maskEmails(text), conditions, timeLimitMs);
+          result = await score(sentText, conditions, timeLimitMs);
         } catch (error) {
           throw new FailedTry(error);
         }

@@ -231,7 +231,7 @@ describe("reading the final reply", () => {
     replyRule();
     const matcher = standInMatcher();
     const filler = "x".repeat(10_000);
-    const finalReply = `${"y".repeat(400_000)} The end.`;
+    const finalReply = `The start. ${"y".repeat(400_000)} The end.`;
     const path = transcript([
       ...Array.from({ length: 100 }, (_, i) => [user(`Message ${i}`), assistant(`msg_${i}`, text(filler))]).flat(),
       user("Last message"),
@@ -243,7 +243,7 @@ describe("reading the final reply", () => {
     // A reply this long keeps its start and end before checking.
     const sent = matcher.calls[0]!.text;
     expect(sent.length).toBeLessThan(finalReply.length);
-    expect(sent.startsWith("yyy")).toBe(true);
+    expect(sent.startsWith("The start. y")).toBe(true);
     expect(sent.endsWith("y The end.")).toBe(true);
   });
 

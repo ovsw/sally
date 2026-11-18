@@ -46,7 +46,8 @@ export function messageText(message: string): MessageText {
  * up to the closing tag with the same id, or plain `<pasted_content>` tags.
  * Plain Claude Code marks nothing, so its pastes are not found.
  */
-const PASTE = /<pasted_content(?: id="([^"]*)")?>([\s\S]*?)<\/pasted_content(?: id="\1")?>/g;
+const PASTE =
+  /<pasted_content id="([^"]*)">([\s\S]*?)<\/pasted_content id="\1">|<pasted_content>([\s\S]*?)<\/pasted_content>/g;
 
 /** What a paste becomes before the message is checked. */
 export function pasteNote(lines: number): string {
@@ -60,9 +61,10 @@ export function pasteNote(lines: number): string {
  */
 export function leaveOutPastes(message: string): { text: string; pastes: number } {
   let pastes = 0;
-  const text = message.replace(PASTE, (_, _id: string | undefined, body: string) => {
+  const text = message.replace(PASTE, (_, _id, withId: string | undefined, bare: string | undefined) => {
     pastes++;
-    return pasteNote(body.trim() === "" ? 0 : body.trim().split(/\r\n|\r|\n/).length);
+    const body = (withId ?? bare ?? "").trim();
+    return pasteNote(body === "" ? 0 : body.split(/\r\n|\r|\n/).length);
   });
   return { text, pastes };
 }

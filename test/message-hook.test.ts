@@ -701,10 +701,12 @@ describe("pasted text", () => {
     const matcher = standInMatcher();
     const unclosed = 'Look at <pasted_content id="a1">\nhalf a paste';
     const mismatched = 'Look at <pasted_content id="a1">\ntext\n</pasted_content id="b2">';
+    const halfBare = 'Look at <pasted_content id="a1">\ntext\n</pasted_content>';
 
-    await runMessageHook(hookInput(unclosed), { env: sandbox.env, matcher });
-    await runMessageHook(hookInput(mismatched), { env: sandbox.env, matcher });
+    for (const message of [unclosed, mismatched, halfBare]) {
+      await runMessageHook(hookInput(message), { env: sandbox.env, matcher });
+    }
 
-    expect(matcher.calls.map((call) => call.text)).toEqual([unclosed, mismatched]);
+    expect(matcher.calls.map((call) => call.text)).toEqual([unclosed, mismatched, halfBare]);
   });
 });
