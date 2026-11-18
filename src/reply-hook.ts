@@ -1,7 +1,7 @@
-import { type CheckInput, type CheckResult, createEngine } from "./engine.ts";
+import { type CheckInput, type CheckResult, createEngine, type Match } from "./engine.ts";
 import { createJevMatcher } from "./jev.ts";
 import type { Matcher } from "./matcher.ts";
-import { formatAttached, formatBroken } from "./message-hook.ts";
+import { formatBroken, REPORT_LINE } from "./message-hook.ts";
 import { databasePath, type Env, readApiKey } from "./paths.ts";
 import { createRulesService } from "./rules.ts";
 import { openStore } from "./store.ts";
@@ -36,6 +36,21 @@ function finalReply(input: StopInput): string | undefined {
     }
   }
   return undefined;
+}
+
+// Sent back after Claude has replied, so it reaches Claude where a new message
+// would. It says it is not one, and what to do with the reply in either case,
+// so Claude neither answers Sally nor writes about it.
+export const SENT_BACK_HEADER =
+  "Sally, an automatic check on the reply you just wrote, not a message to answer: the rules below are the user's own written rules, and they may bear on that reply.";
+
+export const REVISE_LINE =
+  "Reread your reply against them. If it breaks one, write the corrected reply, to the user and about their request. If it already follows them, give the user its short version again. Either way, do not mention Sally, these rules or this check.";
+
+/** The text a sent-back reply gets: the header, each rule's name and instruction, what to do, and how to report a rule that does not fit. */
+export function formatSentBack(matches: Match[]): string {
+  const rules = matches.map((f) => `Rule: ${f.name}\n${f.instruction}`);
+  return [SENT_BACK_HEADER, ...rules, REVISE_LINE, REPORT_LINE].join("\n\n");
 }
 
 /** What the user sees when a reply check failed: the reply is already written, so it stands, with this warning. */
@@ -96,7 +111,7 @@ export async function runReplyHook(stdin: string, options: ReplyHookOptions): Pr
         return JSON.stringify({ systemMessage: formatUnchecked(result.failure ?? "unknown error") });
       }
       if (result.outcome !== "sent_back") return "";
-      return JSON.stringify({ decision: "block", reason: formatAttached(result.matches) });
+      return JSON.stringify({ decision: "block", reason: formatSentBack(result.matches) });
     } finally {
       store.close();
     }
