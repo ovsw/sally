@@ -462,6 +462,28 @@ describe("the import skill", () => {
     expect(uninstalled.stdout).not.toContain("import skill");
   });
 
+  it("counts Sally's mark only in the frontmatter, not in an example in the body", () => {
+    const withExample = `${ownSkill}\n\`\`\`yaml\nmetadata:\n  installed-by: sally\n\`\`\`\n`;
+    writeFile(skill(), withExample);
+
+    expect(sally("sally-install").stderr).toMatch(/is not Sally's, so it was left alone/);
+    expect(read(skill())).toBe(withExample);
+    sally("sally-uninstall");
+    expect(read(skill())).toBe(withExample);
+  });
+
+  it("adds the authority line with the hooks even when the skill cannot be written", () => {
+    // A file where the skills folder should be.
+    writeFile(join(sandbox.root, ".claude", "skills"), "Not a folder.\n");
+
+    const result = sally("sally-install");
+
+    expect(result.status).not.toBe(0);
+    expect(settings()).toEqual({ hooks: sallyHooks });
+    expect(read(rulesPath)).toBe(AUTHORITY_LINE + "\n");
+    expect(result.stderr).toContain("sally-install");
+  });
+
   it("leaves a folder of that name alone even without a SKILL.md", () => {
     writeFile(join(skill(), "..", "notes.md"), "Mine.\n");
     sally("sally-install");

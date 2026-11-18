@@ -51,8 +51,17 @@ export function skillPath(env: Env): string {
   return join(claudeDir(env), "skills", SKILL_NAME, "SKILL.md");
 }
 
-/** Sally's mark in the skill's frontmatter. A skill without it is the user's own. */
-const SKILL_MARK = /^[ \t]+installed-by:[ \t]*sally[ \t]*$/m;
+/**
+ * Whether the skill file carries Sally's mark, `installed-by: sally` under
+ * `metadata:` in its opening frontmatter. The same line anywhere else, such as
+ * in an example in the body, does not count: a skill without the mark is the
+ * user's own.
+ */
+function hasSallyMark(text: string): boolean {
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)?.[1];
+  if (frontmatter === undefined) return false;
+  return /^metadata:[ \t]*\r?\n(?:[ \t]+.*\r?\n)*?[ \t]+installed-by:[ \t]*sally[ \t]*\r?$/m.test(frontmatter);
+}
 
 /** The full instructions the skill points to, in the checkout whose command line the hooks run. */
 export function skillInstructionsPath(cliPath = CLI_PATH): string {
@@ -348,8 +357,9 @@ export function install({ env, cliPath, claudeVersion = readClaudeVersion }: Set
   }
   if (changes.length > 0) writeSettings(settingsFile);
 
-  const skill = installSkill(env, cliPath ?? CLI_PATH, changes);
-
+  // The authority line before the skill: hooks without it would attach rules
+  // Claude is not told to follow, while a skill that fails to install only
+  // leaves the import unavailable until a rerun.
   if (!hasLine(rules, AUTHORITY_LINE)) {
     // A blank line before the authority line, which uninstall takes out again.
     let text = rules;
@@ -358,6 +368,8 @@ export function install({ env, cliPath, claudeVersion = readClaudeVersion }: Set
     writeRules(rulesPath, text + AUTHORITY_LINE + "\n", changes, "sally-install");
     changes.push(`Added Sally's authority line to ${rulesPath}`);
   }
+
+  const skill = installSkill(env, cliPath ?? CLI_PATH, changes);
   return {
     changes,
     warnings: [...skill.warnings, ...claudeCodeWarning(claudeVersion)],
@@ -365,7 +377,7 @@ export function install({ env, cliPath, claudeVersion = readClaudeVersion }: Set
   };
 }
 
-const isSallySkill = (path: string) => existsSync(path) && SKILL_MARK.test(readFileSync(path, "utf8"));
+const isSallySkill = (path: string) => existsSync(path) && hasSallyMark(readFileSync(path, "utf8"));
 
 /** A warning that a skill of Sally's name is the user's own, and was left alone. */
 const notOurs = (folder: string, what: string) =>

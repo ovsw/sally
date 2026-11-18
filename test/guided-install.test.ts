@@ -327,13 +327,14 @@ describe("the dependencies the web app needs", () => {
   });
 
   for (const args of [[], ["--yes"]]) {
-    it(`does everything else when the download fails, and ends with the command to retry${args.length ? " (--yes)" : ""}`, async () => {
+    it(`does everything else when the download fails, ends with the command to retry and exits with 1${args.length ? " (--yes)" : ""}`, async () => {
       const dir = sallyFolder(false);
       const download = downloader(false);
 
       const result = await guided(scriptedPrompt(["good-key"]), { args, sallyDir: dir, ...download });
 
-      expect(result.code).toBe(0);
+      // Everything else is installed, but the exit status says the download failed.
+      expect(result.code).toBe(1);
       expect(JSON.parse(read(settingsPath))).toEqual({
         hooks: { UserPromptSubmit: [{ hooks: [hookEntry("message")] }], Stop: [{ hooks: [hookEntry("reply")] }] },
       });

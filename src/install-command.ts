@@ -52,8 +52,8 @@ function nodeProblem(version: string): string | undefined {
  * Downloads the dependencies the web app needs when they are not there yet,
  * or not in step with the lockfile. A failed download does not stop the
  * install: it returns what to tell the user at the end, with the command to
- * retry. SALLY_SKIP_DEPENDENCIES skips the step, for tests that run the
- * command line.
+ * retry, and the command then exits with 1. SALLY_SKIP_DEPENDENCIES skips the
+ * step, for tests that run the command line.
  */
 function ensureDependencies(options: InstallCommandOptions): string | undefined {
   const { env } = options;
@@ -218,7 +218,8 @@ async function guidedInstall(options: InstallCommandOptions, prompt: Prompt): Pr
   );
   say('To open the web app, run "node src/cli.ts app" in Sally\'s folder and open the address it prints.');
   if (dependencyFailure) stderr(dependencyFailure + "\n");
-  return 0;
+  // Everything else is done, but the command did not finish its job.
+  return dependencyFailure ? 1 : 0;
 }
 
 /**
@@ -259,7 +260,7 @@ export async function runInstall(args: string[], options: InstallCommandOptions)
     for (const warning of warnings) stderr(warning + "\n");
     stdout((changes.length > 0 ? changes.join("\n") : "Sally is already installed.") + "\n");
     if (dependencyFailure) stderr(dependencyFailure + "\n");
-    return 0;
+    return dependencyFailure ? 1 : 0;
   } catch (error) {
     stderr((error instanceof Error ? error.message : String(error)) + "\n");
     return 1;
