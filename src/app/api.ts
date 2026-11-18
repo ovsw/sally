@@ -3,6 +3,7 @@ import { type ActivityFilter, OUTCOMES } from "../analytics.ts";
 import type { AttentionKind } from "../attention.ts";
 import type { Outcome } from "../engine.ts";
 import { type Verdict, VERDICTS } from "../flags.ts";
+import type { ImportService } from "../import.ts";
 import {
   type CheckType,
   type RuleFilter,
@@ -172,6 +173,8 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * - GET  /api/attention                                  the rules that need attention, and why
  * - POST /api/rules/:id/looks-fine                       the user judged one attention reason fine { reason };
  *                                                        answers like GET /api/attention
+ * - GET  /api/imports                                    every import, newest first, with its pending count
+ * - GET  /api/imports/:id                                an import, its passages and the rules they produced
  *
  * Every change answers with the rule as it now is, except a delete, which
  * answers { deleted: true }, a flag, which answers with the match's flag,
@@ -181,6 +184,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  */
 export async function handleApi(
   rules: RulesService,
+  imports: ImportService,
   req: IncomingMessage,
   res: ServerResponse,
   url: URL,
@@ -188,6 +192,12 @@ export async function handleApi(
   try {
     const parts = url.pathname.split("/").filter(Boolean).slice(1);
     const method = req.method ?? "GET";
+    if (parts[0] === "imports" && method === "GET") {
+      if (parts.length === 1) return send(res, 200, { imports: imports.listImports() });
+      const importId = Number(parts[1]);
+      if (parts.length === 2 && Number.isSafeInteger(importId)) return send(res, 200, imports.getImport(importId));
+      throw new HttpError(404, "Not found.");
+    }
     if (parts.length === 1 && parts[0] === "projects" && method === "GET") {
       return send(res, 200, { projects: rules.projects() });
     }

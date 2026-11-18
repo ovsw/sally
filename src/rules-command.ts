@@ -38,7 +38,7 @@ in Sally's web app, not by these commands.
 `;
 
 /** Commands an agent might try that are reserved for the user in the app. */
-const RESERVED: Record<string, string> = {
+export const RESERVED: Record<string, string> = {
   publish: "Publishing",
   "switch-off": "Switching off",
   off: "Switching off",
@@ -48,7 +48,7 @@ const RESERVED: Record<string, string> = {
   rm: "Deleting",
 };
 
-class UsageError extends Error {}
+export class UsageError extends Error {}
 
 const CHECK_TYPES: readonly CheckType[] = ["message", "reply"];
 const STATES: readonly RuleState[] = ["live", "draft"];
@@ -61,7 +61,7 @@ function oneOf<T extends string>(value: string | undefined, allowed: readonly T[
   return value as T;
 }
 
-function parse<T extends ParseArgsOptionsConfig>(args: string[], options: T) {
+export function parse<T extends ParseArgsOptionsConfig>(args: string[], options: T) {
   try {
     return parseArgs({ args, options, strict: true, allowPositionals: true });
   } catch (error) {
@@ -86,7 +86,7 @@ function resolveRule(rules: RulesService, ref: string): number {
   return match.id;
 }
 
-const json = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
+export const json = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
 
 const editOptions = {
   name: { type: "string" },

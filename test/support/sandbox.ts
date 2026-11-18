@@ -2,6 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createImportService, type ImportService } from "../../src/import.ts";
 import type { Env } from "../../src/paths.ts";
 import { databasePath } from "../../src/paths.ts";
 import { createRulesService, type NewRule, type RulesService } from "../../src/rules.ts";
@@ -21,6 +22,8 @@ export interface Sandbox {
   childEnv(extra?: Env): Env;
   /** Runs `fn` with the rules service on the sandbox database. */
   withRules<T>(fn: (rules: RulesService) => T): T;
+  /** Runs `fn` with the import service on the sandbox database. */
+  withImports<T>(fn: (imports: ImportService) => T): T;
   /** Adds a rule and publishes it; returns its id. */
   liveRule(rule: Partial<NewRule> & { name: string }): number;
   /** Runs a read-only SQL query against the sandbox database. */
@@ -53,6 +56,14 @@ export function createSandbox(): Sandbox {
       return { PATH: process.env.PATH, ...system, ...env, ...extra };
     },
     withRules,
+    withImports(fn) {
+      const store = openStore(databasePath(env));
+      try {
+        return fn(createImportService(store, { env }));
+      } finally {
+        store.close();
+      }
+    },
     liveRule(rule) {
       return withRules((rules) => {
         const { ruleId } = rules.createRule({

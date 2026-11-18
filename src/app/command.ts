@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { createJevMatcher } from "../jev.ts";
 import { databasePath, type Env, readApiKey } from "../paths.ts";
+import { createImportService } from "../import.ts";
 import { createRulesService } from "../rules.ts";
 import { openStore } from "../store.ts";
 import { createAppServer, listen } from "./server.ts";
@@ -65,7 +66,9 @@ export async function runApp(args: string[], env: Env): Promise<void> {
   // Jev re-scores a draft against its saved cases before publishing.
   const apiKey = readApiKey(env);
   const matcher = apiKey ? createJevMatcher({ apiKey }) : undefined;
-  const server = createAppServer({ rules: createRulesService(store, { matcher }), webDir });
+  const rules = createRulesService(store, { matcher });
+  const imports = createImportService(store, { env, rules });
+  const server = createAppServer({ rules, imports, webDir });
   const address = await listen(server, port);
   log(`Sally is running at ${address}`);
   const stop = () => {

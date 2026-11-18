@@ -8,11 +8,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { createAppServer, listen } from "../src/app/server.ts";
+import { createImportService } from "../src/import.ts";
 import { databasePath } from "../src/paths.ts";
 import { createRulesService } from "../src/rules.ts";
 import { openStore } from "../src/store.ts";
 import { devMatcher } from "./matcher.ts";
-import { seed } from "./seed.ts";
+import { devEnv, seed } from "./seed.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const root = join(packageRoot, ".dev");
@@ -24,8 +25,11 @@ if (process.argv.includes("--fresh") || !existsSync(database)) {
 }
 
 const store = openStore(database);
+const rules = createRulesService(store, { matcher: devMatcher() });
 const api = createAppServer({
-  rules: createRulesService(store, { matcher: devMatcher() }),
+  rules,
+  // The sample import's rules file sits under .dev/home, so its scope reads as it would for real.
+  imports: createImportService(store, { env: devEnv(root), rules }),
   // Pages come from Vite; the app serves only /api here.
   webDir: join(packageRoot, "dist", "web"),
 });

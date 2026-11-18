@@ -1,12 +1,37 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runMessageHook } from "../src/message-hook.ts";
-import { databasePath } from "../src/paths.ts";
+import { createImportService } from "../src/import.ts";
+import { databasePath, type Env } from "../src/paths.ts";
 import { runReplyHook } from "../src/reply-hook.ts";
 import { type CheckType, createRulesService, type RulesService, type Scope } from "../src/rules.ts";
 import { openStore } from "../src/store.ts";
 import { devMatcher } from "./matcher.ts";
+
+/** The sample data's home, data and config folders, all under `root`. */
+export function devEnv(root: string): Env & { HOME: string } {
+  return { HOME: join(root, "home"), SALLY_DATA_DIR: join(root, "data"), SALLY_CONFIG_DIR: join(root, "config") };
+}
+
+/** An invented project rules file for the sample import. */
+const SAMPLE_RULES_FILE = `# Alpha
+
+Answer in plain words, and keep replies short.
+
+## Screenshots
+
+When a page's layout changes, take a full-page screenshot and put it next to
+the reference before calling it done.
+
+## Checks
+
+Before a commit, run the linter. Before a release, run the full suite.
+
+Be careful with the database.
+
+Ask before you push.
+`;
 
 /**
  * Fills `root` with sample data: two made-up projects, rules in every state,
@@ -15,7 +40,7 @@ import { devMatcher } from "./matcher.ts";
  */
 export async function seed(root: string): Promise<void> {
   rmSync(root, { recursive: true, force: true });
-  const env = { HOME: join(root, "home"), SALLY_DATA_DIR: join(root, "data"), SALLY_CONFIG_DIR: join(root, "config") };
+  const env = devEnv(root);
   mkdirSync(env.HOME, { recursive: true });
 
   const repo = (name: string, remote: string) => {
@@ -158,4 +183,75 @@ export async function seed(root: string): Promise<void> {
     if (matches[0]) rules.flagMatch(matches[0].id, "right", "user");
     if (matches[1]) rules.flagMatch(matches[1].id, "wrong", "user");
   });
+
+  // An import of alpha's rules file, with a passage of each verdict, waiting for review.
+  const rulesFile = join(alpha, "CLAUDE.md");
+  writeFileSync(rulesFile, SAMPLE_RULES_FILE);
+  const importStore = openStore(databasePath(env));
+  try {
+    const imports = createImportService(importStore, { env });
+    const { id } = imports.startImport(rulesFile);
+    imports.addPassages(id, [
+      {
+        text: "Answer in plain words, and keep replies short.",
+        verdict: "always_rule",
+        reason:
+          "This applies to every reply, whatever the message is about. A rule that always applies has no condition to check, so it stays in the rules file, where Claude reads it every time.",
+      },
+      {
+        text: "## Screenshots\n\nWhen a page's layout changes, take a full-page screenshot and put it next to\nthe reference before calling it done.",
+        verdict: "becomes_rule",
+        reason:
+          "Only some replies change a page's layout. That is a situation Sally can recognise in the reply, so the instruction needs to reach Claude only then.",
+        rules: [
+          {
+            name: "Screenshot changed pages",
+            checkType: "reply",
+            instruction:
+              "Take a full-page screenshot of the changed page and compare it with the reference before saying it is done.",
+            conditions: ["The reply says a page's layout or styles were changed."],
+          },
+        ],
+      },
+      {
+        text: "Before a commit, run the linter. Before a release, run the full suite.",
+        verdict: "becomes_rule",
+        reason:
+          "Two situations share one sentence. Each gets its own rule, so each condition can be short and concrete.",
+        rules: [
+          {
+            name: "Lint before a commit",
+            instruction: "Run the linter before making the commit, and fix what it finds.",
+            conditions: ["The user asks to write or make a git commit."],
+          },
+          {
+            name: "Full suite before a release",
+            instruction: "Run the full test suite before preparing the release.",
+            conditions: ["The user asks to prepare or publish a release."],
+          },
+        ],
+      },
+      {
+        text: "Be careful with the database.",
+        verdict: "too_vague",
+        reason:
+          "No message is clearly about being careful, so a condition could not pick out when this applies. Say what careful means, and when, and it can become a rule.",
+      },
+      {
+        text: "Ask before you push.",
+        verdict: "becomes_rule",
+        reason: "Only messages that lead to a push need this, which a condition can recognise.",
+        similarRule: 'Looks like your rule "Ask before pushing".',
+        rules: [
+          {
+            name: "Ask before a push",
+            instruction: "Ask the user before pushing to the remote.",
+            conditions: ["The user asks to push commits to the remote."],
+          },
+        ],
+      },
+    ]);
+  } finally {
+    importStore.close();
+  }
 }

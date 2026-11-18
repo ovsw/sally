@@ -65,6 +65,16 @@ async function main(args: string[]): Promise<number> {
       stderr: (text) => process.stderr.write(text),
     });
   }
+  if (group === "import") {
+    // Loaded only here, so the hooks never load any of the import.
+    const { runImportCommand } = await import("./import-command.ts");
+    return runImportCommand(args.slice(1), {
+      env: process.env,
+      stdout: (text) => process.stdout.write(text),
+      stderr: (text) => process.stderr.write(text),
+      readStdin,
+    });
+  }
   if (group === "evaluate") {
     // Loaded only here: the evaluation calls the real Jev and runs only on request.
     const { runEvaluation } = await import("./evaluate.ts");
@@ -75,7 +85,7 @@ async function main(args: string[]): Promise<number> {
     });
   }
   process.stderr.write(
-    'Usage: sally hook message|reply\n       sally install [--yes]\n       sally uninstall\n       sally rules list|show|create|edit\n       sally settings stop-on-failure [on|off]\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n       sally evaluate FILE [--scale]\n',
+    'Usage: sally hook message|reply\n       sally install [--yes]\n       sally uninstall\n       sally rules list|show|create|edit\n       sally import start|add|show|list\n       sally settings stop-on-failure [on|off]\n       sally app [--port N]\n       sally wrong-match "<rule name>"\n       sally evaluate FILE [--scale]\n',
   );
   return 1;
 }

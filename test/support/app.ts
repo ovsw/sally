@@ -1,5 +1,6 @@
 import type { Server } from "node:http";
 import { createAppServer, listen } from "../../src/app/server.ts";
+import { createImportService } from "../../src/import.ts";
 import type { Matcher } from "../../src/matcher.ts";
 import { databasePath } from "../../src/paths.ts";
 import { createRulesService } from "../../src/rules.ts";
@@ -24,8 +25,10 @@ export async function startApp(
   options: { webDir?: string; matcher?: Matcher } = {},
 ): Promise<RunningApp> {
   const store = openStore(databasePath(sandbox.env));
+  const rules = createRulesService(store, { matcher: options.matcher });
   const server: Server = createAppServer({
-    rules: createRulesService(store, { matcher: options.matcher }),
+    rules,
+    imports: createImportService(store, { env: sandbox.env, rules }),
     webDir: options.webDir,
   });
   const address = await listen(server, 0);

@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ImportDetail, ImportSummary } from "../src/import.ts";
 import { runMessageHook } from "../src/message-hook.ts";
 import type { RuleDetail, RuleSummary } from "../src/rules.ts";
 import { type RunningApp, startApp } from "./support/app.ts";
@@ -425,5 +426,72 @@ describe("activity and analytics over HTTP", () => {
     });
     expect(cleared.rules).toEqual([]);
     expect((await app.json<{ rules: unknown[] }>("GET", "/api/attention")).rules).toEqual([]);
+  });
+});
+
+describe("the import", () => {
+  /** Starts an import of the sandbox's global rules file with one passage of each kind. */
+  function seedImport(): number {
+    const file = join(sandbox.root, ".claude", "CLAUDE.md");
+    mkdirSync(join(sandbox.root, ".claude"), { recursive: true });
+    writeFileSync(file, "Answer briefly.\n\nWhen a page changes, give the local link.\n");
+    return sandbox.withImports((imports) => {
+      const { id } = imports.startImport(file);
+      imports.addPassages(id, [
+        { text: "Answer briefly.", verdict: "always_rule", reason: "It applies on every turn." },
+        {
+          text: "When a page changes, give the local link.",
+          verdict: "becomes_rule",
+          reason: "Only some messages change a page.",
+          rules: [
+            {
+              name: "Local link",
+              instruction: "Give the local link.",
+              conditions: ["The message asks for a visual change."],
+            },
+          ],
+        },
+      ]);
+      return id;
+    });
+  }
+
+  it("lists imports with their pending count, and shows one with its passages in file order", async () => {
+    const id = seedImport();
+    const { imports } = await app.json<{ imports: ImportSummary[] }>("GET", "/api/imports");
+    expect(imports.map((i) => [i.id, i.passageCount, i.pendingCount])).toEqual([[id, 2, 2]]);
+
+    const detail = await app.json<ImportDetail>("GET", `/api/imports/${id}`);
+    expect(detail.scope).toEqual({ kind: "all" });
+    expect(detail.passages.map((p) => [p.position, p.verdict, p.text])).toEqual([
+      [1, "always_rule", "Answer briefly."],
+      [2, "becomes_rule", "When a page changes, give the local link."],
+    ]);
+    expect(detail.passages[1]!.rules[0]).toMatchObject({ decision: null, rule: { name: "Local link", state: "draft" } });
+  });
+
+  it("publishing a proposed rule makes it live from the next check and the passage no longer pending", async () => {
+    const id = seedImport();
+    const matcher = standInMatcher({ "The message asks for a visual change.": 0.9 });
+    expect(await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher })).toBe("");
+
+    const before = await app.json<ImportDetail>("GET", `/api/imports/${id}`);
+    const ruleId = before.passages[1]!.rules[0]!.ruleId!;
+    await app.json("POST", `/api/rules/${ruleId}/publish`, {});
+
+    const after = await app.json<ImportDetail>("GET", `/api/imports/${id}`);
+    expect(after.passages[1]!.rules[0]).toMatchObject({ decision: "published", rule: { state: "live" } });
+    expect(after.passages[1]!.pending).toBe(false);
+    expect(after.pendingCount).toBe(1);
+    expect(await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher })).toContain(
+      "Give the local link.",
+    );
+  });
+
+  it("answers 404 for an import that does not exist", async () => {
+    const response = await app.call("GET", "/api/imports/42");
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "No import with id 42." });
+    expect((await app.call("GET", "/api/imports/abc")).status).toBe(404);
   });
 });

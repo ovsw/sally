@@ -245,6 +245,49 @@ const migrations: string[] = [
     PRIMARY KEY (version_id, kind)
   );
   `,
+  `
+  -- An import turns the conditional rules in one rules file into drafts. Its
+  -- rules apply to all projects (all_projects = 1) or to its one project.
+  -- removed_at is when the published rules were removed from the file.
+  CREATE TABLE imports (
+    id            INTEGER PRIMARY KEY,
+    rules_file    TEXT NOT NULL,
+    all_projects  INTEGER NOT NULL CHECK (all_projects IN (0, 1)),
+    project_id    INTEGER REFERENCES projects (id),
+    created_at    TEXT NOT NULL,
+    removed_at    TEXT,
+    CHECK ((all_projects = 1) = (project_id IS NULL))
+  );
+
+  -- A passage is a piece of the rules file that says one thing, in file order.
+  -- verdict is what the import proposed; decision is the user's overrule, if
+  -- any; seen_at is when the user looked at it.
+  CREATE TABLE passages (
+    id            INTEGER PRIMARY KEY,
+    import_id     INTEGER NOT NULL REFERENCES imports (id) ON DELETE CASCADE,
+    position      INTEGER NOT NULL,
+    text          TEXT NOT NULL,
+    verdict       TEXT NOT NULL CHECK (verdict IN ('becomes_rule', 'always_rule', 'too_vague')),
+    reason        TEXT NOT NULL,
+    similar_rule  TEXT,
+    decision      TEXT CHECK (decision IN ('becomes_rule', 'stays')),
+    seen_at       TEXT,
+    UNIQUE (import_id, position)
+  );
+
+  -- The rules a passage produced, in order. A rule is created as a draft; a
+  -- skipped one is deleted, so rule_id goes to NULL and the row keeps the
+  -- decision. A published rule needs no decision: its live version says so.
+  CREATE TABLE passage_rules (
+    id          INTEGER PRIMARY KEY,
+    passage_id  INTEGER NOT NULL REFERENCES passages (id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,
+    rule_id     INTEGER UNIQUE REFERENCES rules (id) ON DELETE SET NULL,
+    decision    TEXT CHECK (decision IN ('kept', 'skipped')),
+    decided_at  TEXT,
+    UNIQUE (passage_id, position)
+  );
+  `,
 ];
 
 /**
@@ -283,8 +326,23 @@ function migrate(db: DatabaseSync): void {
   }
 }
 
-/** Runs `fn` inside one write transaction. */
+/**
+ * Runs `fn` inside one write transaction. Inside another transaction it runs
+ * in a savepoint, so its changes still go or stay with the outer one.
+ */
 export function transaction<T>(db: Store, fn: () => T): T {
+  if (db.isTransaction) {
+    db.exec("SAVEPOINT nested");
+    try {
+      const result = fn();
+      db.exec("RELEASE nested");
+      return result;
+    } catch (error) {
+      db.exec("ROLLBACK TO nested");
+      db.exec("RELEASE nested");
+      throw error;
+    }
+  }
   db.exec("BEGIN IMMEDIATE");
   try {
     const result = fn();
