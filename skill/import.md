@@ -165,7 +165,8 @@ Run `node "<cli>" import show <id>`. In its output:
   and ask whether to take out what is published so far or to wait. **Stop and
   wait for the answer.**
 - `removeAll`: positions of passages whose rules are all live and switched
-  on. The whole passage leaves the file.
+  on. The whole passage leaves the file, except any part the check below says
+  no rule covers any more.
 - `removePart`: positions of passages where only some rules are live and on.
   Only the part those rules cover leaves; the rest stays.
 - Each passage's `rules` list each rule's `decision`, `live` and `on`, with
@@ -197,7 +198,8 @@ file stays as it is. If `pendingCount` is zero, run
    were published. Leave it and tell the user.
 2. Work out the lines to remove:
    - `removeAll`: the passage's lines and one blank line beside them, plus a
-     heading left with nothing under it. When a pulled-in file is left with
+     heading left with nothing under it. Keep any part that, by the check in
+     step 7, no live and switched-on rule still asks for, as for `removePart`. When a pulled-in file is left with
      nothing in it, also remove its `@path` line; leave the empty file.
    - `removePart`: only the sentences or lines that the live rules cover. Show
      the passage before and after; what remains must still read as a complete
@@ -210,7 +212,8 @@ file stays as it is. If `pendingCount` is zero, run
    the only one using that file, ask: "<file> is tracked in git. Remove these
    lines from it anyway? Only say yes if you are the only one using this
    file." Without that yes, leave that file unchanged. If no file is left to
-   edit, run `node "<cli>" import removed <id>` and go to step 9.
+   edit, go to step 9; run `node "<cli>" import removed <id>` first only if
+   `pendingCount` was zero, so an import still under review stays open.
 4. Show the user the exact lines, grouped by file, with their line numbers.
    Ask for one yes for this rules file, and say they can hold back any lines
    by number. **Stop and wait for the answer.**
