@@ -156,6 +156,16 @@ export function switchRule(id: number, on: boolean): Promise<RuleDetail> {
   return call("POST", `/api/rules/${id}/${on ? "on" : "off"}`, {});
 }
 
+/** Sets one switch of a published condition at once: no draft, no new version. */
+export function setConditionSwitch(
+  id: number,
+  conditionId: number,
+  checkType: CheckType,
+  on: boolean,
+): Promise<RuleDetail> {
+  return call("PUT", `/api/rules/${id}/conditions/${conditionId}/${checkType}`, { on });
+}
+
 export function deleteRule(id: number): Promise<{ deleted: true }> {
   return call("DELETE", `/api/rules/${id}`);
 }
