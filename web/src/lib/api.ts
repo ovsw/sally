@@ -62,11 +62,38 @@ export interface PublishedVersion extends VersionView {
   publishedAt: string;
 }
 
+/**
+ * One change to the rule's switch, one switch of a condition, or the rule's
+ * scope, with its time and the new value. These make no new version.
+ */
+export type SwitchChange =
+  | {
+      id: number;
+      at: string;
+      what: "rule";
+      on: boolean;
+      /** True when Sally switched the rule off itself, because its last condition went off. */
+      bySally: boolean;
+    }
+  | {
+      id: number;
+      at: string;
+      what: "condition";
+      conditionId: number;
+      /** The condition's wording in the published version when it was switched. */
+      conditionText: string;
+      checkType: CheckType;
+      on: boolean;
+    }
+  | { id: number; at: string; what: "scope"; scope: Scope };
+
 export interface RuleDetail extends RuleSummary {
   live: PublishedVersion | null;
   draft: (VersionView & { savedAt: string }) | null;
   /** Every published version, newest first. */
   versions: PublishedVersion[];
+  /** Every change to the rule's switch, its conditions' switches and its scope, newest first. */
+  switchChanges: SwitchChange[];
 }
 
 export interface RuleFilter {

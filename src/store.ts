@@ -381,6 +381,31 @@ const migrations: string[] = [
     SELECT s.rule_id, vp.project_id FROM scope_versions s JOIN version_projects vp ON vp.version_id = s.version_id;
   DROP TABLE scope_versions;
   `,
+  `
+  -- A switch change: one change to a rule's switch (what = 'rule'), one switch
+  -- of a condition ('condition', with the condition, its wording when switched
+  -- and the check type), or the rule's scope ('scope'), with its time and the
+  -- new value. by_sally marks the change Sally made itself: the rule going off
+  -- with its last condition. A rule's match rate can change with no new
+  -- version, so these are shown in its history beside its versions.
+  CREATE TABLE switch_changes (
+    id              INTEGER PRIMARY KEY,
+    rule_id         INTEGER NOT NULL REFERENCES rules (id) ON DELETE CASCADE,
+    created_at      TEXT NOT NULL,
+    what            TEXT NOT NULL CHECK (what IN ('rule', 'condition', 'scope')),
+    condition_id    INTEGER,
+    condition_text  TEXT,
+    check_type      TEXT CHECK (check_type IN ('message', 'reply')),
+    switched_on     INTEGER CHECK (switched_on IN (0, 1)),
+    all_projects    INTEGER CHECK (all_projects IN (0, 1)),
+    projects        TEXT,
+    by_sally        INTEGER NOT NULL DEFAULT 0 CHECK (by_sally IN (0, 1)),
+    CHECK ((what = 'condition') = (condition_id IS NOT NULL AND check_type IS NOT NULL)),
+    CHECK ((what = 'scope') = (all_projects IS NOT NULL)),
+    CHECK ((what = 'scope') = (switched_on IS NULL))
+  );
+  CREATE INDEX switch_changes_by_rule ON switch_changes (rule_id);
+  `,
 ];
 
 /**

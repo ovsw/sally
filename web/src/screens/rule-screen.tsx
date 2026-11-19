@@ -1,5 +1,5 @@
 // The Rule panel, opened beside the rules list: the rule's scope, the published version beside the
-// draft, then the version history. The draft form and the scope follow the shadcnblocks block
+// draft, then the rule's history (versions and switch changes). The draft form and the scope follow the shadcnblocks block
 // form-layouts-1 (vertical field layout).
 import { LabelWithHelp, ruleHelp } from "@/components/field-help";
 import {
@@ -71,6 +71,7 @@ import {
   startDraftFrom,
   switchRule,
   type Scope,
+  type SwitchChange,
 } from "@/lib/api";
 import { errorText, useDraftSaver } from "@/lib/draft-saver";
 import { CHECK_LABELS } from "@/lib/format";
@@ -411,7 +412,53 @@ const contentOf = (rule: RuleDetail): DraftContent => {
   };
 };
 
-function VersionHistory({
+/** What a switch change did, in plain words. */
+function switchChangeText(change: SwitchChange): string {
+  const state = (on: boolean) => (on ? "on" : "off");
+  if (change.what === "rule") {
+    return change.bySally
+      ? "Rule switched off by Sally, because its last condition went off"
+      : `Rule switched ${state(change.on)}`;
+  }
+  if (change.what === "condition") {
+    const which = change.checkType === "message" ? "Message" : "Reply";
+    return `${which} switched ${state(change.on)} for the condition "${change.conditionText}"`;
+  }
+  return change.scope.kind === "all"
+    ? "Scope set to all projects"
+    : `Scope set to ${change.scope.projects.join(", ")}`;
+}
+
+/** What kind of switch change it was, for its badge. */
+const SWITCH_CHANGE_LABELS: Record<SwitchChange["what"], string> = {
+  rule: "Rule switch",
+  condition: "Condition switch",
+  scope: "Scope",
+};
+
+type HistoryEntry =
+  | { kind: "version"; at: string; version: PublishedVersion }
+  | { kind: "switch"; at: string; change: SwitchChange };
+
+/**
+ * Versions and switch changes in one list, newest first. Each list comes
+ * newest first already; at the same time, a switch change goes first.
+ */
+function historyOf(rule: RuleDetail): HistoryEntry[] {
+  const entries: HistoryEntry[] = [
+    ...rule.switchChanges.map((change) => ({ kind: "switch" as const, at: change.at, change })),
+    ...rule.versions.map((version) => ({ kind: "version" as const, at: version.publishedAt, version })),
+  ];
+  // A stable sort keeps each list's own order for equal times.
+  return entries.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+}
+
+/**
+ * The rule's history: its published versions and its switch changes in one
+ * list, newest first. Each entry's head follows the shadcnblocks block
+ * changelog1 (a badge, then the date, then the title).
+ */
+function RuleHistory({
   rule,
   busy,
   onStartDraft,
@@ -420,62 +467,88 @@ function VersionHistory({
   busy: boolean;
   onStartDraft: (version: PublishedVersion) => void;
 }) {
+  const entries = historyOf(rule);
   return (
     <section className="rounded-md border">
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-        <h2 className="font-medium">Version history</h2>
+        <h2 className="font-medium">History</h2>
         <span className="text-xs text-muted-foreground">
-          Published versions never change
+          Versions and switch changes, newest first
         </span>
       </div>
-      {rule.versions.length === 0 ? (
+      {entries.length === 0 ? (
         <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-          No published versions yet.
+          No published versions or switch changes yet.
         </p>
       ) : (
         <ol className="divide-y">
-          {rule.versions.map((version) => (
-            <li
-              key={version.number}
-              className="flex flex-col gap-3 px-4 py-4 @xl:flex-row @xl:items-start @xl:justify-between"
-            >
-              <div className="min-w-0 space-y-2 text-sm">
+          {entries.map((entry) =>
+            entry.kind === "switch" ? (
+              <li key={`switch-${entry.change.id}`} className="space-y-2 px-4 py-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">Version {version.number}</span>
-                  {version.number === rule.live?.number && (
-                    <Badge variant="secondary">Latest</Badge>
-                  )}
+                  <Badge variant="outline">{SWITCH_CHANGE_LABELS[entry.change.what]}</Badge>
                   <span className="text-xs text-muted-foreground">
-                    Published {new Date(version.publishedAt).toLocaleString()}
+                    {new Date(entry.at).toLocaleString()}
                   </span>
                 </div>
-                {version.name !== rule.name && (
-                  <p className="text-muted-foreground">Named "{version.name}"</p>
-                )}
-                <ul className="list-disc space-y-1 pl-5">
-                  {version.conditions.map((condition) => (
-                    <li key={condition.id}>{condition.text}</li>
-                  ))}
-                </ul>
-                <p className="whitespace-pre-wrap text-muted-foreground">
-                  {version.instruction}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="self-start"
-                disabled={busy}
-                onClick={() => onStartDraft(version)}
-              >
-                <FilePen />
-                Start a draft from this
-              </Button>
-            </li>
-          ))}
+                <p>{switchChangeText(entry.change)}</p>
+              </li>
+            ) : (
+              <VersionEntry
+                key={`version-${entry.version.number}`}
+                rule={rule}
+                version={entry.version}
+                busy={busy}
+                onStartDraft={onStartDraft}
+              />
+            ),
+          )}
         </ol>
       )}
     </section>
+  );
+}
+
+function VersionEntry({
+  rule,
+  version,
+  busy,
+  onStartDraft,
+}: {
+  rule: RuleDetail;
+  version: PublishedVersion;
+  busy: boolean;
+  onStartDraft: (version: PublishedVersion) => void;
+}) {
+  return (
+    <li className="flex flex-col gap-3 px-4 py-4 @xl:flex-row @xl:items-start @xl:justify-between">
+      <div className="min-w-0 space-y-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary">Version {version.number}</Badge>
+          <span className="text-xs text-muted-foreground">
+            Published {new Date(version.publishedAt).toLocaleString()}
+          </span>
+          {version.number === rule.live?.number && <Badge variant="outline">Latest</Badge>}
+        </div>
+        {version.name !== rule.name && <p className="text-muted-foreground">Named "{version.name}"</p>}
+        <ul className="list-disc space-y-1 pl-5">
+          {version.conditions.map((condition) => (
+            <li key={condition.id}>{condition.text}</li>
+          ))}
+        </ul>
+        <p className="whitespace-pre-wrap text-muted-foreground">{version.instruction}</p>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start"
+        disabled={busy}
+        onClick={() => onStartDraft(version)}
+      >
+        <FilePen />
+        Start a draft from this
+      </Button>
+    </li>
   );
 }
 
@@ -912,7 +985,7 @@ export function RuleScreen({ id }: { id: number }) {
         </section>
       </div>
       <RescoreDialog result={rescore} onPublish={publishAnyway} onBack={() => setRescore(null)} />
-      <VersionHistory rule={rule} busy={acting} onStartDraft={(v) => void startFrom(v)} />
+      <RuleHistory rule={rule} busy={acting} onStartDraft={(v) => void startFrom(v)} />
       {/* Reloads after a publish, so the new version shows. */}
       <RuleAnalyticsPanel key={rule.live?.number ?? 0} id={id} />
     </div>
