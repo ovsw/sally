@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runMessageHook } from "../src/message-hook.ts";
 import { runReplyHook } from "../src/reply-hook.ts";
-import { RuleNotFoundError } from "../src/rules.ts";
+import { conditionsFor, RuleNotFoundError } from "../src/rules.ts";
 import { gitRepo } from "./support/git.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { type StandIn, standInMatcher } from "./support/stand-in-matcher.ts";
@@ -215,14 +215,14 @@ describe("rule analytics", () => {
     await message("one", standInMatcher({ "Old wording.": 0.9 }));
     await message("two", standInMatcher({ "Old wording.": 0.2 }));
     sandbox.withRules((rules) => {
-      rules.saveDraft(ruleId, { instruction: "Do it.", conditions: ["New wording."] });
+      rules.saveDraft(ruleId, { instruction: "Do it.", conditions: conditionsFor("message", ["New wording."]) });
       rules.publish(ruleId);
     });
     await message("three", standInMatcher({ "New wording.": 0.9 }));
     await message("four", standInMatcher({ "New wording.": 0.95 }));
     await message("five", standInMatcher({ "New wording.": 0.8 }));
     // A draft is not a version and has no performance.
-    sandbox.withRules((rules) => rules.saveDraft(ruleId, { instruction: "Do it.", conditions: ["Newer."] }));
+    sandbox.withRules((rules) => rules.saveDraft(ruleId, { instruction: "Do it.", conditions: conditionsFor("message", ["Newer."]) }));
 
     const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(ruleId));
     expect(analytics.versions).toMatchObject([
@@ -235,7 +235,7 @@ describe("rule analytics", () => {
 
   it("is empty for a rule that has never been checked", () => {
     const ruleId = sandbox.withRules((rules) =>
-      rules.createRule({ name: "New", checkType: "message", instruction: "Do X.", conditions: ["Condition A."] }),
+      rules.createRule({ name: "New", instruction: "Do X.", conditions: conditionsFor("message", ["Condition A."]) }),
     ).ruleId;
 
     expect(sandbox.withRules((rules) => rules.ruleAnalytics(ruleId))).toEqual({

@@ -296,6 +296,69 @@ const migrations: string[] = [
     SELECT 'reply_cutoff', value FROM settings WHERE key = 'cutoff'
     ON CONFLICT (key) DO NOTHING;
   `,
+  `
+  -- A rule no longer has a check type. Each condition has a Message switch and
+  -- a Reply switch, and a rule takes part in a check when one of its conditions
+  -- is on for that check type. A condition now lasts: it belongs to its rule
+  -- and outlives versions, and a version holds only its wording and position
+  -- (version_conditions). Each existing condition is on for its rule's check
+  -- type. The same wording across a rule's versions becomes one condition,
+  -- which keeps the lowest of the old ids, and scores and matches are pointed
+  -- at it. A draft that was moving its rule to the other check keeps that
+  -- pending move: its conditions stay apart from the published ones and are on
+  -- for the draft's check type, so publishing it still changes the check.
+  -- versions.check_type is retired: nothing reads or writes it after this.
+  CREATE TEMP TABLE condition_map AS
+    SELECT c.id AS old_id, v.rule_id, c.version_id, c.position, c.text,
+           v.number IS NULL AND v.check_type <> r.check_type AS moving,
+           v.check_type AS check_type,
+           ROW_NUMBER() OVER (PARTITION BY c.version_id, c.text ORDER BY c.position, c.id) AS occurrence
+      FROM conditions c JOIN versions v ON v.id = c.version_id JOIN rules r ON r.id = v.rule_id;
+  CREATE TEMP TABLE condition_ids AS
+    SELECT m.old_id, m.rule_id, m.version_id, m.position, m.text, m.moving, m.check_type,
+           (SELECT MIN(o.old_id) FROM condition_map o
+             WHERE o.rule_id = m.rule_id AND o.text = m.text AND o.occurrence = m.occurrence
+               AND o.moving = m.moving) AS new_id
+      FROM condition_map m;
+  CREATE INDEX condition_ids_by_old ON condition_ids (old_id);
+
+  -- AUTOINCREMENT: a deleted condition's id is never given to a later one, so
+  -- an id kept by an undo step cannot come to mean another condition.
+  CREATE TABLE lasting_conditions (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id  INTEGER NOT NULL REFERENCES rules (id) ON DELETE CASCADE,
+    message  INTEGER NOT NULL CHECK (message IN (0, 1)),
+    reply    INTEGER NOT NULL CHECK (reply IN (0, 1))
+  );
+  INSERT INTO lasting_conditions (id, rule_id, message, reply)
+    SELECT DISTINCT m.new_id, m.rule_id,
+           CASE WHEN m.moving THEN m.check_type ELSE r.check_type END = 'message',
+           CASE WHEN m.moving THEN m.check_type ELSE r.check_type END = 'reply'
+      FROM condition_ids m JOIN rules r ON r.id = m.rule_id;
+
+  CREATE TABLE version_conditions (
+    version_id    INTEGER NOT NULL REFERENCES versions (id) ON DELETE CASCADE,
+    condition_id  INTEGER NOT NULL REFERENCES lasting_conditions (id) ON DELETE CASCADE,
+    position      INTEGER NOT NULL,
+    text          TEXT NOT NULL,
+    PRIMARY KEY (version_id, condition_id)
+  );
+  INSERT INTO version_conditions (version_id, condition_id, position, text)
+    SELECT version_id, new_id, position, text FROM condition_ids;
+
+  UPDATE scores SET condition_id = (SELECT new_id FROM condition_ids WHERE old_id = scores.condition_id)
+   WHERE condition_id IN (SELECT old_id FROM condition_ids WHERE old_id <> new_id);
+  UPDATE matches SET condition_id = (SELECT new_id FROM condition_ids WHERE old_id = matches.condition_id)
+   WHERE condition_id IN (SELECT old_id FROM condition_ids WHERE old_id <> new_id);
+
+  DROP TABLE conditions;
+  ALTER TABLE lasting_conditions RENAME TO conditions;
+  CREATE INDEX conditions_by_rule ON conditions (rule_id);
+  CREATE INDEX version_conditions_by_condition ON version_conditions (condition_id);
+  ALTER TABLE rules DROP COLUMN check_type;
+  DROP TABLE condition_ids;
+  DROP TABLE condition_map;
+  `,
 ];
 
 /**

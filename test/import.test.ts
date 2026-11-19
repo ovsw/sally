@@ -2,7 +2,7 @@ import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { NewPassage } from "../src/import.ts";
-import { RuleError } from "../src/rules.ts";
+import { conditionsFor, RuleError } from "../src/rules.ts";
 import { gitRepo } from "./support/git.ts";
 import { createSandbox, type Sandbox } from "./support/sandbox.ts";
 
@@ -159,8 +159,7 @@ describe("adding passages", () => {
     expect(proposed).toMatchObject({ decision: null, rule: { name: "Links", published: false, live: null } });
     expect(proposed!.rule!.draft).toMatchObject({
       instruction: "Do the Links thing.",
-      conditions: ["The message is about Links."],
-      checkType: "message",
+      conditions: [{ text: "The message is about Links.", message: true, reply: false }],
       scope: { kind: "projects", projects: ["example/shop"] },
     });
     // The draft is an ordinary rule: the rules list shows it.
@@ -188,9 +187,9 @@ describe("adding passages", () => {
     };
     const [view] = sandbox.withImports((imports) => imports.addPassages(id, [passage])).passages;
     expect(view!.similarRule).toBe("Looks like your rule \"Checks\".");
-    expect(view!.rules.map((r) => [r.rule!.name, r.rule!.checkType])).toEqual([
-      ["Lint before commit", "message"],
-      ["Suite before release", "reply"],
+    expect(view!.rules.map((r) => [r.rule!.name, r.rule!.checkTypes])).toEqual([
+      ["Lint before commit", ["message"]],
+      ["Suite before release", ["reply"]],
     ]);
   });
 
@@ -284,12 +283,12 @@ describe("decisions", () => {
     const [passage] = importOf(becomesRule("Links")).passages;
     const proposed = passage!.rules[0]!;
     sandbox.withRules((rules) =>
-      rules.saveDraft(proposed.ruleId!, { instruction: "Give the local link.", conditions: ["The message asks for a link."] }),
+      rules.saveDraft(proposed.ruleId!, { instruction: "Give the local link.", conditions: conditionsFor("message", ["The message asks for a link."]) }),
     );
     const after = sandbox.withImports((imports) => imports.publishProposedRule(proposed.id));
     expect(after.passages[0]!.rules[0]).toMatchObject({
       decision: "published",
-      rule: { published: true, live: { instruction: "Give the local link.", conditions: ["The message asks for a link."] } },
+      rule: { published: true, live: { instruction: "Give the local link.", conditions: [{ text: "The message asks for a link." }] } },
     });
     expect(after.passages[0]!.pending).toBe(false);
   });
@@ -297,7 +296,7 @@ describe("decisions", () => {
   it("refuses to publish a proposed rule that is not complete, leaving it undecided", () => {
     const detail = importOf(becomesRule("Links"));
     const proposed = detail.passages[0]!.rules[0]!;
-    sandbox.withRules((rules) => rules.saveDraft(proposed.ruleId!, { instruction: "", conditions: [] }));
+    sandbox.withRules((rules) => rules.saveDraft(proposed.ruleId!, { instruction: "", conditions: conditionsFor("message", []) }));
     expect(() => sandbox.withImports((imports) => imports.publishProposedRule(proposed.id))).toThrow(RuleError);
     expect(sandbox.withImports((imports) => imports.getImport(detail.id)).passages[0]!.rules[0]!.decision).toBeNull();
   });
@@ -385,9 +384,8 @@ describe("decisions", () => {
     const written = sandbox.withImports((imports) =>
       imports.writeRule(passage.id, {
         name: "Plain words",
-        checkType: "reply",
         instruction: "Rewrite the reply in plain words.",
-        conditions: ["The reply uses jargon."],
+        conditions: conditionsFor("reply", ["The reply uses jargon."]),
       }),
     );
     const after = written.passages[0]!;
@@ -395,7 +393,7 @@ describe("decisions", () => {
     expect(after.rules).toHaveLength(1);
     expect(after.rules[0]).toMatchObject({
       decision: null,
-      rule: { name: "Plain words", checkType: "reply", published: false, draft: { scope: { kind: "all" } } },
+      rule: { name: "Plain words", checkTypes: ["reply"], published: false, draft: { scope: { kind: "all" } } },
     });
     expect(after.pending).toBe(true);
 
@@ -410,7 +408,7 @@ describe("decisions", () => {
       imports.writeRule(skipped.passages[0]!.id, {
         name: "Links again",
         instruction: "Give the link.",
-        conditions: ["The message asks for a link."],
+        conditions: conditionsFor("message", ["The message asks for a link."]),
       }),
     );
     expect(written.passages[0]!.decision).toBeNull();
@@ -424,7 +422,7 @@ describe("decisions", () => {
     sandbox.liveRule({ name: "Taken" });
     const write = (name: string, instruction: string) =>
       sandbox.withImports((imports) =>
-        imports.writeRule(passage.id, { name, instruction, conditions: ["The message asks."] }),
+        imports.writeRule(passage.id, { name, instruction, conditions: conditionsFor("message", ["The message asks."]) }),
       );
     expect(() => write("New", "")).toThrow(RuleError);
     expect(() => write("Taken", "Do it.")).toThrow(RuleError);
@@ -454,7 +452,7 @@ describe("decisions", () => {
     const [passage] = importOf(becomesRule("Links")).passages;
     sandbox.withImports((imports) => imports.markPassageStays(passage!.id));
     const written = sandbox.withImports((imports) =>
-      imports.writeRule(passage!.id, { name: "Links", instruction: "Do it.", conditions: ["Links come up."] }),
+      imports.writeRule(passage!.id, { name: "Links", instruction: "Do it.", conditions: conditionsFor("message", ["Links come up."]) }),
     );
     expect(written.passages[0]!.decision).toBe("becomes_rule");
     expect(written.passages[0]!.rules.map((r) => r.decision)).toEqual(["skipped", null]);

@@ -177,12 +177,19 @@ function makeColumns(onError: (message: string) => void, compact: boolean): Colu
       meta: { label: "Name", className: compact ? undefined : "w-px pr-12" },
     },
     {
-      accessorKey: "checkType",
+      // The checks the rule takes part in; filtering by one lists every rule with a condition on for it.
+      id: "checkType",
+      accessorFn: (row) => row.checkTypes,
       header: ({ column }) => <DataTableColumnHeader column={column} title="Type" />,
-      cell: ({ row }) => {
-        const meta = checkTypes.find((t) => t.value === row.original.checkType)!;
-        return <IconLabel icon={meta.icon} label={meta.label} compact={compact} />;
-      },
+      cell: ({ row }) => (
+        <span className="flex items-center gap-3">
+          {checkTypes
+            .filter((t) => row.original.checkTypes.includes(t.value as CheckType))
+            .map((meta) => (
+              <IconLabel key={meta.value} icon={meta.icon} label={meta.label} compact={compact} />
+            ))}
+        </span>
+      ),
       enableSorting: false,
       meta: { label: "Type", className: compact ? "w-px" : "w-px pr-12" },
     },
@@ -257,9 +264,9 @@ export function RulesScreen({ openId }: { openId?: number }) {
   useRuleChanges((change) => {
     // Shown at once, then confirmed by a fresh list.
     if ("rule" in change) {
-      const { id, name, checkType, published, scope, on, hasDraft } = change.rule;
+      const { id, name, checkTypes, published, scope, on, hasDraft } = change.rule;
       setRules((rows) =>
-        rows.map((row) => (row.id === id ? { id, name, checkType, published, scope, on, hasDraft } : row)),
+        rows.map((row) => (row.id === id ? { id, name, checkTypes, published, scope, on, hasDraft } : row)),
       );
     }
     setChanges((n) => n + 1);

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runMessageHook } from "../src/message-hook.ts";
-import { RuleError, RuleNotFoundError } from "../src/rules.ts";
+import { conditionsFor, RuleError, RuleNotFoundError } from "../src/rules.ts";
 import { folder } from "./support/git.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { standInMatcher } from "./support/stand-in-matcher.ts";
@@ -11,7 +11,7 @@ beforeEach(() => {
 });
 afterEach(() => sandbox.cleanup());
 
-const rule = { name: "A rule", checkType: "message" as const, instruction: "Do X.", conditions: ["Condition A."] };
+const rule = { name: "A rule", instruction: "Do X.", conditions: conditionsFor("message", ["Condition A."]) };
 
 describe("rules service", () => {
   it("creates a rule as a draft that is not live until published", () => {
@@ -25,11 +25,21 @@ describe("rules service", () => {
     });
   });
 
+  it("never gives a dropped condition's id to a later condition", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      const dropped = rules.getRule(ruleId).draft!.conditions[0]!.id;
+      rules.saveDraft(ruleId, { instruction: "Do X.", conditions: [] });
+      rules.saveDraft(ruleId, { instruction: "Do X.", conditions: conditionsFor("reply", ["Condition R."]) });
+      expect(rules.getRule(ruleId).draft!.conditions[0]!.id).not.toBe(dropped);
+    });
+  });
+
   it("numbers each publish as a new version and leaves no draft behind", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);
       rules.publish(ruleId);
-      rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: ["Condition B."] });
+      rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: conditionsFor("message", ["Condition B."]) });
       expect(rules.liveRules("message")).toMatchObject([
         { versionNumber: 1, instruction: "Do X.", conditions: [{ text: "Condition A." }] },
       ]);
@@ -51,7 +61,7 @@ describe("rules service", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);
       rules.publish(ruleId);
-      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do X.", conditions: ["Condition A."] });
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do X.", conditions: conditionsFor("message", ["Condition A."]) });
       expect(rules.liveRules("message")[0]).toMatchObject({ name: "A rule" });
       expect(rules.listRules()).toMatchObject([{ name: "A rule", hasDraft: true }]);
       rules.publish(ruleId);
@@ -60,44 +70,153 @@ describe("rules service", () => {
     });
   });
 
-  it("keeps a draft's new check type out of the live version until it is published", () => {
-    sandbox.withRules((rules) => {
-      const { ruleId } = rules.createRule(rule);
-      rules.publish(ruleId);
-      rules.saveDraft(ruleId, { checkType: "reply", instruction: "Do X.", conditions: ["Condition A."] });
-      expect(rules.liveRules("message")).toMatchObject([{ ruleId }]);
-      expect(rules.liveRules("reply")).toEqual([]);
-      expect(rules.getRule(ruleId)).toMatchObject({
-        checkType: "message",
-        live: { checkType: "message" },
-        draft: { checkType: "reply" },
+  describe("conditions and their switches", () => {
+    const message = (text: string) => ({ text, message: true, reply: false });
+    const reply = (text: string) => ({ text, message: false, reply: true });
+    const both = (text: string) => ({ text, message: true, reply: true });
+    const texts = (live: { conditions: { text: string }[] }[]) => live.map((r) => r.conditions.map((c) => c.text));
+
+    it("takes a rule into each check its conditions are on for, with only those conditions", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule({
+          ...rule,
+          conditions: [message("Asks for X."), reply("Does X badly."), both("Mentions X.")],
+        });
+        rules.publish(ruleId);
+        expect(texts(rules.liveRules("message"))).toEqual([["Asks for X.", "Mentions X."]]);
+        expect(texts(rules.liveRules("reply"))).toEqual([["Does X badly.", "Mentions X."]]);
+        expect(rules.getRule(ruleId)).toMatchObject({
+          checkTypes: ["message", "reply"],
+          live: { conditions: [message("Asks for X."), reply("Does X badly."), both("Mentions X.")] },
+        });
       });
-      // A later edit that does not mention the check type keeps the draft's.
-      rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: ["Condition A."] });
-      expect(rules.getRule(ruleId).draft).toMatchObject({ checkType: "reply", instruction: "Do Y." });
-      rules.publish(ruleId);
-      expect(rules.liveRules("message")).toEqual([]);
-      expect(rules.liveRules("reply")).toMatchObject([{ ruleId, versionNumber: 2 }]);
-      expect(rules.listRules({ checkType: "reply" })).toMatchObject([{ id: ruleId }]);
     });
-  });
 
-  it("files a never-published rule under its draft's check type", () => {
-    sandbox.withRules((rules) => {
-      const { ruleId } = rules.createRule(rule);
-      rules.saveDraft(ruleId, { checkType: "reply", instruction: "Do X.", conditions: ["Condition A."] });
-      expect(rules.listRules({ checkType: "reply" })).toMatchObject([{ id: ruleId, published: false }]);
-      expect(rules.liveRules("reply")).toEqual([]);
+    it("never scores a condition with both switches off", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule({ ...rule, conditions: [message("On."), { text: "Off.", message: false, reply: false }] });
+        rules.publish(ruleId);
+        expect(texts(rules.liveRules("message"))).toEqual([["On."]]);
+        expect(rules.liveRules("reply")).toEqual([]);
+        expect(rules.getRule(ruleId).checkTypes).toEqual(["message"]);
+      });
     });
-  });
 
-  it("refuses a draft with a check type other than message or reply", () => {
-    sandbox.withRules((rules) => {
-      const { ruleId } = rules.createRule(rule);
-      expect(() =>
-        rules.saveDraft(ruleId, { checkType: "tool" as never, instruction: "Do X.", conditions: ["Condition A."] }),
-      ).toThrow(RuleError);
-      expect(rules.getRule(ruleId).draft).toMatchObject({ checkType: "message" });
+    it("refuses a condition without its switches, and a rule with no condition switched on", () => {
+      sandbox.withRules((rules) => {
+        expect(() => rules.createRule({ ...rule, conditions: [{ text: "No switches." } as never] })).toThrow(RuleError);
+        expect(() => rules.createRule({ ...rule, conditions: ["Plain text." as never] })).toThrow(RuleError);
+        expect(() => rules.createRule({ ...rule, conditions: [{ text: "Off.", message: false, reply: false }] })).toThrow(
+          "A rule needs at least one condition with its Message or Reply switch on.",
+        );
+        const { ruleId } = rules.createRule(rule);
+        expect(() => rules.saveDraft(ruleId, { instruction: "Do X.", conditions: [{ text: "New, no switches." }] })).toThrow(
+          RuleError,
+        );
+        expect(() => rules.saveDraft(ruleId, { instruction: "Do X.", conditions: [{ id: 999, text: "Not this rule's." }] })).toThrow(
+          RuleError,
+        );
+        rules.saveDraft(ruleId, { instruction: "Do X.", conditions: [{ text: "Off.", message: false, reply: false }] });
+        expect(() => rules.publish(ruleId)).toThrow(RuleError);
+      });
+    });
+
+    it("keeps a condition's switches when its wording changes in a published draft", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule({ ...rule, conditions: [reply("Old wording.")] });
+        rules.publish(ruleId);
+        const [condition] = rules.getRule(ruleId).live!.conditions;
+        // Switches given for a published condition are not the draft's to change.
+        rules.saveDraft(ruleId, {
+          instruction: "Do X.",
+          conditions: [{ id: condition!.id, text: "New wording.", message: true, reply: false }],
+        });
+        rules.publish(ruleId);
+        expect(rules.getRule(ruleId).live!.conditions).toEqual([{ id: condition!.id, ...reply("New wording.") }]);
+        expect(rules.liveRules("reply")).toMatchObject([{ conditions: [{ id: condition!.id, text: "New wording." }] }]);
+        expect(rules.liveRules("message")).toEqual([]);
+        // The old version still words it as it was.
+        expect(rules.getRule(ruleId).versions[1]!.conditions).toEqual([{ id: condition!.id, ...reply("Old wording.") }]);
+      });
+    });
+
+    it("counts a condition added in a draft only once the draft is published", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule(rule);
+        rules.publish(ruleId);
+        const [kept] = rules.getRule(ruleId).live!.conditions;
+        rules.saveDraft(ruleId, { instruction: "Do X.", conditions: [kept!, reply("Reply condition.")] });
+        expect(rules.liveRules("reply")).toEqual([]);
+        expect(rules.getRule(ruleId).checkTypes).toEqual(["message"]);
+        rules.publish(ruleId);
+        expect(texts(rules.liveRules("reply"))).toEqual([["Reply condition."]]);
+        expect(texts(rules.liveRules("message"))).toEqual([["Condition A."]]);
+        expect(rules.getRule(ruleId).checkTypes).toEqual(["message", "reply"]);
+      });
+    });
+
+    it("keeps a condition dropped in a draft working until the draft is published", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule({ ...rule, conditions: [message("Stays."), message("Goes.")] });
+        rules.publish(ruleId);
+        const [stays] = rules.getRule(ruleId).live!.conditions;
+        rules.saveDraft(ruleId, { instruction: "Do X.", conditions: [stays!] });
+        expect(texts(rules.liveRules("message"))).toEqual([["Stays.", "Goes."]]);
+        rules.publish(ruleId);
+        expect(texts(rules.liveRules("message"))).toEqual([["Stays."]]);
+      });
+    });
+
+    it("lets a new condition's switches change with each save until it is published", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule(rule);
+        rules.publish(ruleId);
+        const [kept] = rules.getRule(ruleId).live!.conditions;
+        rules.saveDraft(ruleId, { instruction: "Do X.", conditions: [kept!, message("New.")] });
+        const added = rules.getRule(ruleId).draft!.conditions[1]!;
+        rules.saveDraft(ruleId, { instruction: "Do X.", conditions: [kept!, { ...added, message: false, reply: true }] });
+        expect(rules.getRule(ruleId).draft!.conditions).toEqual([kept, { id: added.id, ...reply("New.") }]);
+        // A discarded draft takes its new conditions with it.
+        rules.discardDraft(ruleId);
+        expect(rules.getRule(ruleId)).toMatchObject({ draft: null, checkTypes: ["message"], live: { conditions: [kept] } });
+        expect(rules.liveRules("reply")).toEqual([]);
+      });
+    });
+
+    it("starts a draft from an old version with its wording, each condition keeping the switches it has now", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule({ ...rule, conditions: [reply("First wording.")] });
+        rules.publish(ruleId);
+        const [condition] = rules.getRule(ruleId).live!.conditions;
+        rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: [{ id: condition!.id, text: "Second wording." }] });
+        rules.publish(ruleId);
+        rules.startDraftFrom(ruleId, 1);
+        expect(rules.getRule(ruleId).draft).toMatchObject({
+          instruction: "Do X.",
+          conditions: [{ id: condition!.id, ...reply("First wording.") }],
+        });
+      });
+    });
+
+    it("lists a rule under every check type one of its conditions is on for", () => {
+      sandbox.withRules((rules) => {
+        const messageOnly = rules.createRule({ ...rule, name: "Message only" }).ruleId;
+        const replyOnly = rules.createRule({ ...rule, name: "Reply only", conditions: [reply("R.")] }).ruleId;
+        const inBoth = rules.createRule({ ...rule, name: "In both", conditions: [message("M."), reply("R.")] }).ruleId;
+        for (const id of [messageOnly, replyOnly, inBoth]) rules.publish(id);
+        const names = (checkType: "message" | "reply") => rules.listRules({ checkType }).map((r) => r.name);
+        expect(names("message")).toEqual(["In both", "Message only"]);
+        expect(names("reply")).toEqual(["In both", "Reply only"]);
+        expect(rules.listRules().map((r) => [r.name, r.checkTypes])).toEqual([
+          ["In both", ["message", "reply"]],
+          ["Message only", ["message"]],
+          ["Reply only", ["reply"]],
+        ]);
+        // A never-published rule is listed under its draft's check types.
+        const draftOnly = rules.createRule({ ...rule, name: "Draft only", conditions: [reply("R.")] }).ruleId;
+        expect(rules.listRules({ checkType: "reply" })).toMatchObject([{ id: draftOnly, published: false }, {}, {}]);
+        expect(rules.liveRules("reply").map((r) => r.ruleId)).toEqual([replyOnly, inBoth]);
+      });
     });
   });
 
@@ -105,8 +224,8 @@ describe("rules service", () => {
     sandbox.withRules((rules) => {
       expect(() => rules.createRule({ ...rule, name: " " })).toThrow(RuleError);
       expect(() => rules.createRule({ ...rule, instruction: "" })).toThrow(RuleError);
-      expect(() => rules.createRule({ ...rule, conditions: ["  "] })).toThrow(RuleError);
-      expect(() => rules.createRule({ ...rule, conditions: ["a".repeat(200_000)] })).toThrow(RuleError);
+      expect(() => rules.createRule({ ...rule, conditions: conditionsFor("message", ["  "]) })).toThrow(RuleError);
+      expect(() => rules.createRule({ ...rule, conditions: conditionsFor("message", ["a".repeat(200_000)]) })).toThrow(RuleError);
       rules.createRule(rule);
       expect(() => rules.createRule(rule)).toThrow(RuleError);
     });
@@ -118,13 +237,20 @@ describe("rules service", () => {
       expect(rules.getRule(ruleId).versions).toEqual([]);
       rules.publish(ruleId);
       const first = rules.getRule(ruleId).versions;
-      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: ["Condition B."] });
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: conditionsFor("message", ["Condition B."]) });
       rules.publish(ruleId);
-      rules.saveDraft(ruleId, { instruction: "Do Z.", conditions: ["Condition C."] });
+      rules.saveDraft(ruleId, { instruction: "Do Z.", conditions: conditionsFor("message", ["Condition C."]) });
 
       const { versions, live } = rules.getRule(ruleId);
       expect(versions).toEqual([
-        { number: 2, publishedAt: expect.any(String), name: "Renamed", checkType: "message", instruction: "Do Y.", conditions: ["Condition B."], scope: { kind: "all" } },
+        {
+          number: 2,
+          publishedAt: expect.any(String),
+          name: "Renamed",
+          instruction: "Do Y.",
+          conditions: [{ id: expect.any(Number), text: "Condition B.", message: true, reply: false }],
+          scope: { kind: "all" },
+        },
         first[0],
       ]);
       expect(first).toEqual([
@@ -132,9 +258,8 @@ describe("rules service", () => {
           number: 1,
           publishedAt: expect.any(String),
           name: "A rule",
-          checkType: "message",
           instruction: "Do X.",
-          conditions: ["Condition A."],
+          conditions: [{ id: expect.any(Number), text: "Condition A.", message: true, reply: false }],
           scope: { kind: "all" },
         },
       ]);
@@ -147,13 +272,13 @@ describe("rules service", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);
       rules.publish(ruleId);
-      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: ["Condition B.", "Condition C."] });
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: conditionsFor("message", ["Condition B.", "Condition C."]) });
       rules.publish(ruleId);
-      rules.saveDraft(ruleId, { instruction: "Half-finished.", conditions: [] });
+      rules.saveDraft(ruleId, { instruction: "Half-finished.", conditions: conditionsFor("message", []) });
 
       rules.startDraftFrom(ruleId, 1);
       const detail = rules.getRule(ruleId);
-      expect(detail.draft).toMatchObject({ name: "A rule", instruction: "Do X.", conditions: ["Condition A."] });
+      expect(detail.draft).toMatchObject({ name: "A rule", instruction: "Do X.", conditions: [{ text: "Condition A." }] });
       expect(detail.live).toMatchObject({ number: 2, name: "Renamed" });
       expect(rules.liveRules("message")[0]).toMatchObject({ versionNumber: 2, instruction: "Do Y." });
 
@@ -171,7 +296,7 @@ describe("rules service", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);
       rules.publish(ruleId);
-      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do X.", conditions: ["Condition A."] });
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do X.", conditions: conditionsFor("message", ["Condition A."]) });
       rules.publish(ruleId);
       rules.createRule({ ...rule, name: "A rule" });
       expect(() => rules.startDraftFrom(ruleId, 1)).toThrow(RuleError);
@@ -183,7 +308,7 @@ describe("rules service", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);
       rules.publish(ruleId);
-      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: ["Condition B."] });
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: conditionsFor("message", ["Condition B."]) });
       rules.discardDraft(ruleId);
       expect(rules.getRule(ruleId)).toMatchObject({ name: "A rule", hasDraft: false, draft: null, live: { number: 1 } });
       expect(rules.liveRules("message")[0]).toMatchObject({ name: "A rule", instruction: "Do X." });
@@ -206,7 +331,7 @@ describe("rules service", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);
       rules.publish(ruleId);
-      rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: ["Condition B."] });
+      rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: conditionsFor("message", ["Condition B."]) });
 
       rules.switchOff(ruleId);
       expect(rules.liveRules("message")).toEqual([]);
@@ -247,7 +372,7 @@ describe("rules service", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);
       rules.publish(ruleId);
-      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: ["Condition B."] });
+      rules.saveDraft(ruleId, { name: "Renamed", instruction: "Do Y.", conditions: conditionsFor("message", ["Condition B."]) });
       const other = rules.createRule({ ...rule, name: "Other" }).ruleId;
       rules.publish(other);
 
@@ -336,7 +461,7 @@ describe("rules service", () => {
       sandbox.withRules((rules) => {
         const { ruleId } = rules.createRule({ ...rule, scope: { kind: "projects", projects: [a] } });
         rules.publish(ruleId);
-        rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: ["Condition B."] });
+        rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: conditionsFor("message", ["Condition B."]) });
         expect(rules.getRule(ruleId).draft).toMatchObject({ scope: { kind: "projects", projects: [a] } });
       });
     });

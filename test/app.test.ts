@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ImportDetail, ImportSummary } from "../src/import.ts";
 import { runMessageHook } from "../src/message-hook.ts";
-import type { RuleDetail, RuleSummary } from "../src/rules.ts";
+import { type CheckType, conditionsFor, type RuleDetail, type RuleSummary } from "../src/rules.ts";
 import { type RunningApp, startApp } from "./support/app.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { standInMatcher } from "./support/stand-in-matcher.ts";
@@ -23,12 +23,19 @@ afterEach(async () => {
 
 const newRule = {
   name: "Local link first",
-  checkType: "message",
+  checkType: "message" as CheckType,
   instruction: "Show the change on the local dev server first.",
   conditions: ["The message asks for a visual change."],
 };
 
-const create = (rule: Partial<typeof newRule> = {}) => app.json<RuleDetail>("POST", "/api/rules", { ...newRule, ...rule });
+/** The body of a new rule: each condition given as plain text is on for the rule's check type. */
+const ruleBody = (rule: Partial<typeof newRule> = {}) => {
+  const { checkType, conditions, ...rest } = { ...newRule, ...rule };
+  return { ...rest, conditions: conditionsFor(checkType, conditions) };
+};
+const create = (rule: Partial<typeof newRule> = {}) => app.json<RuleDetail>("POST", "/api/rules", ruleBody(rule));
+/** New conditions on for Message, as a draft gives them. */
+const messageConditions = (...texts: string[]) => conditionsFor("message", texts);
 const list = async (query = "") => (await app.json<{ rules: RuleSummary[] }>("GET", `/api/rules${query}`)).rules;
 const names = async (query = "") => (await list(query)).map((r) => r.name);
 
@@ -96,13 +103,13 @@ describe("the rules list", () => {
     await app.json("POST", `/api/rules/${live.id}/publish`, {});
     const edited = await create({ name: "Edited rule", checkType: "reply" });
     await app.json("POST", `/api/rules/${edited.id}/publish`, {});
-    await app.json("PUT", `/api/rules/${edited.id}/draft`, { instruction: "New wording.", conditions: ["C."] });
+    await app.json("PUT", `/api/rules/${edited.id}/draft`, { instruction: "New wording.", conditions: conditionsFor("reply", ["C."]) });
     await create({ name: "New rule" });
 
     expect(await list()).toEqual([
-      { id: edited.id, name: "Edited rule", checkType: "reply", published: true, scope: { kind: "all" }, on: true, hasDraft: true },
-      { id: live.id, name: "Live rule", checkType: "message", published: true, scope: { kind: "all" }, on: true, hasDraft: false },
-      { id: expect.any(Number), name: "New rule", checkType: "message", published: false, scope: { kind: "all" }, on: true, hasDraft: true },
+      { id: edited.id, name: "Edited rule", checkTypes: ["reply"], published: true, scope: { kind: "all" }, on: true, hasDraft: true },
+      { id: live.id, name: "Live rule", checkTypes: ["message"], published: true, scope: { kind: "all" }, on: true, hasDraft: false },
+      { id: expect.any(Number), name: "New rule", checkTypes: ["message"], published: false, scope: { kind: "all" }, on: true, hasDraft: true },
     ]);
   });
 
@@ -112,7 +119,7 @@ describe("the rules list", () => {
     await create({ name: "Beta", checkType: "reply", instruction: "Say what changed.", conditions: ["Reports a fix."] });
     const c = await create({ name: "Gamma", conditions: ["Mentions a deadline."] });
     await app.json("POST", `/api/rules/${c.id}/publish`, {});
-    await app.json("PUT", `/api/rules/${c.id}/draft`, { instruction: "Ask about the PULL request.", conditions: ["X."] });
+    await app.json("PUT", `/api/rules/${c.id}/draft`, { instruction: "Ask about the PULL request.", conditions: messageConditions("X.") });
 
     expect(await names("?search=beta")).toEqual(["Beta"]);
     expect(await names("?search=pull%20request")).toEqual(["Alpha", "Gamma"]);
@@ -139,14 +146,35 @@ describe("creating, editing and publishing a rule", () => {
     expect(await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher })).toBe("");
   });
 
+  it("creates a rule with conditions on for Message, Reply or both, and refuses a condition without its switches", async () => {
+    const both = [
+      { text: "The message asks for a visual change.", message: true, reply: false },
+      { text: "The reply gives no local link.", message: false, reply: true },
+    ];
+    const rule = await app.json<RuleDetail>("POST", "/api/rules", { name: "Both", instruction: "Do it.", conditions: both });
+    expect(rule).toMatchObject({ checkTypes: ["message", "reply"], draft: { conditions: both } });
+    expect(await names("?checkType=message")).toEqual(["Both"]);
+    expect(await names("?checkType=reply")).toEqual(["Both"]);
+
+    const plain = await app.call("POST", "/api/rules", { name: "Plain", instruction: "Do it.", conditions: ["M."] });
+    expect(plain.status).toBe(400);
+    const noSwitches = await app.call("POST", "/api/rules", { name: "Bare", instruction: "Do it.", conditions: [{ text: "M." }] });
+    expect(noSwitches.status).toBe(400);
+    expect(await noSwitches.json()).toEqual({ error: "Each condition needs its Message and Reply switches." });
+    const newInDraft = await app.call("PUT", `/api/rules/${rule.id}/draft`, { instruction: "Do it.", conditions: [{ text: "M." }] });
+    expect(newInDraft.status).toBe(400);
+    expect(await names()).toEqual(["Both"]);
+  });
+
   it("saves edits to name, instruction and conditions into the draft, and they survive a reload", async () => {
     const rule = await create({ conditions: ["First.", "Second.", "Third."] });
+    const [first, , third] = rule.draft!.conditions;
 
     // Change one condition, remove one, add one, rename and reword.
     await app.json("PUT", `/api/rules/${rule.id}/draft`, {
       name: "Local link before PR",
       instruction: "Show it on localhost first.",
-      conditions: ["First, changed.", "Third.", "Fourth."],
+      conditions: [{ id: first!.id, text: "First, changed." }, third, { text: "Fourth.", message: false, reply: true }],
     });
 
     await app.close();
@@ -155,8 +183,13 @@ describe("creating, editing and publishing a rule", () => {
     expect(reloaded.draft).toMatchObject({
       name: "Local link before PR",
       instruction: "Show it on localhost first.",
-      conditions: ["First, changed.", "Third.", "Fourth."],
+      conditions: [
+        { id: first!.id, text: "First, changed.", message: true, reply: false },
+        { id: third!.id, text: "Third.", message: true, reply: false },
+        { text: "Fourth.", message: false, reply: true },
+      ],
     });
+    expect(reloaded.checkTypes).toEqual(["message", "reply"]);
     expect(await names()).toEqual(["Local link before PR"]);
   });
 
@@ -178,7 +211,7 @@ describe("creating, editing and publishing a rule", () => {
     await app.json("PUT", `/api/rules/${rule.id}/draft`, {
       name: "Renamed",
       instruction: "New wording.",
-      conditions: ["A new condition."],
+      conditions: messageConditions("A new condition."),
     });
 
     const detail = await app.json<RuleDetail>("GET", `/api/rules/${rule.id}`);
@@ -190,9 +223,9 @@ describe("creating, editing and publishing a rule", () => {
         number: 1,
         name: "Local link first",
         instruction: newRule.instruction,
-        conditions: newRule.conditions,
+        conditions: [{ id: expect.any(Number), text: newRule.conditions[0], message: true, reply: false }],
       },
-      draft: { name: "Renamed", instruction: "New wording.", conditions: ["A new condition."] },
+      draft: { name: "Renamed", instruction: "New wording.", conditions: [{ text: "A new condition." }] },
     });
   });
 
@@ -209,7 +242,7 @@ describe("creating, editing and publishing a rule", () => {
     await app.json("PUT", `/api/rules/${rule.id}/draft`, {
       name: "Localhost first",
       instruction: "Reworded instruction.",
-      conditions: ["The message asks for a layout change."],
+      conditions: messageConditions("The message asks for a layout change."),
     });
     const matcher = standInMatcher({
       "The message asks for a visual change.": 0.9,
@@ -232,14 +265,14 @@ describe("creating, editing and publishing a rule", () => {
     const first = await create({ name: "First" });
     const second = await create({ name: "Second" });
 
-    const taken = await app.call("POST", "/api/rules", { ...newRule, name: "First" });
+    const taken = await app.call("POST", "/api/rules", ruleBody({ name: "First" }));
     expect(taken.status).toBe(400);
     expect(await taken.json()).toEqual({ error: 'A rule named "First" already exists.' });
 
     const rename = await app.call("PUT", `/api/rules/${second.id}/draft`, {
       name: "First",
       instruction: "X.",
-      conditions: ["Y."],
+      conditions: messageConditions("Y."),
     });
     expect(rename.status).toBe(400);
 
@@ -254,7 +287,7 @@ describe("creating, editing and publishing a rule", () => {
 describe("history and the rest of a rule's life", () => {
   const publish = (id: number) => app.json("POST", `/api/rules/${id}/publish`, {});
   const reword = (id: number, instruction: string, conditions = newRule.conditions) =>
-    app.json<RuleDetail>("PUT", `/api/rules/${id}/draft`, { instruction, conditions });
+    app.json<RuleDetail>("PUT", `/api/rules/${id}/draft`, { instruction, conditions: messageConditions(...conditions) });
   const sentToJev = async () => {
     const matcher = standInMatcher({ "The message asks for a visual change.": 0.9 });
     const output = await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
@@ -356,7 +389,7 @@ describe("a rule's scope", () => {
 
     const saved = await app.json<RuleDetail>("PUT", `/api/rules/${rule.id}/draft`, {
       instruction: newRule.instruction,
-      conditions: newRule.conditions,
+      conditions: messageConditions(...newRule.conditions),
       scope: { kind: "projects", projects: [project] },
     });
     expect(saved).toMatchObject({ live: { scope: { kind: "all" } }, draft: { scope: { kind: "projects", projects: [project] } } });
@@ -367,7 +400,7 @@ describe("a rule's scope", () => {
 
   it("lists each rule with the scope in force, and narrows the list by it", async () => {
     const project = await see("a-project");
-    const onlyHere = { instruction: "X.", conditions: ["Y."], scope: { kind: "projects", projects: [project] } };
+    const onlyHere = { instruction: "X.", conditions: messageConditions("Y."), scope: { kind: "projects", projects: [project] } };
     // Published for all projects, with a draft for one project: the published scope is in force.
     const everywhere = await create({ name: "Everywhere" });
     await app.json("POST", `/api/rules/${everywhere.id}/publish`, {});
@@ -389,7 +422,7 @@ describe("a rule's scope", () => {
   it("refuses a malformed scope and a project Sally has not seen", async () => {
     const rule = await create();
     const save = (scope: unknown) =>
-      app.call("PUT", `/api/rules/${rule.id}/draft`, { instruction: "X.", conditions: ["Y."], scope });
+      app.call("PUT", `/api/rules/${rule.id}/draft`, { instruction: "X.", conditions: messageConditions("Y."), scope });
 
     expect((await save("all")).status).toBe(400);
     expect((await save({ kind: "projects", projects: [1] })).status).toBe(400);
@@ -524,7 +557,7 @@ describe("the import", () => {
     const proposed = becomes!.rules[0]!;
     await app.json("PUT", `/api/rules/${proposed.ruleId}/draft`, {
       instruction: "Give the localhost link.",
-      conditions: ["The message asks for a visual change."],
+      conditions: messageConditions("The message asks for a visual change."),
     });
     const kept = await app.json<ImportDetail>("POST", `/api/proposed-rules/${proposed.id}/keep`, {});
     expect(kept.passages[1]!.rules[0]).toMatchObject({
@@ -550,9 +583,8 @@ describe("the import", () => {
 
     const response = await app.call("POST", `/api/passages/${stays!.id}/rules`, {
       name: "Brief answers",
-      checkType: "reply",
       instruction: "Shorten the reply.",
-      conditions: ["The reply runs past three paragraphs."],
+      conditions: conditionsFor("reply", ["The reply runs past three paragraphs."]),
     });
     expect(response.status).toBe(201);
     const written = (await response.json()) as ImportDetail;
