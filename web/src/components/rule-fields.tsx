@@ -57,10 +57,12 @@ interface ConditionSwitchProps {
   condition: string;
   checked: boolean;
   disabled: boolean;
+  /** Said in the tooltip after what the switch means: how this switch takes effect. */
+  note?: string;
   onChange: (checked: boolean) => void;
 }
 
-function ConditionSwitch({ id, label, condition, checked, disabled, onChange }: ConditionSwitchProps) {
+export function ConditionSwitch({ id, label, condition, checked, disabled, note, onChange }: ConditionSwitchProps) {
   return (
     <div className="flex items-center gap-2">
       <Switch
@@ -73,7 +75,7 @@ function ConditionSwitch({ id, label, condition, checked, disabled, onChange }: 
       />
       <LabelWithHelp htmlFor={id} label={label} labelClassName="font-normal" about={`${label} switch`}>
         {label === "Message" ? ruleHelp.messageSwitch : ruleHelp.replySwitch}
-        {disabled && <p>{ruleHelp.publishedSwitch}</p>}
+        {note && <p>{note}</p>}
       </LabelWithHelp>
     </div>
   );
@@ -136,6 +138,7 @@ export function ConditionsField({ conditions, published, onChange }: ConditionsF
                   condition={name}
                   checked={condition.message}
                   disabled={fixed}
+                  note={fixed ? ruleHelp.publishedSwitch : undefined}
                   onChange={(message) => change(index, { message }, null)}
                 />
                 <ConditionSwitch
@@ -144,6 +147,7 @@ export function ConditionsField({ conditions, published, onChange }: ConditionsF
                   condition={name}
                   checked={condition.reply}
                   disabled={fixed}
+                  note={fixed ? ruleHelp.publishedSwitch : undefined}
                   onChange={(reply) => change(index, { reply }, null)}
                 />
               </div>

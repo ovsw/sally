@@ -351,6 +351,38 @@ describe("history and the rest of a rule's life", () => {
     expect(JSON.parse(output).hookSpecificOutput.additionalContext).toContain("Second wording.");
   });
 
+  it("switches a condition at once, the rule going off with its last one and refusing to come on without one", async () => {
+    const rule = await create();
+    await publish(rule.id);
+    await reword(rule.id, "A draft, not a version.");
+    const [condition] = (await app.json<RuleDetail>("GET", `/api/rules/${rule.id}`)).live!.conditions;
+    const path = (type: string) => `/api/rules/${rule.id}/conditions/${condition!.id}/${type}`;
+
+    const withReply = await app.json<RuleDetail>("PUT", path("reply"), { on: true });
+    expect(withReply).toMatchObject({ on: true, checkTypes: ["message", "reply"], live: { conditions: [{ message: true, reply: true }] } });
+    expect(withReply.versions).toHaveLength(1);
+    expect(withReply.draft).toMatchObject({ instruction: "A draft, not a version." });
+
+    await app.json("PUT", path("reply"), { on: false });
+    const off = await app.json<RuleDetail>("PUT", path("message"), { on: false });
+    expect(off).toMatchObject({ on: false, live: { conditions: [{ message: false, reply: false }] } });
+    expect(await sentToJev()).toEqual({ output: "", conditions: [] });
+
+    const refused = await app.call("POST", `/api/rules/${rule.id}/on`, {});
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({
+      error: "None of this rule's conditions is on. Switch a condition's Message or Reply on first, then the rule.",
+    });
+    // Switching a condition on leaves the rule off until it is switched on.
+    expect(await app.json<RuleDetail>("PUT", path("message"), { on: true })).toMatchObject({ on: false });
+    expect(await app.json<RuleDetail>("POST", `/api/rules/${rule.id}/on`, {})).toMatchObject({ on: true });
+    expect((await sentToJev()).conditions).toEqual(newRule.conditions);
+
+    expect((await app.call("PUT", path("message"), { on: "yes" })).status).toBe(400);
+    expect((await app.call("PUT", path("both"), { on: true })).status).toBe(404);
+    expect((await app.call("PUT", `/api/rules/${rule.id}/conditions/999/message`, { on: true })).status).toBe(404);
+  });
+
   it("deletes a rule", async () => {
     const rule = await create();
     await publish(rule.id);

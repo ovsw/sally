@@ -434,6 +434,29 @@ describe("a rule in both checks", () => {
     ]);
   });
 
+  it("uses a condition's switches as they are at each check, once switched", async () => {
+    const ruleId = bothChecks();
+    const matcher = standInMatcher({ [forMessage]: 0.9, [forReply]: 0.9 });
+    const [messageCondition, replyCondition] = sandbox.withRules((rules) => rules.getRule(ruleId).live!.conditions);
+    sandbox.withRules((rules) => {
+      rules.setConditionSwitch(ruleId, messageCondition!.id, "message", false);
+      rules.setConditionSwitch(ruleId, replyCondition!.id, "message", true);
+    });
+
+    const attached = await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
+    sandbox.withRules((rules) => rules.setConditionSwitch(ruleId, replyCondition!.id, "reply", false));
+    const sentBack = await runReplyHook(stopInput({ last_assistant_message: "Done." }), { env: sandbox.env, matcher });
+
+    expect(attached).toContain(instruction);
+    expect(sentBack).toBe("");
+    // The switched-off condition got no score in either check.
+    expect(scored()).toEqual([{ check_type: "message", text: forReply }]);
+    expect(checks()).toMatchObject([
+      { check_type: "message", outcome: "attached" },
+      { check_type: "reply", outcome: "nothing" },
+    ]);
+  });
+
   it("judges each check at its own cutoff", async () => {
     bothChecks();
     sandbox.withRules((rules) => rules.updateSettings({ cutoff: 0.5, replyCutoff: 0.8 }));

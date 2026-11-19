@@ -199,7 +199,10 @@ async function handleDecision(
  * - POST /api/rules/:id/publish                          publish the draft
  * - DELETE /api/rules/:id/draft                          discard the draft
  * - POST /api/rules/:id/versions/:number/draft           start a draft from a published version
- * - POST /api/rules/:id/off, POST /api/rules/:id/on      switch the rule off or on
+ * - POST /api/rules/:id/off, POST /api/rules/:id/on      switch the rule off or on (on is refused while
+ *                                                        none of its conditions is on)
+ * - PUT  /api/rules/:id/conditions/:conditionId/message|reply
+ *                                                        set a published condition's switch at once { on }
  * - DELETE /api/rules/:id                                delete the rule
  * - GET  /api/rules/:id/analytics                        how the rule has behaved
  * - GET  /api/rules/:id/cases                            the rule's saved cases
@@ -328,6 +331,17 @@ export async function handleApi(
       await readJson(req);
       if (parts[2] === "off") rules.switchOff(id);
       else rules.switchOn(id);
+      return send(res, 200, rules.getRule(id));
+    }
+    if (id !== undefined && parts.length === 5 && parts[2] === "conditions" && method === "PUT") {
+      const conditionId = Number(parts[3]);
+      const checkType = parts[4];
+      if (!Number.isSafeInteger(conditionId) || (checkType !== "message" && checkType !== "reply")) {
+        throw new HttpError(404, "Not found.");
+      }
+      const on = (await readJson(req))["on"];
+      if (typeof on !== "boolean") throw new HttpError(400, '"on" must be true or false.');
+      rules.setConditionSwitch(id, conditionId, checkType, on);
       return send(res, 200, rules.getRule(id));
     }
     if (id !== undefined && parts.length === 3 && parts[2] === "looks-fine" && method === "POST") {

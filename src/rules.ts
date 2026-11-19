@@ -313,8 +313,19 @@ export interface RulesService extends AnalyticsQueries, Flags {
   discardDraft(ruleId: number): void;
   /** Switches the rule off: it keeps its versions and draft, and the engine skips it. */
   switchOff(ruleId: number): void;
-  /** Switches the rule back on. */
+  /**
+   * Switches the rule back on. Refuses a published rule none of whose live
+   * conditions is on: a condition has to be switched on first.
+   */
   switchOn(ruleId: number): void;
+  /**
+   * Sets one switch of a published condition, at once: no draft, no new
+   * version, and the next check uses it. Switching off the last live condition
+   * that is on switches the rule off in the same change; switching a condition
+   * on never switches the rule on. Refuses a condition not yet published,
+   * whose switches are set in the draft.
+   */
+  setConditionSwitch(ruleId: number, conditionId: number, checkType: CheckType, on: boolean): void;
   /** Deletes the rule with all its versions and its draft. */
   deleteRule(ruleId: number): void;
   /**
@@ -451,10 +462,6 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     const owned = new Set(
       (db.prepare("SELECT id FROM conditions WHERE rule_id = ?").all(ruleId) as { id: number }[]).map((row) => row.id),
     );
-    const isPublished = db.prepare(
-      `SELECT 1 FROM version_conditions vc JOIN versions v ON v.id = vc.version_id
-        WHERE vc.condition_id = ? AND v.number IS NOT NULL`,
-    );
     const setSwitches = db.prepare("UPDATE conditions SET message = ?, reply = ? WHERE id = ?");
     const addCondition = db.prepare("INSERT INTO conditions (rule_id, message, reply) VALUES (?, ?, ?)");
     const addWording = db.prepare(
@@ -467,7 +474,7 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       if (!text) continue;
       let id = condition.id;
       if (id !== undefined && owned.has(id)) {
-        if (hasSwitches(condition) && !isPublished.get(id)) {
+        if (hasSwitches(condition) && !isPublished(id)) {
           setSwitches.run(Number(condition.message), Number(condition.reply), id);
         }
       } else if (hasSwitches(condition)) {
@@ -486,6 +493,31 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     const addProject = db.prepare("INSERT INTO version_projects (version_id, project_id) VALUES (?, ?)");
     for (const id of ids) addProject.run(versionId, id);
     dropUnusedConditions(ruleId);
+  }
+
+  /** True when a published version, live or older, holds the condition: its switches are no longer the draft's. */
+  function isPublished(conditionId: number): boolean {
+    return (
+      db
+        .prepare(
+          `SELECT 1 FROM version_conditions vc JOIN versions v ON v.id = vc.version_id
+            WHERE vc.condition_id = ? AND v.number IS NOT NULL`,
+        )
+        .get(conditionId) !== undefined
+    );
+  }
+
+  /** How many conditions of the rule's live version are on for a check; null for a rule never published. */
+  function liveConditionsOn(ruleId: number): number | null {
+    const version = live(ruleId);
+    if (!version) return null;
+    const { count } = db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM version_conditions vc JOIN conditions c ON c.id = vc.condition_id
+          WHERE vc.version_id = ? AND (c.message = 1 OR c.reply = 1)`,
+      )
+      .get(version.id) as { count: number };
+    return count;
   }
 
   /** Deletes the rule's conditions that no version holds: those only a replaced or discarded draft had. */
@@ -748,7 +780,39 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     },
 
     switchOn(ruleId) {
-      setSwitchedOff(ruleId, false);
+      transaction(db, () => {
+        requireRule(ruleId);
+        // Conditions switched off on purpose are not switched back on with the rule.
+        if (liveConditionsOn(ruleId) === 0) {
+          throw new RuleError(
+            "None of this rule's conditions is on. Switch a condition's Message or Reply on first, then the rule.",
+          );
+        }
+        setSwitchedOff(ruleId, false);
+      });
+    },
+
+    setConditionSwitch(ruleId, conditionId, checkType, on) {
+      if (!CHECK_TYPES.includes(checkType)) throw new RuleError("A condition's switches are Message and Reply.");
+      if (typeof on !== "boolean") throw new RuleError("A switch is on or off.");
+      transaction(db, () => {
+        const rule = requireRule(ruleId);
+        const condition = db
+          .prepare("SELECT message, reply FROM conditions WHERE id = ? AND rule_id = ?")
+          .get(conditionId, ruleId) as { message: number; reply: number } | undefined;
+        if (!condition) throw new RuleNotFoundError(`This rule has no condition ${conditionId}.`);
+        if (!isPublished(conditionId)) {
+          throw new RuleError("This condition is not published yet. Set its switches in the draft.");
+        }
+        const wasOn = condition.message === 1 || condition.reply === 1;
+        // The column name comes from CHECK_TYPES, never from the caller's text.
+        const column = checkType === "message" ? "message" : "reply";
+        db.prepare(`UPDATE conditions SET ${column} = ? WHERE id = ?`).run(Number(on), conditionId);
+        // The rule's switch tells the truth: with no condition on, the rule is off.
+        if (wasOn && !on && rule.switched_off === 0 && liveConditionsOn(ruleId) === 0) {
+          db.prepare("UPDATE rules SET switched_off = 1 WHERE id = ?").run(ruleId);
+        }
+      });
     },
 
     deleteRule(ruleId) {
