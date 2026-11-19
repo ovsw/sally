@@ -628,8 +628,13 @@ export function RuleScreen({ id }: { id: number }) {
     });
 
   const publishNow = async () => {
-    const result = await publish(id);
-    setRule(result.rule);
+    // In line with scope changes, so an older publish response cannot replace
+    // a scope chosen while publishing.
+    const result = await saver.inLine(async () => {
+      const published = await publish(id);
+      setRule(published.rule);
+      return published;
+    });
     // Edits typed while publishing stay in the form and are saved as the
     // next draft.
     if (!saver.hasUnsent()) {
@@ -702,7 +707,7 @@ export function RuleScreen({ id }: { id: number }) {
 
   // In line with the saves, so the last scope chosen is what is stored and shown.
   const saveScope = async (scope: Scope) => {
-    setRule(await saver.inLine(() => setScope(id, scope)));
+    await saver.inLine(async () => setRule(await setScope(id, scope)));
   };
 
   const remove = () =>
