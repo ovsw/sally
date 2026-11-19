@@ -11,6 +11,7 @@ import {
   createRulesService,
   type DraftCondition,
   type DraftContent,
+  type RuleDetail,
   RuleError,
   type RuleFilter,
   type RulesService,
@@ -33,7 +34,11 @@ export const RULES_USAGE = `Usage:
   node src/cli.ts rules edit RULE [--name NAME] [--instruction TEXT]
                                   [--condition TEXT ... [--check-type message|reply]]
 
-RULE is a rule's id or its exact name. Output is JSON.
+RULE is a rule's id or its exact name. Output is JSON: each rule with its
+conditions, and each condition with its Message and Reply switches, which say
+the checks it is used in. list gives the conditions in force (the published
+version's, or the draft's before the first publish); show gives the published
+version beside the draft.
 create makes a draft whose conditions are on for the --check-type check. edit
 changes the rule's draft, starting one from the published version if there is
 none. --condition replaces all of the draft's conditions: one worded as before
@@ -123,12 +128,28 @@ function list(rules: RulesService, args: string[]): unknown {
     on: either(values.on, values.off, "--on", "--off"),
     hasDraft: either(values["with-draft"], values["without-draft"], "--with-draft", "--without-draft"),
   };
-  return rules.listRules(filter);
+  return rules.listRules(filter).map((summary) => {
+    const { id, name, published, on, hasDraft, scope } = summary;
+    // In force: the published version, or the draft before the first publish.
+    const { live, draft } = rules.getRule(id);
+    const inForce = live ?? draft!;
+    return { id, name, published, on, hasDraft, scope, instruction: inForce.instruction, conditions: inForce.conditions };
+  });
+}
+
+/**
+ * A rule as the commands print it. A rule has no check type: the checks it is
+ * in are its conditions' switches, which each condition shows.
+ */
+function detail(rules: RulesService, ruleId: number): Omit<RuleDetail, "checkTypes"> {
+  const rule: Partial<RuleDetail> = rules.getRule(ruleId);
+  delete rule.checkTypes;
+  return rule as Omit<RuleDetail, "checkTypes">;
 }
 
 function show(rules: RulesService, args: string[]): unknown {
   const { positionals } = parse(args, {});
-  return rules.getRule(resolveRule(rules, onePositional(positionals, "show")));
+  return detail(rules, resolveRule(rules, onePositional(positionals, "show")));
 }
 
 function create(rules: RulesService, args: string[]): unknown {
@@ -141,7 +162,7 @@ function create(rules: RulesService, args: string[]): unknown {
     instruction: values.instruction!,
     conditions: conditionsFor(oneOf(values["check-type"], CHECK_TYPES, "--check-type")!, values.condition!),
   });
-  return rules.getRule(ruleId);
+  return detail(rules, ruleId);
 }
 
 function edit(rules: RulesService, args: string[]): unknown {
@@ -165,7 +186,7 @@ function edit(rules: RulesService, args: string[]): unknown {
       : base.conditions.map(({ id, text }) => ({ id, text })),
   };
   rules.saveDraft(ruleId, content);
-  return rules.getRule(ruleId);
+  return detail(rules, ruleId);
 }
 
 /** The checks these conditions are on for: the draft's own, which can differ from the live version's. */

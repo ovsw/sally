@@ -164,6 +164,39 @@ describe("an evaluation run", () => {
     });
   });
 
+  it("scores each condition only against texts of the check types it is on for", async () => {
+    const ASKS = "The user's message asks for a visual change.";
+    const NO_LINK = "The reply reports a visual change and gives no local link.";
+    const LAYOUT = "The text is about a page's layout.";
+    const OFF = "The text mentions colours.";
+    const file = evaluationFile({
+      rules: [
+        {
+          name: "Local link",
+          conditions: [
+            { text: ASKS, message: true },
+            { text: NO_LINK, reply: true },
+            { text: LAYOUT, message: true, reply: true },
+            { text: OFF, message: false, reply: false },
+          ],
+        },
+      ],
+      cases: [
+        { label: "asks", check: "message", text: "Make the button blue.", expected: ["Local link"] },
+        { label: "done", check: "reply", text: "Done: the button is blue.", expected: ["Local link"] },
+      ],
+    });
+    const matcher = standInMatcher({ [ASKS]: 0.9, [NO_LINK]: 0.9, [OFF]: 0.99 });
+    const result = await report([file], matcher);
+
+    expect(matcher.calls.map((call) => [call.text, call.conditions.map((c) => c.text)])).toEqual([
+      ["Make the button blue.", [ASKS, LAYOUT]],
+      ["Done: the button is blue.", [NO_LINK, LAYOUT]],
+    ]);
+    expect(result.conditions).toEqual({ message: { total: 2, padding: 0 }, reply: { total: 2, padding: 0 } });
+    expect(result.summary).toMatchObject({ right: 2, wrong: 0, missed: 0 });
+  });
+
   it("never touches the user's database", async () => {
     await report([example], exampleMatcher());
     expect(existsSync(databasePath(sandbox.env))).toBe(false);
@@ -232,7 +265,30 @@ describe("the evaluation file", () => {
     [
       "a rule of the other check type",
       { rules, cases: [{ check: "reply", text: "Done.", expected: ["Brief"] }] },
-      'expects the message rule "Brief"',
+      'expects "Brief", which has no condition on for reply',
+    ],
+    [
+      "a rule whose conditions are only on for the other check type",
+      {
+        rules: [{ name: "Brief", conditions: [{ text: "The message asks for a short answer.", message: true }] }],
+        cases: [{ check: "reply", text: "Done.", expected: ["Brief"] }],
+      },
+      'expects "Brief", which has no condition on for reply',
+    ],
+    [
+      "a condition given as text in a rule with no check",
+      { rules: [{ name: "Brief", conditions: ["C."] }], cases: [{ check: "message", text: "Hi", expected: [] }] },
+      `needs the rule's "check"`,
+    ],
+    [
+      "a rule with no condition on",
+      { rules: [{ name: "Brief", conditions: [{ text: "C." }] }], cases: [{ check: "message", text: "Hi", expected: [] }] },
+      'needs a condition on for "message" or "reply"',
+    ],
+    [
+      "a switch that is not true or false",
+      { rules: [{ name: "Brief", conditions: [{ text: "C.", message: "yes" }] }], cases: [{ check: "message", text: "Hi", expected: [] }] },
+      `a condition's "message" is true or false`,
     ],
     ["a missing expected list", { rules, cases: [{ check: "message", text: "Hi there" }] }, '"expected"'],
     ["a bad check type", { rules: [{ ...rules[0], check: "tool" }], cases: [{ check: "message", text: "Hi", expected: [] }] }, '"check" is "message" or "reply"'],
