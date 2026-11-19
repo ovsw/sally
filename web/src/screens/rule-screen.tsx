@@ -294,6 +294,36 @@ function DraftForm({
   );
 }
 
+/**
+ * `content` with each new condition given the id the server gave it in
+ * `published`, so a later save keeps that condition instead of starting
+ * another. A new condition is the published one with the same wording, or,
+ * when none was added or removed since, the one in the same place.
+ */
+const withPublishedIds = (content: DraftContent, published: ConditionView[]): DraftContent => {
+  const taken = new Set(content.conditions.map((condition) => condition.id));
+  const samePlaces = content.conditions.length === published.length;
+  const conditions = content.conditions.map((condition, index) => {
+    if (condition.id !== undefined) return condition;
+    const free = (candidate: ConditionView | undefined) => candidate !== undefined && !taken.has(candidate.id);
+    const sameWording = published.find((candidate) => free(candidate) && candidate.text === condition.text.trim());
+    const match = sameWording ?? (samePlaces && free(published[index]) ? published[index] : undefined);
+    if (!match) return condition;
+    taken.add(match.id);
+    return { ...condition, id: match.id };
+  });
+  return { ...content, conditions };
+};
+
+/** `content` with every published condition's switches as they are in force: a draft cannot change those. */
+const withPublishedSwitches = (content: DraftContent, published: ConditionView[]): DraftContent => ({
+  ...content,
+  conditions: content.conditions.map((condition) => {
+    const live = published.find((candidate) => candidate.id === condition.id);
+    return live ? { ...condition, message: live.message, reply: live.reply } : condition;
+  }),
+});
+
 const contentOf = (rule: RuleDetail): DraftContent => {
   const source = rule.draft ?? rule.live;
   return {
@@ -538,7 +568,8 @@ export function RuleScreen({ id }: { id: number }) {
       // longer has, so it comes back as a draft.
       const live = ruleRef.current?.live ?? null;
       if (step.hadDraft || !live || live.number !== step.liveNumber) {
-        saveSoon(step.content);
+        // An undo cannot move the switches of a condition published since.
+        saveSoon(live ? withPublishedSwitches(step.content, live.conditions) : step.content);
       } else {
         await dropDraft();
       }
@@ -573,6 +604,11 @@ export function RuleScreen({ id }: { id: number }) {
     if (!saver.hasUnsent()) {
       setDraft(contentOf(result.rule));
       setSave({ kind: "idle" });
+    } else {
+      // The conditions just published have ids now; the edits kept must use them.
+      const adopt = (content: DraftContent) => withPublishedIds(content, result.rule.live?.conditions ?? []);
+      setDraft((current) => current && adopt(current));
+      saver.amendUnsent(adopt);
     }
   };
 

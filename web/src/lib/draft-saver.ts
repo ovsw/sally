@@ -39,6 +39,8 @@ export interface DraftSaver {
   replacing: (replace: () => Promise<void>) => Promise<void>;
   /** Whether edits are waiting to be sent. */
   hasUnsent: () => boolean;
+  /** Changes the edits waiting to be sent, if any, before they go. */
+  amendUnsent: (amend: (content: DraftContent) => DraftContent) => void;
   /** Runs `run` in line with the saves, so a save answered earlier cannot undo what it shows. */
   inLine: <T>(run: () => Promise<T>) => Promise<T>;
 }
@@ -112,6 +114,10 @@ export function useDraftSaver(ruleId: number, onSaved: (rule: RuleDetail) => voi
 
   const hasUnsent = React.useCallback(() => latest.current !== null, []);
 
+  const amendUnsent = React.useCallback((amend: (content: DraftContent) => DraftContent) => {
+    if (latest.current) latest.current = amend(latest.current);
+  }, []);
+
   const inLine = React.useCallback(<T,>(run: () => Promise<T>): Promise<T> => {
     const before = inFlight.current;
     const result = before.then(run);
@@ -138,5 +144,5 @@ export function useDraftSaver(ruleId: number, onSaved: (rule: RuleDetail) => voi
     };
   }, [ruleId, flush]);
 
-  return { state, setState, saveSoon, flush, replacing, hasUnsent, inLine };
+  return { state, setState, saveSoon, flush, replacing, hasUnsent, amendUnsent, inLine };
 }
