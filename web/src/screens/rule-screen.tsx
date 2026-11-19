@@ -14,6 +14,7 @@ import * as React from "react";
 
 import { RescoreDialog } from "@/components/rescore-dialog";
 import {
+  ConditionChecks,
   ConditionsField,
   InstructionField,
   NameField,
@@ -84,20 +85,6 @@ interface UndoStep {
   content: DraftContent;
   hadDraft: boolean;
   liveNumber: number | null;
-}
-
-/** Which checks use a condition, as small badges; "Off" when neither does. */
-function ConditionChecks({ condition }: { condition: ConditionView }) {
-  const on = [condition.message && "Message", condition.reply && "Reply"].filter(Boolean) as string[];
-  return (
-    <span className="flex shrink-0 gap-1">
-      {(on.length ? on : ["Off"]).map((label) => (
-        <Badge key={label} variant={label === "Off" ? "secondary" : "outline"} className="font-normal">
-          {label}
-        </Badge>
-      ))}
-    </span>
-  );
 }
 
 function PublishedVersion({ rule }: { rule: RuleDetail }) {

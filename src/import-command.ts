@@ -36,11 +36,13 @@ The JSON is a list of passages, or an object with a "passages" list:
      "verdict": "becomes_rule" | "always_rule" | "too_vague",
      "reason": "why, written as a lesson",
      "similarRule": "optional note: looks like an existing rule",
-     "rules": [{ "name": "...", "checkType": "message" | "reply",
-                 "instruction": "...", "conditions": ["..."] }] }]
+     "rules": [{ "name": "...", "instruction": "...",
+                 "conditions": [{ "text": "...", "message": true, "reply": false }] }] }]
 A passage that becomes a rule has one or more rules; one that stays has none.
-checkType is message when left out. Each rule is created as a draft. Either
-all the passages are added or none is.
+Each condition's "message" and "reply" switches say which checks use it. A
+condition may also be given as its text alone. A switch left out comes from the
+rule's "checkType" ("message" or "reply"), which is message when left out too.
+Each rule is created as a draft. Either all the passages are added or none is.
 show prints the import with the user's decisions. Each passage has "removal":
 "all" when every rule it produced is live, so the whole passage can leave the
 rules file; "part" when only some are, so the rest of it stays; "none"
