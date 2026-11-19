@@ -14,12 +14,17 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import type { CaseResult, RescoreResult } from "@/lib/api";
-import { formatScore } from "@/lib/format";
+import { CHECK_LABELS, formatScore } from "@/lib/format";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
-function CaseRow({ result, cutoff }: { result: CaseResult; cutoff: number }) {
+function CaseRow({ result }: { result: CaseResult }) {
   const shouldMatch = result.case.expected === "should_match";
+  const check = CHECK_LABELS[result.case.checkType];
+  const highest = result.scores.reduce<CaseResult["scores"][number] | null>(
+    (top, score) => (top === null || score.score > top.score ? score : top),
+    null,
+  );
   return (
     <li className="space-y-1.5 py-3 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-2">
@@ -35,14 +40,20 @@ function CaseRow({ result, cutoff }: { result: CaseResult; cutoff: number }) {
           </Badge>
         )}
         <span className="text-xs text-muted-foreground">
-          {shouldMatch ? "Should match" : "Should not match"} ·{" "}
-          {result.matched ? "matches" : "does not match"} at {formatScore(result.best)} (cutoff{" "}
-          {formatScore(cutoff)})
+          {check} · {shouldMatch ? "Should match" : "Should not match"} ·{" "}
+          {result.best === null
+            ? `does not match: no condition is on for ${check.toLowerCase()}`
+            : `${result.matched ? "matches" : "does not match"} at ${formatScore(result.best)} (cutoff ${formatScore(result.cutoff)})`}
         </span>
       </div>
       <p className="line-clamp-3 text-sm whitespace-pre-wrap" title={result.case.text}>
         {result.case.text}
       </p>
+      {highest && (
+        <p className="text-xs text-muted-foreground">
+          Highest condition: <span className="text-foreground">{highest.condition}</span>
+        </p>
+      )}
     </li>
   );
 }
@@ -72,8 +83,9 @@ export function RescoreDialog({
                 : `${result.failed} of ${plural(result.cases.length, "saved case")} fail`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Jev scored the draft's conditions against each case this rule has kept. A case passes
-              when the draft matches it as expected.
+              Jev scored each case this rule has kept against the draft's conditions for that
+              case's check, at that check's cutoff. A case passes when the draft matches it as
+              expected.
             </AlertDialogDescription>
           </AlertDialogHeader>
         )}
@@ -95,7 +107,7 @@ export function RescoreDialog({
             {[...result.cases]
               .sort((a, b) => Number(a.passed) - Number(b.passed))
               .map((caseResult) => (
-                <CaseRow key={caseResult.case.id} result={caseResult} cutoff={result.cutoff} />
+                <CaseRow key={caseResult.case.id} result={caseResult} />
               ))}
           </ul>
         )}

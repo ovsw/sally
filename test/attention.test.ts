@@ -179,6 +179,55 @@ describe("needs attention", () => {
     ]);
   });
 
+  describe("a rule in both checks", () => {
+    const ruleInBothChecks = () =>
+      sandbox.liveRule({
+        name: "Local link",
+        conditions: [
+          { text: "Asks for a visual change.", message: true, reply: false },
+          { text: "Reports a change with no link.", message: false, reply: true },
+        ],
+      });
+
+    it("judges each weak match at the cutoff of the check it came from", async () => {
+      thresholds({ busyShare: 1, closeMargin: 0.05, cutoff: 0.6, replyCutoff: 0.8 });
+      const ruleId = ruleInBothChecks();
+      // Far above the message cutoff, though close above the reply cutoff: not weak.
+      await message({ "Asks for a visual change.": 0.82 });
+      // Close above the reply cutoff, though far above the message cutoff: weak.
+      await reply({ "Reports a change with no link.": 0.83 });
+      await message({});
+
+      expect(attention()).toMatchObject([
+        {
+          ruleId,
+          checkTypes: ["message", "reply"],
+          reasons: [{ kind: "weak_matches", weakMatches: 1, matches: 2 }],
+        },
+      ]);
+    });
+
+    it("is listed once, with the reasons from both checks together", async () => {
+      thresholds({ quietChecks: 3 });
+      const ruleId = ruleInBothChecks();
+      await message({});
+      await reply({});
+      expect(attention()).toEqual([]);
+
+      await message({});
+
+      expect(attention()).toEqual([
+        {
+          ruleId,
+          name: "Local link",
+          checkTypes: ["message", "reply"],
+          versionNumber: 1,
+          reasons: [{ kind: "never_matches", checks: 3, summary: "No matches in its last 3 checks." }],
+        },
+      ]);
+    });
+  });
+
   it("starts a rule's record afresh when a new version is published", async () => {
     thresholds({ quietChecks: 2 });
     const ruleId = sandbox.liveRule({ name: "Reworded", conditions: ["Old wording."] });

@@ -27,7 +27,7 @@ import {
   type SavedCase,
   type Verdict,
 } from "@/lib/api";
-import { formatScore, formatTime } from "@/lib/format";
+import { CHECK_LABELS, formatScore, formatTime } from "@/lib/format";
 
 function Section({
   title,
@@ -131,7 +131,7 @@ function ChecksTable<Row extends RuleCheckView>({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="pl-4">Time</TableHead>
+          <TableHead className="pl-4">Time and check</TableHead>
           <TableHead>Version</TableHead>
           <TableHead>Text checked</TableHead>
           <TableHead>Highest condition</TableHead>
@@ -144,6 +144,8 @@ function ChecksTable<Row extends RuleCheckView>({
           <TableRow key={row.checkId}>
             <TableCell className="pl-4 align-top whitespace-nowrap text-muted-foreground">
               {formatTime(row.createdAt)}
+              {/* The check the match came from: a rule can take part in both. */}
+              <span className="block text-xs text-foreground">{CHECK_LABELS[row.checkType]}</span>
               {row.project && (
                 <span className="block max-w-[160px] truncate text-xs" title={row.project}>
                   {row.project}
