@@ -77,6 +77,10 @@ A check of the user's message, made before Claude starts work.
 **Reply check**:
 A check of Claude's final reply, made before the turn ends.
 
+**Trial**:
+Scoring text the user typed against conditions they wrote or copied from a rule, outside any check. It never changes the rule, and nothing is recorded.
+_Avoid_: Test, playground run, check
+
 **Pasted text**:
 Text the user pasted into a message, as their tool marks it. A message check leaves it out and puts a short note in its place, so rules are checked against what the user wrote.
 _Avoid_: Attachment, document
