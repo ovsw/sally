@@ -341,7 +341,8 @@ full path: `node "<Sally's folder>/src/cli.ts" <command>`.
 
 An agent can read your rules and prepare drafts; it cannot publish, switch off
 or delete a rule. Those stay with you in the web app, where the agent's drafts
-show up like your own. Output is JSON.
+show up like your own. Output is JSON: each rule with its conditions, and each
+condition with its Message and Reply switches.
 
 ```sh
 node src/cli.ts rules list [--search TEXT] [--check-type message|reply] \

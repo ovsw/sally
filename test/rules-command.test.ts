@@ -40,16 +40,54 @@ function ruleWithDraft(): number {
 }
 
 describe("reading rules", () => {
-  it("lists every rule as JSON with its check type, published, on and draft", () => {
+  it("lists every rule as JSON with its conditions in force, each with its two switches, and no check type", () => {
     const linksId = ruleWithDraft();
     const draftId = sandbox.withRules(
       (rules) =>
         rules.createRule({ name: "Brief", instruction: "Be brief.", conditions: conditionsFor("reply", ["The reply is long."]) })
           .ruleId,
     );
+    const bothId = sandbox.liveRule({
+      name: "Visual",
+      instruction: "Give the localhost link.",
+      conditions: [
+        { text: "The message asks for a visual change.", message: true, reply: false },
+        { text: "The reply gives no local link.", message: false, reply: true },
+        { text: "The text is about a page's layout.", message: true, reply: true },
+      ],
+    });
+    const common = { scope: { kind: "all" }, on: true, hasDraft: true };
     expect(sallyJson("list")).toEqual([
-      { id: draftId, name: "Brief", checkTypes: ["reply"], published: false, scope: { kind: "all" }, on: true, hasDraft: true },
-      { id: linksId, name: "Links", checkTypes: ["message"], published: true, scope: { kind: "all" }, on: true, hasDraft: true },
+      {
+        id: draftId,
+        name: "Brief",
+        published: false,
+        ...common,
+        instruction: "Be brief.",
+        conditions: [{ id: expect.any(Number), text: "The reply is long.", message: false, reply: true }],
+      },
+      {
+        id: linksId,
+        name: "Links",
+        published: true,
+        ...common,
+        // The published version's, not the draft's.
+        instruction: "Give a local link.",
+        conditions: [{ id: expect.any(Number), text: "The reply is visual.", message: true, reply: false }],
+      },
+      {
+        id: bothId,
+        name: "Visual",
+        published: true,
+        ...common,
+        hasDraft: false,
+        instruction: "Give the localhost link.",
+        conditions: [
+          { id: expect.any(Number), text: "The message asks for a visual change.", message: true, reply: false },
+          { id: expect.any(Number), text: "The reply gives no local link.", message: false, reply: true },
+          { id: expect.any(Number), text: "The text is about a page's layout.", message: true, reply: true },
+        ],
+      },
     ]);
   });
 
@@ -59,13 +97,16 @@ describe("reading rules", () => {
     const names = (...args: string[]) => sallyJson("list", ...args).map((rule: { name: string }) => rule.name);
     expect(names("--search", "localhost")).toEqual(["Links"]);
     expect(names("--check-type", "reply")).toEqual(["Brief"]);
+    sandbox.liveRule({ name: "Both", conditions: [{ text: "The text is about layout.", message: true, reply: true }] });
+    expect(names("--check-type", "message")).toEqual(["Both", "Links"]);
+    expect(names("--check-type", "reply")).toEqual(["Both", "Brief"]);
     expect(names("--unpublished")).toEqual([]);
-    expect(names("--published", "--without-draft")).toEqual(["Brief"]);
-    expect(names("--on")).toEqual(["Brief", "Links"]);
+    expect(names("--published", "--without-draft")).toEqual(["Both", "Brief"]);
+    expect(names("--on")).toEqual(["Both", "Brief", "Links"]);
     expect(names("--off")).toEqual([]);
     expect(sally("list", "--on", "--off")).toMatchObject({ status: 1, stderr: expect.stringContaining("Use --on or --off, not both.") });
     expect(names("--with-draft")).toEqual(["Links"]);
-    expect(names("--without-draft")).toEqual(["Brief"]);
+    expect(names("--without-draft")).toEqual(["Both", "Brief"]);
   });
 
   it("shows one rule, by id or by name, with its live version beside its draft", () => {
@@ -73,7 +114,6 @@ describe("reading rules", () => {
     const expected = {
       id: ruleId,
       name: "Links",
-      checkTypes: ["message"],
       published: true,
       hasDraft: true,
       live: {
@@ -90,6 +130,7 @@ describe("reading rules", () => {
     };
     expect(sallyJson("show", String(ruleId))).toMatchObject(expected);
     expect(sallyJson("show", "Links")).toMatchObject(expected);
+    expect(sallyJson("show", "Links")).not.toHaveProperty("checkTypes");
   });
 
   it("fails clearly for a rule that does not exist", () => {
@@ -113,7 +154,8 @@ describe("preparing drafts", () => {
       "--condition",
       "The reply hands back a page without a link.",
     );
-    expect(created).toMatchObject({ name: "Links", checkTypes: ["reply"], published: false, hasDraft: true, live: null });
+    expect(created).toMatchObject({ name: "Links", published: false, hasDraft: true, live: null });
+    expect(created).not.toHaveProperty("checkTypes");
     sandbox.withRules((rules) => {
       expect(rules.liveRules("reply")).toEqual([]);
       expect(rules.listRules()).toMatchObject([{ id: created.id, name: "Links", published: false, hasDraft: true }]);
@@ -157,8 +199,7 @@ describe("preparing drafts", () => {
     expect(edited).toMatchObject({
       id: ruleId,
       name: "Links",
-      checkTypes: ["message"],
-      live: { name: "Links", instruction: "Give a local link.", conditions: [{ text: "The reply is visual.", message: true }] },
+      live: { name: "Links", instruction: "Give a local link.", conditions: [{ text: "The reply is visual.", message: true, reply: false }] },
       draft: {
         name: "Local links",
         instruction: "Give the localhost link.",
