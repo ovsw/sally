@@ -100,7 +100,7 @@ export const ruleHelp = {
   liveSwitch:
     "A switch here takes effect at once, with no draft and no new version. Switching off the last condition that is on switches the rule off too.",
   scope:
-    "Where the rule applies: all projects, or only the ones you pick. A project is a git repository, named by its remote, so every worktree of it counts as one project. A rule is never checked outside its scope.",
+    "Where the rule applies: all projects, or only the ones you pick. A project is a git repository, named by its remote, so every worktree of it counts as one project. A rule is never checked outside its scope. A change takes effect at once and is not part of the draft.",
   instruction:
     "What Claude should do when the rule matches. Claude receives it word for word and has not seen it before. Leave out what the message or reply already makes obvious.",
 };

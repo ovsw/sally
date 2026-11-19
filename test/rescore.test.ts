@@ -412,15 +412,6 @@ describe("refusals", () => {
     expect(unfinished.status).toBe(400);
     expect(await unfinished.json()).toEqual({ error: "A rule needs at least one condition." });
 
-    await running.json("PUT", `/api/rules/${ruleId}/draft`, {
-      instruction: "Do it.",
-      conditions: conditionsFor("message", ["When asked."]),
-      scope: { kind: "projects", projects: [] },
-    });
-    const noProjects = await running.call("POST", `/api/rules/${ruleId}/rescore`, {});
-    expect(noProjects.status).toBe(400);
-    expect(await noProjects.json()).toEqual({ error: "Pick at least one project, or apply the rule to all projects." });
-
     expect((await running.call("POST", "/api/rules/999/rescore", {})).status).toBe(404);
   });
 });

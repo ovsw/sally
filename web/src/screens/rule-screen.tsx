@@ -1,6 +1,6 @@
-// The Rule panel, opened beside the rules list: the published version beside the draft, then the version
-// history. The draft form follows the shadcnblocks block form-layouts-1
-// (vertical field layout).
+// The Rule panel, opened beside the rules list: the rule's scope, the published version beside the
+// draft, then the version history. The draft form and the scope follow the shadcnblocks block
+// form-layouts-1 (vertical field layout).
 import { LabelWithHelp, ruleHelp } from "@/components/field-help";
 import {
   FilePen,
@@ -39,6 +39,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
+  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -66,6 +67,7 @@ import {
   type RescoreResult,
   type RuleDetail,
   setConditionSwitch,
+  setScope,
   startDraftFrom,
   switchRule,
   type Scope,
@@ -179,22 +181,6 @@ function PublishedVersion({ rule, onSwitch, disabled }: PublishedVersionProps) {
               {live.instruction}
             </dd>
           </div>
-          <div className="space-y-1.5">
-            <dt className="font-medium">Scope</dt>
-            <dd>
-              {live.scope.kind === "all" ? (
-                "All projects"
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {live.scope.projects.map((project) => (
-                    <Badge key={project} variant="secondary">
-                      {project}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </dd>
-          </div>
           <p className="text-xs text-muted-foreground">
             Published {new Date(live.publishedAt).toLocaleString()}
           </p>
@@ -235,7 +221,7 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
 
   return (
     <Field>
-      <LabelWithHelp htmlFor="draft-scope" label="Scope">
+      <LabelWithHelp htmlFor="rule-scope" label="Scope">
         {ruleHelp.scope}
       </LabelWithHelp>
       <Select
@@ -244,7 +230,7 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
           onChange(kind === "all" ? { kind: "all" } : { kind: "projects", projects: selected })
         }
       >
-        <SelectTrigger id="draft-scope" className="w-full bg-background">
+        <SelectTrigger id="rule-scope" className="w-full bg-background">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -274,18 +260,85 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
             {names.map((name, index) => (
               <Field key={name} orientation="horizontal">
                 <Checkbox
-                  id={`draft-project-${index}`}
+                  id={`rule-project-${index}`}
                   checked={selected.includes(name)}
                   onCheckedChange={(checked) => toggle(name, checked === true)}
                 />
-                <FieldLabel htmlFor={`draft-project-${index}`} className="font-normal">
+                <FieldLabel htmlFor={`rule-project-${index}`} className="font-normal">
                   {name}
                 </FieldLabel>
               </Field>
             ))}
           </div>
         ))}
+      {value.kind === "projects" && value.projects.length === 0 && names.length > 0 && (
+        <FieldDescription>Pick at least one project. Until then the rule keeps the scope it has.</FieldDescription>
+      )}
     </Field>
+  );
+}
+
+/** A scope a rule can have: all projects, or at least one project. */
+const completeScope = (scope: Scope) => scope.kind === "all" || scope.projects.length > 0;
+
+interface ScopeSectionProps {
+  /** The rule's scope as the server last said. */
+  scope: Scope;
+  /** Stores a complete scope; resolves once the server has it, rejects if it refused. */
+  onSave: (scope: Scope) => Promise<void>;
+  disabled: boolean;
+  projects: Project[] | null;
+  projectsError: string | null;
+  onRetryProjects: () => void;
+}
+
+/**
+ * The rule's scope, outside the draft: each complete choice is stored at once.
+ * A list of projects with none ticked yet stays here until one is.
+ */
+function ScopeSection({ scope, onSave, disabled, projects, projectsError, onRetryProjects }: ScopeSectionProps) {
+  const [value, setValue] = React.useState<Scope>(scope);
+  const [error, setError] = React.useState<string | null>(null);
+  /** Scopes sent and not yet answered: the server's answer to an earlier one must not undo a later choice. */
+  const pending = React.useRef(0);
+  const latest = React.useRef(scope);
+  const serverScope = JSON.stringify(scope);
+  React.useEffect(() => {
+    latest.current = JSON.parse(serverScope) as Scope;
+    if (pending.current === 0) setValue(latest.current);
+  }, [serverScope]);
+
+  const change = (next: Scope) => {
+    setValue(next);
+    setError(null);
+    if (!completeScope(next)) return;
+    pending.current += 1;
+    onSave(next)
+      .catch((e: unknown) => {
+        setError(errorText(e));
+        // Back to what the server has, once nothing else is on its way.
+        if (pending.current === 1) setValue(latest.current);
+      })
+      .finally(() => {
+        pending.current -= 1;
+      });
+  };
+
+  return (
+    <section className="rounded-md border">
+      <fieldset disabled={disabled} className="min-w-0 px-4 py-4">
+        <FieldGroup>
+          <ScopeField
+            value={value}
+            onChange={change}
+            projects={projects}
+            projectsError={projectsError}
+            onRetryProjects={onRetryProjects}
+          />
+          {error && <FieldError>{error}</FieldError>}
+        </FieldGroup>
+      </fieldset>
+    </section>
   );
 }
 
@@ -296,20 +349,9 @@ interface DraftFormProps {
   error: string | null;
   /** The conditions already published, whose switches the draft does not change. */
   published: ReadonlySet<number>;
-  projects: Project[] | null;
-  projectsError: string | null;
-  onRetryProjects: () => void;
 }
 
-function DraftForm({
-  value,
-  onChange,
-  error,
-  published,
-  projects,
-  projectsError,
-  onRetryProjects,
-}: DraftFormProps) {
+function DraftForm({ value, onChange, error, published }: DraftFormProps) {
   return (
     <FieldGroup>
       <NameField id="draft-name" name={value.name} onChange={(name) => onChange({ ...value, name }, "name")} />
@@ -322,13 +364,6 @@ function DraftForm({
         id="draft-instruction"
         instruction={value.instruction}
         onChange={(instruction) => onChange({ ...value, instruction }, "instruction")}
-      />
-      <ScopeField
-        value={value.scope}
-        onChange={(scope) => onChange({ ...value, scope }, null)}
-        projects={projects}
-        projectsError={projectsError}
-        onRetryProjects={onRetryProjects}
       />
       {error && <FieldError>{error}</FieldError>}
     </FieldGroup>
@@ -373,10 +408,6 @@ const contentOf = (rule: RuleDetail): DraftContent => {
     conditions: source?.conditions.length
       ? source.conditions.map((condition) => ({ ...condition }))
       : [{ text: "", message: true, reply: false }],
-    scope:
-      source?.scope.kind === "projects"
-        ? { kind: "projects", projects: [...source.scope.projects] }
-        : { kind: "all" },
   };
 };
 
@@ -638,8 +669,13 @@ export function RuleScreen({ id }: { id: number }) {
     });
 
   const publishNow = async () => {
-    const result = await publish(id);
-    setRule(result.rule);
+    // In line with scope changes, so an older publish response cannot replace
+    // a scope chosen while publishing.
+    const result = await saver.inLine(async () => {
+      const published = await publish(id);
+      setRule(published.rule);
+      return published;
+    });
     // Edits typed while publishing stay in the form and are saved as the
     // next draft.
     if (!saver.hasUnsent()) {
@@ -708,6 +744,11 @@ export function RuleScreen({ id }: { id: number }) {
       }
       setActionError(errorText(e));
     }
+  };
+
+  // In line with the saves, so the last scope chosen is what is stored and shown.
+  const saveScope = async (scope: Scope) => {
+    await saver.inLine(async () => setRule(await setScope(id, scope)));
   };
 
   /**
@@ -817,6 +858,14 @@ export function RuleScreen({ id }: { id: number }) {
           {actionError}
         </p>
       )}
+      <ScopeSection
+        scope={rule.scope}
+        onSave={saveScope}
+        disabled={replacing}
+        projects={projects}
+        projectsError={projectsError}
+        onRetryProjects={retryProjects}
+      />
       <div className="grid grid-cols-1 gap-6 @4xl:grid-cols-2">
         <PublishedVersion
           rule={rule}
@@ -857,9 +906,6 @@ export function RuleScreen({ id }: { id: number }) {
               value={draft}
               onChange={edit}
               published={publishedIds}
-              projects={projects}
-              projectsError={projectsError}
-              onRetryProjects={retryProjects}
               error={save.kind === "error" ? save.message : null}
             />
           </fieldset>

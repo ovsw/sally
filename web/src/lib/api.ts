@@ -11,7 +11,7 @@ export interface RuleSummary {
   checkTypes: CheckType[];
   /** True once the rule has a published version. */
   published: boolean;
-  /** The scope in force: the published version's, or the draft's before the first publish. */
+  /** Where the rule applies. It belongs to the rule, not to a version, and changes at once. */
   scope: Scope;
   on: boolean;
   hasDraft: boolean;
@@ -38,19 +38,18 @@ export interface ConditionDraft extends Switches {
   text: string;
 }
 
-/** What a draft holds, as the forms edit it and the server saves it. */
+/** What a draft holds, as the forms edit it and the server saves it: the rule's text only. */
 export interface DraftContent {
   name: string;
   instruction: string;
   conditions: ConditionDraft[];
-  scope: Scope;
 }
 
+/** A version's text: its name, instruction and the wording of its conditions. */
 export interface VersionView {
   name: string;
   instruction: string;
   conditions: ConditionView[];
-  scope: Scope;
 }
 
 export interface Project {
@@ -154,6 +153,11 @@ export function startDraftFrom(id: number, versionNumber: number): Promise<RuleD
 
 export function switchRule(id: number, on: boolean): Promise<RuleDetail> {
   return call("POST", `/api/rules/${id}/${on ? "on" : "off"}`, {});
+}
+
+/** Sets where the rule applies, at once: no new version, and the draft stays as it is. */
+export function setScope(id: number, scope: Scope): Promise<RuleDetail> {
+  return call("PUT", `/api/rules/${id}/scope`, { scope });
 }
 
 /** Sets one switch of a published condition at once: no draft, no new version. */

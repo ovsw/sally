@@ -100,7 +100,6 @@ const contentOf = (rule: RuleDetail): DraftContent => {
     conditions: source.conditions.length
       ? source.conditions.map((condition) => ({ ...condition }))
       : [{ text: "", message: true, reply: false }],
-    scope: source.scope,
   };
 };
 
@@ -198,7 +197,7 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
           {kept ? <Badge variant="secondary">Kept as a draft</Badge> : <Badge variant="outline">To decide</Badge>}
         </div>
         <CardDescription>
-          {checkTypesText(checkTypesOf(content.conditions))} · {scopeText(content.scope)}
+          {checkTypesText(checkTypesOf(content.conditions))} · {scopeText(rule.scope)}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -303,7 +302,7 @@ function PublishedRuleCard({ rule, importId, decide }: { rule: RuleDetail; impor
           </Badge>
         </div>
         <CardDescription>
-          {checkTypesText(rule.checkTypes)} · {scopeText(rule.live!.scope)}
+          {checkTypesText(rule.checkTypes)} · {scopeText(rule.scope)}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -441,7 +440,7 @@ function EditPublishedCard({
           {hasDraft && <Badge variant="secondary">Changes not published</Badge>}
         </div>
         <CardDescription>
-          {checkTypesText(rule.checkTypes)} · {scopeText(content.scope)}
+          {checkTypesText(rule.checkTypes)} · {scopeText(rule.scope)}
         </CardDescription>
       </CardHeader>
       <CardContent>

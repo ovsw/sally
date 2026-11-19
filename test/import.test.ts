@@ -160,8 +160,8 @@ describe("adding passages", () => {
     expect(proposed!.rule!.draft).toMatchObject({
       instruction: "Do the Links thing.",
       conditions: [{ text: "The message is about Links.", message: true, reply: false }],
-      scope: { kind: "projects", projects: ["example/shop"] },
     });
+    expect(proposed!.rule!.scope).toEqual({ kind: "projects", projects: ["example/shop"] });
     // The draft is an ordinary rule: the rules list shows it.
     expect(sandbox.withRules((rules) => rules.listRules()).map((r) => [r.id, r.published])).toEqual([
       [proposed!.ruleId, false],
@@ -502,7 +502,7 @@ describe("decisions", () => {
     expect(after.rules).toHaveLength(1);
     expect(after.rules[0]).toMatchObject({
       decision: null,
-      rule: { name: "Plain words", checkTypes: ["reply"], published: false, draft: { scope: { kind: "all" } } },
+      rule: { name: "Plain words", checkTypes: ["reply"], published: false, scope: { kind: "all" } },
     });
     expect(after.pending).toBe(true);
 

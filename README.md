@@ -112,7 +112,8 @@ The words used here are defined in [GLOSSARY.md](GLOSSARY.md).
   its middle, since a request usually comes before or after a long passage.
   The cut is recorded.
 - **Project scope:** a rule applies to all projects or only to the ones you
-  pick. A project is the git repository the session runs in.
+  pick. A project is the git repository the session runs in. A change to the
+  scope takes effect at once; it is not part of a draft.
 
 ## When a check fails
 
@@ -162,7 +163,8 @@ screens:
   and its scope (all projects, or the projects it is for).
 - **Rule:** opens in a panel beside the list: the published version beside
   its draft; conditions, each with a Message and a Reply switch for the checks
-  that use it, instruction, scope and an on/off switch; version
+  that use it, and instruction; the scope, set outside the draft; an on/off
+  switch; version
   history with how each version performed; its matches, near misses and saved
   cases.
 - **Activity:** recent checks, newest first, with the text checked, the
