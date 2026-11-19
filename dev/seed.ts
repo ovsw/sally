@@ -234,14 +234,16 @@ export async function seed(root: string): Promise<void> {
         text: "## Screenshots\n\nWhen a page's layout changes, take a full-page screenshot and put it next to\nthe reference before calling it done.",
         verdict: "becomes_rule",
         reason:
-          "Only some replies change a page's layout. That is a situation Sally can recognise in the reply, so the instruction needs to reach Claude only then.",
+          "Only some turns change a page's layout. Sally can recognise that in the message that asks for it and in the reply that reports it, so one rule with a condition for each reaches Claude only then.",
         rules: [
           {
             name: "Screenshot changed pages",
-            checkType: "reply",
             instruction:
               "Take a full-page screenshot of the changed page, put it next to the reference and compare them before saying it is done.",
-            conditions: ["The reply says a page's layout or styles were changed."],
+            conditions: [
+              { text: "The message asks to change a page's layout or styles.", message: true, reply: false },
+              { text: "The reply says a page's layout or styles were changed.", message: false, reply: true },
+            ],
           },
         ],
       },
