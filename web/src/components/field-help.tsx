@@ -93,9 +93,9 @@ export const ruleHelp = {
       <p>With Message and Reply both off, the condition is off and is not checked.</p>
     </>
   ),
-  /** Said beside the switches of a published condition in the draft, which a draft does not change. */
+  /** Said beside the switches of a published condition in the draft: the same switches as in the published version. */
   publishedSwitch:
-    "This condition is published, so it keeps these switches when you change its wording. While it is in the published version, switch it there, on the rule's screen, where a switch takes effect at once.",
+    "This condition is published, so this is the same switch as in the published version: it takes effect at once and is not part of the draft.",
   /** Said beside the switches of a condition in the published version, which take effect at once. */
   liveSwitch:
     "A switch here takes effect at once, with no draft and no new version. Switching off the last condition that is on switches the rule off too.",

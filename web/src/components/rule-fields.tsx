@@ -98,13 +98,15 @@ export function ConditionSwitch({ id, label, condition, checked, disabled, note,
 
 interface ConditionsFieldProps {
   conditions: ConditionDraft[];
-  /** The conditions already published: their switches show but do not change here. */
+  /** The conditions already published: their switches are not the draft's, and go through `onPublishedSwitch`. */
   published?: ReadonlySet<number>;
+  /** Sets a published condition's switch at once. Without it, those switches only show. */
+  onPublishedSwitch?: (conditionId: number, checkType: "message" | "reply", on: boolean) => void;
   /** `field` names the condition being typed in; null for a change made in one step. */
   onChange: (conditions: ConditionDraft[], field: string | null) => void;
 }
 
-export function ConditionsField({ conditions, published, onChange }: ConditionsFieldProps) {
+export function ConditionsField({ conditions, published, onPublishedSwitch, onChange }: ConditionsFieldProps) {
   const labelId = React.useId();
   const idPrefix = React.useId();
   const change = (index: number, next: Partial<ConditionDraft>, field: string | null) =>
@@ -124,7 +126,12 @@ export function ConditionsField({ conditions, published, onChange }: ConditionsF
       <div className="space-y-4">
         {conditions.map((condition, index) => {
           const name = `Condition ${index + 1}`;
-          const fixed = condition.id !== undefined && (published?.has(condition.id) ?? false);
+          const publishedId =
+            condition.id !== undefined && (published?.has(condition.id) ?? false) ? condition.id : undefined;
+          const fixed = publishedId !== undefined;
+          // A published condition's switch is set at once; a new one's is part of the draft.
+          const setSwitch = (checkType: "message" | "reply", on: boolean) =>
+            publishedId !== undefined ? onPublishedSwitch?.(publishedId, checkType, on) : change(index, { [checkType]: on }, null);
           return (
             <div key={index} className="space-y-2">
               <div className="flex items-start gap-2">
@@ -152,18 +159,18 @@ export function ConditionsField({ conditions, published, onChange }: ConditionsF
                   label="Message"
                   condition={name}
                   checked={condition.message}
-                  disabled={fixed}
+                  disabled={fixed && !onPublishedSwitch}
                   note={fixed ? ruleHelp.publishedSwitch : undefined}
-                  onChange={(message) => change(index, { message }, null)}
+                  onChange={(on) => setSwitch("message", on)}
                 />
                 <ConditionSwitch
                   id={`${idPrefix}-${index}-reply`}
                   label="Reply"
                   condition={name}
                   checked={condition.reply}
-                  disabled={fixed}
+                  disabled={fixed && !onPublishedSwitch}
                   note={fixed ? ruleHelp.publishedSwitch : undefined}
-                  onChange={(reply) => change(index, { reply }, null)}
+                  onChange={(on) => setSwitch("reply", on)}
                 />
               </div>
             </div>

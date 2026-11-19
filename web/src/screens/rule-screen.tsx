@@ -350,15 +350,18 @@ interface DraftFormProps {
   error: string | null;
   /** The conditions already published, whose switches the draft does not change. */
   published: ReadonlySet<number>;
+  /** Sets a published condition's switch at once, as the published version's own switches do. */
+  onPublishedSwitch: (conditionId: number, checkType: CheckType, on: boolean) => void;
 }
 
-function DraftForm({ value, onChange, error, published }: DraftFormProps) {
+function DraftForm({ value, onChange, error, published, onPublishedSwitch }: DraftFormProps) {
   return (
     <FieldGroup>
       <NameField id="draft-name" name={value.name} onChange={(name) => onChange({ ...value, name }, "name")} />
       <ConditionsField
         conditions={value.conditions}
         published={published}
+        onPublishedSwitch={onPublishedSwitch}
         onChange={(conditions, field) => onChange({ ...value, conditions }, field)}
       />
       <InstructionField
@@ -828,14 +831,15 @@ export function RuleScreen({ id }: { id: number }) {
    * Sets a published condition's switch at once. The server may switch the
    * rule off with it, when it was the last condition on.
    */
-  const switchCondition = (condition: ConditionView, checkType: CheckType, on: boolean) =>
+  const switchCondition = (conditionId: number, checkType: CheckType, on: boolean) =>
     act("switch-condition", async () => {
       // In line with the saves, so a save answered later does not show the old switch.
-      const next = await saver.inLine(() => setConditionSwitch(id, condition.id, checkType, on));
+      const next = await saver.inLine(() => setConditionSwitch(id, conditionId, checkType, on));
       setRule(next);
       // The draft shows a published condition's switches as they are now.
-      const live = next.live;
-      if (live) setDraft((current) => current && withPublishedSwitches(current, live.conditions));
+      // The condition may be one only an older version holds, brought back into the draft.
+      const published = next.versions.flatMap((version) => version.conditions);
+      setDraft((current) => current && withPublishedSwitches(current, published));
     });
 
   const remove = () =>
@@ -943,7 +947,7 @@ export function RuleScreen({ id }: { id: number }) {
         <PublishedVersion
           rule={rule}
           disabled={acting}
-          onSwitch={(condition, checkType, on) => void switchCondition(condition, checkType, on)}
+          onSwitch={(condition, checkType, on) => void switchCondition(condition.id, checkType, on)}
         />
         <section className="rounded-md border">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
@@ -979,6 +983,7 @@ export function RuleScreen({ id }: { id: number }) {
               value={draft}
               onChange={edit}
               published={publishedIds}
+              onPublishedSwitch={(conditionId, checkType, on) => void switchCondition(conditionId, checkType, on)}
               error={save.kind === "error" ? save.message : null}
             />
           </fieldset>
