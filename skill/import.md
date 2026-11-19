@@ -112,11 +112,15 @@ For each passage, decide:
   where Claude always sees it."
 - **rules**, for `becomes_rule` only: one rule per situation, following the
   guide (conditions describe a request or a failure in the message or the
-  reply; choose the message check or the reply check; write the instruction
-  for the moment it arrives). A passage that bundles several situations gets
-  several rules. Each rule has a short `name`, an `instruction`, its
-  `conditions`, and `checkType` (`message` or `reply`). Never combine passages
-  into one rule.
+  reply; switch each condition on for the check it is worded for; write the
+  instruction for the moment it arrives). A passage that bundles several
+  situations gets several rules, but one situation that shows in both the
+  message and the reply is one rule with conditions for each. Each rule has a
+  short `name`, an `instruction` and its `conditions`. Each condition has its
+  `text` and its two switches, `message` and `reply`: `message` on for a
+  condition about the user's message, `reply` on for one about Claude's reply,
+  both only when the same wording fits both. Never combine passages into one
+  rule.
 - **similarRule**, when the passage looks like a rule already in Sally: a short
   note naming it, such as `Looks like the rule "Run the tests" (id 12), which
   already asks for this.` Leave it out otherwise.
@@ -131,7 +135,7 @@ blank lines, `@path` lines and Sally's line, sits in exactly one passage.
 2. Write the passages as a JSON list to a file in the system's temporary
    folder (never in the project):
    `[{ "text", "verdict", "reason", "similarRule"?, "rules"?: [{ "name",
-   "checkType", "instruction", "conditions": [...] }] }]`
+   "instruction", "conditions": [{ "text", "message", "reply" }] }] }]`
 3. Run `node "<cli>" import add <id> --file <that file>`. It adds all the
    passages or none; if it refuses, fix what the message names and run it
    again.
