@@ -143,12 +143,40 @@ export interface DraftView extends VersionView {
   savedAt: string;
 }
 
+/**
+ * One change to the rule's switch, to one switch of a condition, or to the
+ * rule's scope, with its time and the new value. These take effect at once and
+ * make no new version, so they are kept to explain a shift in how a rule matches.
+ */
+export type SwitchChange =
+  | {
+      id: number;
+      at: string;
+      what: "rule";
+      on: boolean;
+      /** True when Sally switched the rule off itself, because its last condition went off. */
+      bySally: boolean;
+    }
+  | {
+      id: number;
+      at: string;
+      what: "condition";
+      conditionId: number;
+      /** The condition's wording in the published version when it was switched. */
+      conditionText: string;
+      checkType: CheckType;
+      on: boolean;
+    }
+  | { id: number; at: string; what: "scope"; scope: Scope };
+
 /** A rule with its live version and its draft side by side, and every published version. */
 export interface RuleDetail extends RuleSummary {
   live: PublishedVersionView | null;
   draft: DraftView | null;
   /** Every published version, newest first. Published versions never change. */
   versions: PublishedVersionView[];
+  /** Every change to the rule's switch, its conditions' switches and its scope, newest first. */
+  switchChanges: SwitchChange[];
 }
 
 export interface RuleFilter {
@@ -588,7 +616,94 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       live: versions[0] ?? null,
       versions,
       draft: draftView,
+      switchChanges: switchChangesOf(ruleId),
     };
+  }
+
+  /** The rule's switch changes, newest first: of two made in one change, the later one comes first. */
+  function switchChangesOf(ruleId: number): SwitchChange[] {
+    const rows = db
+      .prepare(
+        `SELECT id, created_at, what, condition_id, condition_text, check_type, switched_on, all_projects, projects, by_sally
+           FROM switch_changes WHERE rule_id = ? ORDER BY id DESC`,
+      )
+      .all(ruleId) as {
+      id: number;
+      created_at: string;
+      what: SwitchChange["what"];
+      condition_id: number | null;
+      condition_text: string | null;
+      check_type: CheckType | null;
+      switched_on: number | null;
+      all_projects: number | null;
+      projects: string | null;
+      by_sally: number;
+    }[];
+    return rows.map((row): SwitchChange => {
+      const base = { id: row.id, at: row.created_at };
+      if (row.what === "rule") return { ...base, what: "rule", on: row.switched_on === 1, bySally: row.by_sally === 1 };
+      if (row.what === "condition") {
+        return {
+          ...base,
+          what: "condition",
+          conditionId: row.condition_id!,
+          conditionText: row.condition_text ?? "",
+          checkType: row.check_type!,
+          on: row.switched_on === 1,
+        };
+      }
+      const scope: Scope =
+        row.all_projects === 1
+          ? { kind: "all" }
+          : { kind: "projects", projects: JSON.parse(row.projects ?? "[]") as string[] };
+      return { ...base, what: "scope", scope };
+    });
+  }
+
+  /** Records one switch change of the rule, at this moment. */
+  function recordSwitchChange(
+    ruleId: number,
+    change:
+      | { what: "rule"; on: boolean; bySally?: boolean }
+      | { what: "condition"; conditionId: number; checkType: CheckType; on: boolean }
+      | { what: "scope"; scope: Scope },
+  ): void {
+    const insert = db.prepare(
+      `INSERT INTO switch_changes
+         (rule_id, created_at, what, condition_id, condition_text, check_type, switched_on, all_projects, projects, by_sally)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    if (change.what === "rule") {
+      insert.run(ruleId, now(), "rule", null, null, null, Number(change.on), null, null, Number(change.bySally ?? false));
+    } else if (change.what === "condition") {
+      insert.run(
+        ruleId,
+        now(),
+        "condition",
+        change.conditionId,
+        publishedWording(change.conditionId),
+        change.checkType,
+        Number(change.on),
+        null,
+        null,
+        0,
+      );
+    } else {
+      const { scope } = change;
+      const projects = scope.kind === "all" ? null : JSON.stringify(scope.projects);
+      insert.run(ruleId, now(), "scope", null, null, null, null, Number(scope.kind === "all"), projects, 0);
+    }
+  }
+
+  /** The condition's wording in the latest published version that holds it. */
+  function publishedWording(conditionId: number): string | null {
+    const row = db
+      .prepare(
+        `SELECT vc.text FROM version_conditions vc JOIN versions v ON v.id = vc.version_id
+          WHERE vc.condition_id = ? AND v.number IS NOT NULL ORDER BY v.number DESC LIMIT 1`,
+      )
+      .get(conditionId) as { text: string } | undefined;
+    return row?.text ?? null;
   }
 
   function scopeOf(ruleId: number): Scope {
@@ -668,10 +783,13 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     return row;
   }
 
-  function setSwitchedOff(ruleId: number, off: boolean): void {
+  /** Sets the rule's switch, recording the change when there is one. */
+  function setSwitchedOff(ruleId: number, off: boolean, bySally = false): void {
     transaction(db, () => {
-      requireRule(ruleId);
+      const rule = requireRule(ruleId);
+      if (rule.switched_off === Number(off)) return;
       db.prepare("UPDATE rules SET switched_off = ? WHERE id = ?").run(off ? 1 : 0, ruleId);
+      recordSwitchChange(ruleId, { what: "rule", on: !off, bySally });
     });
   }
 
@@ -812,10 +930,12 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         const wasOn = condition.message === 1 || condition.reply === 1;
         // The column name comes from CHECK_TYPES, never from the caller's text.
         const column = checkType === "message" ? "message" : "reply";
+        if (condition[column] === Number(on)) return;
         db.prepare(`UPDATE conditions SET ${column} = ? WHERE id = ?`).run(Number(on), conditionId);
+        recordSwitchChange(ruleId, { what: "condition", conditionId, checkType, on });
         // The rule's switch tells the truth: with no condition on, the rule is off.
         if (wasOn && !on && rule.switched_off === 0 && liveConditionsOn(ruleId) === 0) {
-          db.prepare("UPDATE rules SET switched_off = 1 WHERE id = ?").run(ruleId);
+          setSwitchedOff(ruleId, true, true);
         }
       });
     },
@@ -825,7 +945,11 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       requireCompleteScope(scope);
       transaction(db, () => {
         requireRule(ruleId);
+        const before = scopeOf(ruleId);
         writeScope(ruleId, scope);
+        // Recorded as stored: each project once, in order.
+        const after = scopeOf(ruleId);
+        if (JSON.stringify(after) !== JSON.stringify(before)) recordSwitchChange(ruleId, { what: "scope", scope: after });
       });
     },
 

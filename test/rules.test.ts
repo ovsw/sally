@@ -588,6 +588,117 @@ describe("rules service", () => {
     });
   });
 
+  describe("switch changes", () => {
+    const message = (text: string) => ({ text, message: true, reply: false });
+    /** The changes without their ids and times, oldest first. */
+    const changes = (detail: { switchChanges: { id: number; at: string }[] }) =>
+      detail.switchChanges
+        .map((change) => Object.fromEntries(Object.entries(change).filter(([key]) => key !== "id" && key !== "at")))
+        .reverse();
+
+    it("records each change to the rule's switch, a condition's switches and the scope, newest first, with its time", async () => {
+      const [a, b] = [folder(sandbox.root, "a"), folder(sandbox.root, "b")];
+      for (const cwd of [a, b]) {
+        await runMessageHook(hookInput("hello there", { cwd }), { env: sandbox.env, matcher: standInMatcher() });
+      }
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule({ ...rule, conditions: [message("First."), message("Second.")] });
+        rules.publish(ruleId);
+        expect(rules.getRule(ruleId).switchChanges).toEqual([]);
+        const [first, second] = rules.getRule(ruleId).live!.conditions;
+
+        rules.switchOff(ruleId);
+        rules.switchOn(ruleId);
+        rules.setConditionSwitch(ruleId, first!.id, "reply", true);
+        rules.setConditionSwitch(ruleId, second!.id, "message", false);
+        rules.setScope(ruleId, { kind: "projects", projects: [b, a, b] });
+        rules.setScope(ruleId, { kind: "all" });
+
+        const detail = rules.getRule(ruleId);
+        expect(changes(detail)).toEqual([
+          { what: "rule", on: false, bySally: false },
+          { what: "rule", on: true, bySally: false },
+          { what: "condition", conditionId: first!.id, conditionText: "First.", checkType: "reply", on: true },
+          { what: "condition", conditionId: second!.id, conditionText: "Second.", checkType: "message", on: false },
+          { what: "scope", scope: { kind: "projects", projects: [a, b] } },
+          { what: "scope", scope: { kind: "all" } },
+        ]);
+        const times = detail.switchChanges.map((change) => Date.parse(change.at));
+        expect(times.every((time) => !Number.isNaN(time))).toBe(true);
+        expect(times).toEqual([...times].sort((x, y) => y - x));
+        // None of it is a version.
+        expect(detail.versions).toHaveLength(1);
+      });
+    });
+
+    it("records the rule going off with its last condition after the condition switch that caused it", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule(rule);
+        rules.publish(ruleId);
+        const [condition] = rules.getRule(ruleId).live!.conditions;
+
+        rules.setConditionSwitch(ruleId, condition!.id, "message", false);
+        expect(rules.getRule(ruleId).switchChanges).toMatchObject([
+          { what: "rule", on: false, bySally: true },
+          { what: "condition", conditionId: condition!.id, checkType: "message", on: false },
+        ]);
+        // Switching the condition back on does not switch the rule on, so only the condition is recorded.
+        rules.setConditionSwitch(ruleId, condition!.id, "message", true);
+        expect(rules.getRule(ruleId).switchChanges).toHaveLength(3);
+        expect(rules.getRule(ruleId).switchChanges[0]).toMatchObject({ what: "condition", on: true });
+      });
+    });
+
+    it("records nothing for a switch or scope set to what it already was, or for a refused change", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule(rule);
+        rules.publish(ruleId);
+        const [condition] = rules.getRule(ruleId).live!.conditions;
+
+        rules.switchOn(ruleId);
+        rules.setConditionSwitch(ruleId, condition!.id, "message", true);
+        rules.setConditionSwitch(ruleId, condition!.id, "reply", false);
+        rules.setScope(ruleId, { kind: "all" });
+        expect(rules.getRule(ruleId).switchChanges).toEqual([]);
+
+        rules.setConditionSwitch(ruleId, condition!.id, "message", false);
+        expect(() => rules.switchOn(ruleId)).toThrow(RuleError);
+        rules.switchOff(ruleId);
+        expect(rules.getRule(ruleId).switchChanges).toHaveLength(2);
+      });
+    });
+
+    it("names a condition by its published wording at the time it was switched", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule({ ...rule, conditions: [message("First."), message("Second.")] });
+        rules.publish(ruleId);
+        const [first] = rules.getRule(ruleId).live!.conditions;
+        rules.saveDraft(ruleId, {
+          instruction: "Do X.",
+          conditions: [{ id: first!.id, text: "First, reworded." }, message("Second.")],
+        });
+        rules.setConditionSwitch(ruleId, first!.id, "reply", true);
+        rules.publish(ruleId);
+        rules.setConditionSwitch(ruleId, first!.id, "reply", false);
+
+        expect(changes(rules.getRule(ruleId)).map((change) => "conditionText" in change && change.conditionText)).toEqual([
+          "First.",
+          "First, reworded.",
+        ]);
+      });
+    });
+
+    it("goes with the rule when it is deleted", () => {
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule(rule);
+        rules.switchOff(ruleId);
+        rules.deleteRule(ruleId);
+        const again = rules.createRule(rule).ruleId;
+        expect(rules.getRule(again).switchChanges).toEqual([]);
+      });
+    });
+  });
+
   const defaults = {
     cutoff: 0.6,
     replyCutoff: 0.6,

@@ -383,6 +383,35 @@ describe("history and the rest of a rule's life", () => {
     expect((await app.call("PUT", `/api/rules/${rule.id}/conditions/999/message`, { on: true })).status).toBe(404);
   });
 
+  it("returns the rule's switch changes with its versions, newest first", async () => {
+    const rule = await create();
+    await publish(rule.id);
+    const [condition] = (await app.json<RuleDetail>("GET", `/api/rules/${rule.id}`)).live!.conditions;
+    expect(rule.switchChanges).toEqual([]);
+
+    await app.json("PUT", `/api/rules/${rule.id}/conditions/${condition!.id}/message`, { on: false });
+    await app.json("PUT", `/api/rules/${rule.id}/conditions/${condition!.id}/message`, { on: true });
+    await app.json("POST", `/api/rules/${rule.id}/on`, {});
+    await app.json("PUT", `/api/rules/${rule.id}/scope`, { scope: { kind: "all" } });
+
+    const detail = await app.json<RuleDetail>("GET", `/api/rules/${rule.id}`);
+    expect(detail.versions).toHaveLength(1);
+    expect(detail.switchChanges).toEqual([
+      { id: expect.any(Number), at: expect.any(String), what: "rule", on: true, bySally: false },
+      expect.objectContaining({ what: "condition", conditionId: condition!.id, checkType: "message", on: true }),
+      { id: expect.any(Number), at: expect.any(String), what: "rule", on: false, bySally: true },
+      {
+        id: expect.any(Number),
+        at: expect.any(String),
+        what: "condition",
+        conditionId: condition!.id,
+        conditionText: newRule.conditions[0],
+        checkType: "message",
+        on: false,
+      },
+    ]);
+  });
+
   it("deletes a rule", async () => {
     const rule = await create();
     await publish(rule.id);
