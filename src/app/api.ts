@@ -81,8 +81,11 @@ function conditionList(body: Record<string, unknown>, key: string): DraftConditi
 
 /** The scope, when given: { kind: "all" } or { kind: "projects", projects: [...] }. */
 function optionalScope(body: Record<string, unknown>, key: string): Scope | undefined {
+  return body[key] === undefined ? undefined : scope(body, key);
+}
+
+function scope(body: Record<string, unknown>, key: string): Scope {
   const value = body[key];
-  if (value === undefined) return undefined;
   if (typeof value === "object" && value !== null) {
     const { kind, projects } = value as { kind?: unknown; projects?: unknown };
     if (kind === "all") return { kind: "all" };
@@ -193,8 +196,10 @@ async function handleDecision(
  * - POST /api/rules                                      create a rule (a draft only)
  *                                                        { name, instruction, conditions: [{ text, message, reply }], scope? }
  * - GET  /api/rules/:id                                  a rule, live version and draft
- * - PUT  /api/rules/:id/draft                            save the draft { name?, instruction, scope?,
+ * - PUT  /api/rules/:id/draft                            save the draft { name?, instruction,
  *                                                        conditions: [{ id?, text, message?, reply? }] }
+ * - PUT  /api/rules/:id/scope                            set where the rule applies { scope }: at once,
+ *                                                        with no new version and the draft untouched
  * - POST /api/rules/:id/rescore                          score the draft's conditions against the saved cases
  * - POST /api/rules/:id/publish                          publish the draft
  * - DELETE /api/rules/:id/draft                          discard the draft
@@ -300,8 +305,11 @@ export async function handleApi(
         name: optionalText(body, "name"),
         instruction: text(body, "instruction"),
         conditions: conditionList(body, "conditions"),
-        scope: optionalScope(body, "scope"),
       });
+      return send(res, 200, rules.getRule(id));
+    }
+    if (id !== undefined && parts.length === 3 && parts[2] === "scope" && method === "PUT") {
+      rules.setScope(id, scope(await readJson(req), "scope"));
       return send(res, 200, rules.getRule(id));
     }
     if (id !== undefined && parts.length === 3 && parts[2] === "rescore" && method === "POST") {

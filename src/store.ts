@@ -359,6 +359,28 @@ const migrations: string[] = [
   DROP TABLE condition_ids;
   DROP TABLE condition_map;
   `,
+  `
+  -- Scope belongs to the rule, not to a version: changing it takes effect at
+  -- once and makes no new version. Each rule keeps the scope of its published
+  -- version, or of its draft when it was never published. versions.all_projects
+  -- and version_projects are retired: nothing reads or writes them after this.
+  ALTER TABLE rules ADD COLUMN all_projects INTEGER NOT NULL DEFAULT 1 CHECK (all_projects IN (0, 1));
+  CREATE TABLE rule_projects (
+    rule_id     INTEGER NOT NULL REFERENCES rules (id) ON DELETE CASCADE,
+    project_id  INTEGER NOT NULL REFERENCES projects (id),
+    PRIMARY KEY (rule_id, project_id)
+  );
+  CREATE TEMP TABLE scope_versions AS
+    SELECT r.id AS rule_id,
+           (SELECT id FROM versions WHERE rule_id = r.id ORDER BY number IS NULL, number DESC LIMIT 1) AS version_id
+      FROM rules r;
+  UPDATE rules SET all_projects = (
+    SELECT v.all_projects FROM scope_versions s JOIN versions v ON v.id = s.version_id WHERE s.rule_id = rules.id
+  ) WHERE EXISTS (SELECT 1 FROM scope_versions s JOIN versions v ON v.id = s.version_id WHERE s.rule_id = rules.id);
+  INSERT INTO rule_projects (rule_id, project_id)
+    SELECT s.rule_id, vp.project_id FROM scope_versions s JOIN version_projects vp ON vp.version_id = s.version_id;
+  DROP TABLE scope_versions;
+  `,
 ];
 
 /**

@@ -249,7 +249,6 @@ describe("rules service", () => {
           name: "Renamed",
           instruction: "Do Y.",
           conditions: [{ id: expect.any(Number), text: "Condition B.", message: true, reply: false }],
-          scope: { kind: "all" },
         },
         first[0],
       ]);
@@ -260,7 +259,6 @@ describe("rules service", () => {
           name: "A rule",
           instruction: "Do X.",
           conditions: [{ id: expect.any(Number), text: "Condition A.", message: true, reply: false }],
-          scope: { kind: "all" },
         },
       ]);
       expect(Number.isNaN(Date.parse(versions[0]!.publishedAt))).toBe(false);
@@ -409,7 +407,7 @@ describe("rules service", () => {
     it("applies a new rule to all projects unless given a scope", () => {
       sandbox.withRules((rules) => {
         const { ruleId } = rules.createRule(rule);
-        expect(rules.getRule(ruleId).draft).toMatchObject({ scope: { kind: "all" } });
+        expect(rules.getRule(ruleId).scope).toEqual({ kind: "all" });
       });
     });
 
@@ -421,65 +419,86 @@ describe("rules service", () => {
       });
     });
 
-    it("keeps a draft's scope out of the live version until it is published", async () => {
+    it("takes effect at once, with no new version and the draft untouched", async () => {
       const [a, b] = await see("a", "b");
       sandbox.withRules((rules) => {
         const { ruleId } = rules.createRule(rule);
         rules.publish(ruleId);
-        rules.saveDraft(ruleId, { ...rule, scope: { kind: "projects", projects: [b, a, b] } });
-        expect(rules.getRule(ruleId)).toMatchObject({
-          live: { scope: { kind: "all" } },
-          draft: { scope: { kind: "projects", projects: [a, b] } },
-        });
+        rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: conditionsFor("message", ["Condition B."]) });
+        const before = rules.getRule(ruleId);
         expect(rules.liveRules("message", "elsewhere")).toHaveLength(1);
-        rules.publish(ruleId);
-        expect(rules.getRule(ruleId).live).toMatchObject({ scope: { kind: "projects", projects: [a, b] } });
+
+        rules.setScope(ruleId, { kind: "projects", projects: [b, a, b] });
+        const after = rules.getRule(ruleId);
+        expect(after.scope).toEqual({ kind: "projects", projects: [a, b] });
+        expect(after.versions).toEqual(before.versions);
+        expect(after.draft).toEqual(before.draft);
         expect(rules.liveRules("message", "elsewhere")).toEqual([]);
         expect(rules.liveRules("message")).toEqual([]);
         expect(rules.liveRules("message", a)).toHaveLength(1);
+        expect(rules.listRules({ allProjects: false }).map((r) => r.id)).toEqual([ruleId]);
+
+        rules.setScope(ruleId, { kind: "all" });
+        expect(rules.liveRules("message", "elsewhere")).toHaveLength(1);
+        expect(rules.getRule(ruleId).versions).toEqual(before.versions);
       });
     });
 
-    it("starts a draft from an old version with that version's scope", async () => {
-      const [a] = await see("a");
-      sandbox.withRules((rules) => {
-        const { ruleId } = rules.createRule({ ...rule, scope: { kind: "projects", projects: [a] } });
-        rules.publish(ruleId);
-        rules.saveDraft(ruleId, { ...rule, scope: { kind: "all" } });
-        rules.publish(ruleId);
-        rules.startDraftFrom(ruleId, 1);
-        expect(rules.getRule(ruleId)).toMatchObject({
-          live: { number: 2, scope: { kind: "all" } },
-          draft: { scope: { kind: "projects", projects: [a] } },
-          versions: [{ scope: { kind: "all" } }, { scope: { kind: "projects", projects: [a] } }],
-        });
-      });
-    });
-
-    it("keeps the scope it has when a draft is saved without one", async () => {
+    it("keeps the scope through saving and publishing a draft", async () => {
       const [a] = await see("a");
       sandbox.withRules((rules) => {
         const { ruleId } = rules.createRule({ ...rule, scope: { kind: "projects", projects: [a] } });
         rules.publish(ruleId);
         rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: conditionsFor("message", ["Condition B."]) });
-        expect(rules.getRule(ruleId).draft).toMatchObject({ scope: { kind: "projects", projects: [a] } });
+        rules.publish(ruleId);
+        expect(rules.getRule(ruleId).scope).toEqual({ kind: "projects", projects: [a] });
+        expect(rules.liveRules("message", a)).toHaveLength(1);
+        expect(rules.liveRules("message", "elsewhere")).toEqual([]);
       });
     });
 
-    it("refuses a project Sally has not seen, and publishing a scope with no project", async () => {
-      await see("a");
+    it("starts a draft from an old version with its wording only, keeping the scope as it is", async () => {
+      const [a] = await see("a");
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule({ ...rule, scope: { kind: "projects", projects: [a] } });
+        rules.publish(ruleId);
+        rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: conditionsFor("message", ["Condition B."]) });
+        rules.publish(ruleId);
+        rules.setScope(ruleId, { kind: "all" });
+        rules.startDraftFrom(ruleId, 1);
+        expect(rules.getRule(ruleId)).toMatchObject({
+          scope: { kind: "all" },
+          draft: { instruction: rule.instruction },
+        });
+        rules.publish(ruleId);
+        expect(rules.getRule(ruleId).scope).toEqual({ kind: "all" });
+      });
+    });
+
+    it("sets the scope of a rule never published, which it keeps when published", async () => {
+      const [a] = await see("a");
+      sandbox.withRules((rules) => {
+        const { ruleId } = rules.createRule(rule);
+        rules.setScope(ruleId, { kind: "projects", projects: [a] });
+        expect(rules.getRule(ruleId)).toMatchObject({ published: false, hasDraft: true, scope: { kind: "projects", projects: [a] } });
+        rules.publish(ruleId);
+        expect(rules.liveRules("message", a)).toHaveLength(1);
+        expect(rules.liveRules("message", "elsewhere")).toEqual([]);
+      });
+    });
+
+    it("refuses a project Sally has not seen, and a scope with no project", async () => {
+      const [a] = await see("a");
       sandbox.withRules((rules) => {
         expect(() => rules.createRule({ ...rule, scope: { kind: "projects", projects: ["never/seen"] } })).toThrow(
           RuleError,
         );
         expect(() => rules.createRule({ ...rule, scope: { kind: "projects", projects: [] } })).toThrow(RuleError);
-        const { ruleId } = rules.createRule(rule);
-        expect(() =>
-          rules.saveDraft(ruleId, { ...rule, scope: { kind: "projects", projects: ["never/seen"] } }),
-        ).toThrow(RuleError);
-        rules.saveDraft(ruleId, { ...rule, scope: { kind: "projects", projects: [] } });
-        expect(() => rules.publish(ruleId)).toThrow(RuleError);
-        expect(rules.liveRules("message")).toEqual([]);
+        const { ruleId } = rules.createRule({ ...rule, scope: { kind: "projects", projects: [a] } });
+        expect(() => rules.setScope(ruleId, { kind: "projects", projects: ["never/seen"] })).toThrow(RuleError);
+        expect(() => rules.setScope(ruleId, { kind: "projects", projects: [] })).toThrow(RuleError);
+        expect(() => rules.setScope(999, { kind: "all" })).toThrow(RuleNotFoundError);
+        expect(rules.getRule(ruleId).scope).toEqual({ kind: "projects", projects: [a] });
       });
     });
   });

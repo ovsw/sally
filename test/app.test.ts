@@ -381,33 +381,55 @@ describe("a rule's scope", () => {
     expect(projects).toMatchObject([{ name: project }]);
   });
 
-  it("edits the scope in the draft and puts it live on publish", async () => {
+  it("sets the scope at once, with no new version and the draft untouched", async () => {
     const project = await see("a-project");
+    const elsewhere = await see("elsewhere");
     const rule = await create();
-    expect(rule.draft).toMatchObject({ scope: { kind: "all" } });
+    expect(rule.scope).toEqual({ kind: "all" });
     await app.json("POST", `/api/rules/${rule.id}/publish`, {});
-
-    const saved = await app.json<RuleDetail>("PUT", `/api/rules/${rule.id}/draft`, {
-      instruction: newRule.instruction,
+    const before = await app.json<RuleDetail>("PUT", `/api/rules/${rule.id}/draft`, {
+      instruction: "Changed.",
       conditions: messageConditions(...newRule.conditions),
+    });
+
+    const after = await app.json<RuleDetail>("PUT", `/api/rules/${rule.id}/scope`, {
       scope: { kind: "projects", projects: [project] },
     });
-    expect(saved).toMatchObject({ live: { scope: { kind: "all" } }, draft: { scope: { kind: "projects", projects: [project] } } });
 
-    const published = await app.json<{ rule: RuleDetail }>("POST", `/api/rules/${rule.id}/publish`, {});
-    expect(published.rule.live).toMatchObject({ scope: { kind: "projects", projects: [project] } });
+    expect(after.scope).toEqual({ kind: "projects", projects: [project] });
+    expect(after.versions).toEqual(before.versions);
+    expect(after.draft).toEqual(before.draft);
+    // The next check uses it: a message elsewhere is no longer checked against the rule.
+    const matcher = standInMatcher();
+    await runMessageHook(hookInput("Make the header smaller", { cwd: elsewhere }), {
+      env: sandbox.env,
+      matcher,
+    });
+    expect(matcher.calls).toEqual([]);
   });
 
-  it("lists each rule with the scope in force, and narrows the list by it", async () => {
+  it("leaves the scope as it is when a draft is saved or published", async () => {
     const project = await see("a-project");
-    const onlyHere = { instruction: "X.", conditions: messageConditions("Y."), scope: { kind: "projects", projects: [project] } };
-    // Published for all projects, with a draft for one project: the published scope is in force.
-    const everywhere = await create({ name: "Everywhere" });
-    await app.json("POST", `/api/rules/${everywhere.id}/publish`, {});
-    await app.json("PUT", `/api/rules/${everywhere.id}/draft`, onlyHere);
-    // Never published: the draft's scope is in force.
-    const draftOnly = await create({ name: "Here only" });
-    await app.json("PUT", `/api/rules/${draftOnly.id}/draft`, onlyHere);
+    const rule = await app.json<RuleDetail>("POST", "/api/rules", {
+      ...ruleBody(),
+      scope: { kind: "projects", projects: [project] },
+    });
+    await app.json("PUT", `/api/rules/${rule.id}/draft`, {
+      instruction: "Changed.",
+      conditions: messageConditions(...newRule.conditions),
+      scope: { kind: "all" },
+    });
+    const published = await app.json<{ rule: RuleDetail }>("POST", `/api/rules/${rule.id}/publish`, {});
+    expect(published.rule.scope).toEqual({ kind: "projects", projects: [project] });
+    expect(published.rule.live).not.toHaveProperty("scope");
+  });
+
+  it("lists each rule with its scope, and narrows the list by it", async () => {
+    const project = await see("a-project");
+    const onlyHere = { scope: { kind: "projects", projects: [project] } };
+    await create({ name: "Everywhere" });
+    const here = await create({ name: "Here only" });
+    await app.json("PUT", `/api/rules/${here.id}/scope`, onlyHere);
 
     expect((await list()).map((r) => [r.name, r.scope])).toEqual([
       ["Everywhere", { kind: "all" }],
@@ -415,20 +437,23 @@ describe("a rule's scope", () => {
     ]);
     expect(await names("?allProjects=true")).toEqual(["Everywhere"]);
     expect(await names("?allProjects=false")).toEqual(["Here only"]);
-    expect((await app.json<RuleDetail>("GET", `/api/rules/${draftOnly.id}`)).scope).toEqual(onlyHere.scope);
     expect((await app.call("GET", "/api/rules?allProjects=some")).status).toBe(400);
   });
 
-  it("refuses a malformed scope and a project Sally has not seen", async () => {
+  it("refuses a malformed scope, an empty list and a project Sally has not seen", async () => {
     const rule = await create();
-    const save = (scope: unknown) =>
-      app.call("PUT", `/api/rules/${rule.id}/draft`, { instruction: "X.", conditions: messageConditions("Y."), scope });
+    const set = (body: unknown) => app.call("PUT", `/api/rules/${rule.id}/scope`, body);
 
-    expect((await save("all")).status).toBe(400);
-    expect((await save({ kind: "projects", projects: [1] })).status).toBe(400);
-    const unseen = await save({ kind: "projects", projects: ["never/seen"] });
+    expect((await set({})).status).toBe(400);
+    expect((await set({ scope: "all" })).status).toBe(400);
+    expect((await set({ scope: { kind: "projects", projects: [1] } })).status).toBe(400);
+    const empty = await set({ scope: { kind: "projects", projects: [] } });
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toEqual({ error: "Pick at least one project, or apply the rule to all projects." });
+    const unseen = await set({ scope: { kind: "projects", projects: ["never/seen"] } });
     expect(unseen.status).toBe(400);
     expect(await unseen.json()).toEqual({ error: 'Sally has not seen a project named "never/seen".' });
+    expect((await app.call("PUT", "/api/rules/999/scope", { scope: { kind: "all" } })).status).toBe(404);
   });
 });
 

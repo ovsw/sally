@@ -6,7 +6,6 @@ import { runReplyHook } from "../src/reply-hook.ts";
 import { folder, gitConfig, gitRepo, gitWorktree } from "./support/git.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { type StandIn, standInMatcher } from "./support/stand-in-matcher.ts";
-import { conditionsFor } from "../src/rules.ts";
 
 let sandbox: Sandbox;
 beforeEach(() => {
@@ -188,16 +187,13 @@ describe("rule scope", () => {
     expect(matcher.calls).toEqual([]);
   });
 
-  it("changes only when the draft holding the new scope is published", async () => {
+  it("changes at once when the scope is set, with no publish", async () => {
     const { elsewhere } = await setUp();
     const [{ id }] = sandbox.query<{ id: number }>("SELECT id FROM rules WHERE name = 'Only repo'") as [{ id: number }];
     const matcher = standInMatcher();
 
-    sandbox.withRules((rules) =>
-      rules.saveDraft(id, { instruction: "Do it.", conditions: conditionsFor("message", ["Repo condition."]), scope: { kind: "all" } }),
-    );
     await messageIn(elsewhere, matcher);
-    sandbox.withRules((rules) => rules.publish(id));
+    sandbox.withRules((rules) => rules.setScope(id, { kind: "all" }));
     await messageIn(elsewhere, matcher);
 
     expect(sentConditions(matcher)).toEqual([["Everywhere condition."], ["Everywhere condition.", "Repo condition."]]);

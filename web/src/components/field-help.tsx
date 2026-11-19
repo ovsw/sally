@@ -96,7 +96,7 @@ export const ruleHelp = {
   /** Said beside the switches of a published condition, which a draft does not change. */
   publishedSwitch: "This condition is published, so it keeps these switches when you change its wording.",
   scope:
-    "Where the rule applies: all projects, or only the ones you pick. A project is a git repository, named by its remote, so every worktree of it counts as one project. A rule is never checked outside its scope.",
+    "Where the rule applies: all projects, or only the ones you pick. A project is a git repository, named by its remote, so every worktree of it counts as one project. A rule is never checked outside its scope. A change takes effect at once and is not part of the draft.",
   instruction:
     "What Claude should do when the rule matches. Claude receives it word for word and has not seen it before. Leave out what the message or reply already makes obvious.",
 };

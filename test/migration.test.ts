@@ -136,7 +136,7 @@ describe("an old database", () => {
       { key: "stop_on_failure", value: 1 },
       { key: "time_limit_ms", value: 4000 },
     ]);
-    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 15 }]);
+    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 16 }]);
   });
 
   it("can have an attention reason cleared", () => {
@@ -310,6 +310,41 @@ describe("a database from before conditions had switches", () => {
       rules.publish(4);
       expect(live("message")).toEqual([]);
       expect(live("reply")).toMatchObject([{ conditions: [{ text: "Is about M." }, { text: "Reply only." }] }]);
+    });
+  });
+
+  it("gives each rule the scope of its published version, or of its draft when never published", () => {
+    writeBeforeSwitchesDatabase(`
+      INSERT INTO projects (id, name, first_seen_at) VALUES (1, 'owner/a', '${AT}'), (2, 'owner/b', '${AT}');
+      INSERT INTO rules (id, name, check_type, created_at) VALUES
+        (10, 'Widened', 'message', '${AT}'), (11, 'Narrow', 'message', '${AT}'), (12, 'Unpublished', 'message', '${AT}');
+      INSERT INTO versions (id, rule_id, number, name, check_type, instruction, all_projects, created_at, published_at) VALUES
+        (20, 10, 1, 'Widened', 'message', 'Do W.', 0, '${AT}', '${AT}'),
+        (21, 10, 2, 'Widened', 'message', 'Do W.', 1, '${AT}', '${AT}'),
+        (22, 10, NULL, 'Widened', 'message', 'Do W.', 0, '${AT}', NULL),
+        (23, 11, 1, 'Narrow', 'message', 'Do N.', 0, '${AT}', '${AT}'),
+        (24, 11, NULL, 'Narrow', 'message', 'Do N.', 1, '${AT}', NULL),
+        (25, 12, NULL, 'Unpublished', 'message', 'Do U.', 0, '${AT}', NULL);
+      INSERT INTO version_projects (version_id, project_id) VALUES (20, 1), (22, 2), (23, 1), (23, 2), (25, 2);
+      INSERT INTO conditions (id, version_id, position, text) VALUES
+        (20, 20, 0, 'Is about W.'), (21, 21, 0, 'Is about W.'), (22, 22, 0, 'Is about W.'),
+        (23, 23, 0, 'Is about N.'), (24, 24, 0, 'Is about N.'), (25, 25, 0, 'Is about U.');
+    `);
+
+    sandbox.withRules((rules) => {
+      expect(rules.getRule(10).scope).toEqual({ kind: "all" });
+      expect(rules.getRule(11).scope).toEqual({ kind: "projects", projects: ["owner/a", "owner/b"] });
+      expect(rules.getRule(12).scope).toEqual({ kind: "projects", projects: ["owner/b"] });
+      expect(rules.getRule(1).scope).toEqual({ kind: "all" });
+      const live = (project?: string) => rules.liveRules("message", project).map((r) => r.name);
+      expect(live()).toEqual(["Message rule", "Widened"]);
+      expect(live("owner/a")).toEqual(["Message rule", "Widened", "Narrow"]);
+      // Publishing a draft no longer changes the scope.
+      rules.publish(10);
+      rules.publish(11);
+      expect(rules.getRule(10).scope).toEqual({ kind: "all" });
+      expect(live("owner/b")).toEqual(["Message rule", "Widened", "Narrow"]);
+      expect(live()).toEqual(["Message rule", "Widened"]);
     });
   });
 
