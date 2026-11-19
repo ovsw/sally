@@ -100,7 +100,7 @@ export async function seed(root: string): Promise<void> {
   await message("hello", alpha);
   await message("hello", beta);
 
-  const commits = withRules((rules) => {
+  const { commits, localLink } = withRules((rules) => {
     rules.updateSettings({ recentChecks: 40, quietChecks: 15, busyShare: 0.3, closeMargin: 0.05 });
     const live = (name: string, checkType: CheckType, instruction: string, conditions: string[], scope?: Scope) => {
       const { ruleId } = rules.createRule({
@@ -149,22 +149,21 @@ export async function seed(root: string): Promise<void> {
     live("Deploy checklist", "message", "Check the deploy checklist first.", ["The user asks to deploy."]);
     live("No apologies", "reply", "Do not apologise; state the fix.", ["The reply apologises to the user."]);
     // One rule in both checks: a condition for the message and one for the reply.
-    rules.publish(
-      rules.createRule({
-        name: "Local link before a PR",
-        instruction: "Before opening a pull request for a visual change, give the localhost link and wait for an OK.",
-        conditions: [
-          { text: "The message asks for a visual change to a page.", message: true, reply: false },
-          { text: "The reply reports a finished visual change and gives no local link.", message: false, reply: true },
-        ],
-      }).ruleId,
-    );
+    const { ruleId: localLink } = rules.createRule({
+      name: "Local link before a PR",
+      instruction: "Before opening a pull request for a visual change, give the localhost link and wait for an OK.",
+      conditions: [
+        { text: "The message asks for a visual change to a page.", message: true, reply: false },
+        { text: "The reply reports a finished visual change and gives no local link.", message: false, reply: true },
+      ],
+    });
+    rules.publish(localLink);
     rules.createRule({
       name: "Ask before pushing",
       instruction: "Ask before pushing to a shared branch.",
       conditions: conditionsFor("message", ["The user asks to push."]),
     });
-    return commits;
+    return { commits, localLink };
   });
 
   const prompts = [
@@ -198,14 +197,23 @@ export async function seed(root: string): Promise<void> {
   await reply("Fixed the import; tests pass.");
   await reply("Apologies, the build broke again.", beta, "session-b");
 
+  // The rule in both checks matches on a message and on the reply of the same turn.
+  await message("make the header smaller");
+  await reply("Done, the header is smaller.");
+
   // Flags: one raised by Claude, two by the user.
   const store = openStore(databasePath(env));
-  const matches = store.prepare("SELECT id FROM matches WHERE rule_id = ? ORDER BY id").all(commits) as { id: number }[];
+  const matchesOf = (ruleId: number) =>
+    store.prepare("SELECT id FROM matches WHERE rule_id = ? ORDER BY id").all(ruleId) as { id: number }[];
+  const matches = matchesOf(commits);
+  // A saved message and a saved reply for the rule in both checks.
+  const localLinkMatches = matchesOf(localLink);
   store.close();
   withRules((rules) => {
     rules.reportWrongMatch("session-a", "Answer briefly");
     if (matches[0]) rules.flagMatch(matches[0].id, "right", "user");
     if (matches[1]) rules.flagMatch(matches[1].id, "wrong", "user");
+    for (const match of localLinkMatches) rules.flagMatch(match.id, "right", "user");
   });
 
   // An import of alpha's rules file, with a passage of each verdict, waiting for review.

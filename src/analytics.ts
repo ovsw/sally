@@ -31,6 +31,8 @@ export interface ActivityMatch {
   /** The rule's name in the version that matched; null when the rule has since been deleted. */
   name: string | null;
   score: number;
+  /** The condition that scored highest, as the version that matched words it; null when the rule has since been deleted. */
+  condition: string | null;
 }
 
 /** One check, as the Activity screen shows it. */
@@ -57,10 +59,12 @@ export interface RuleCheckView {
   checkId: number;
   createdAt: string;
   project: string | null;
+  /** The check the rule was scored in: a message check or a reply check. */
+  checkType: CheckType;
   text: string;
   /** The rule's highest score in the check. */
   score: number;
-  /** The cutoff in force for the check. */
+  /** The cutoff in force for the check, which is its check type's cutoff at the time. */
   cutoff: number;
   /** The rule version that was scored. */
   versionNumber: number | null;
@@ -120,6 +124,7 @@ type CheckViewRow = {
   check_id: number;
   created_at: string;
   project: string | null;
+  check_type: CheckType;
   text: string;
   score: number;
   cutoff: number;
@@ -131,6 +136,7 @@ const checkView = (row: CheckViewRow): RuleCheckView => ({
   checkId: row.check_id,
   createdAt: row.created_at,
   project: row.project,
+  checkType: row.check_type,
   text: row.text,
   score: row.score,
   cutoff: row.cutoff,
@@ -178,8 +184,9 @@ export function createAnalyticsQueries(db: Store, requireRule: (ruleId: number) 
       }[];
 
       const matchesOf = db.prepare(
-        `SELECT f.rule_id, v.name, f.score
+        `SELECT f.rule_id, v.name, f.score, cond.text AS condition
            FROM matches f LEFT JOIN versions v ON v.id = f.version_id
+           LEFT JOIN version_conditions cond ON cond.version_id = f.version_id AND cond.condition_id = f.condition_id
           WHERE f.check_id = ? ORDER BY f.score DESC, f.rule_id`,
       );
       return rows.map((row) => ({
@@ -193,10 +200,13 @@ export function createAnalyticsQueries(db: Store, requireRule: (ruleId: number) 
         error: row.error,
         durationMs: row.duration_ms,
         inputTokens: row.input_tokens,
-        matches: (matchesOf.all(row.id) as { rule_id: number; name: string | null; score: number }[]).map((f) => ({
+        matches: (
+          matchesOf.all(row.id) as { rule_id: number; name: string | null; score: number; condition: string | null }[]
+        ).map((f) => ({
           ruleId: f.rule_id,
           name: f.name,
           score: f.score,
+          condition: f.condition,
         })),
       }));
     },
@@ -235,7 +245,7 @@ function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalyt
   const recentMatches = (
     db
       .prepare(
-        `SELECT f.id AS match_id, f.check_id, c.created_at, p.name AS project, c.text, f.score, c.cutoff,
+        `SELECT f.id AS match_id, f.check_id, c.created_at, p.name AS project, c.check_type, c.text, f.score, c.cutoff,
                 v.number AS version_number, cond.text AS condition,
                 fl.verdict, fl.raised_by, fl.created_at AS flagged_at
            FROM matches f
@@ -268,7 +278,7 @@ function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalyt
   const nearMisses = (
     db
       .prepare(
-        `SELECT best.check_id, c.created_at, p.name AS project, c.text, best.score, c.cutoff,
+        `SELECT best.check_id, c.created_at, p.name AS project, c.check_type, c.text, best.score, c.cutoff,
                 v.number AS version_number, cond.text AS condition
            FROM (SELECT check_id, version_id, condition_id, MAX(score) AS score
                    FROM scores WHERE version_id IN (${versionsOfRule})

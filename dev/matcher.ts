@@ -11,6 +11,7 @@ const KEYWORDS: Array<[RegExp, RegExp, number]> = [
   [/test/i, /test/i, 0.63],
   [/deploy/i, /deploy/i, 0.77],
   [/apolog/i, /sorry|apolog/i, 0.88],
+  [/visual change/i, /header|colour/i, 0.84],
 ];
 
 /**
