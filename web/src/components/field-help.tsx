@@ -95,7 +95,7 @@ export const ruleHelp = {
   ),
   /** Said beside the switches of a published condition in the draft, which a draft does not change. */
   publishedSwitch:
-    "This condition is published, so it keeps these switches when you change its wording. To switch it, use the published version on the rule's screen, where a switch takes effect at once.",
+    "This condition is published, so it keeps these switches when you change its wording. While it is in the published version, switch it there, on the rule's screen, where a switch takes effect at once.",
   /** Said beside the switches of a condition in the published version, which take effect at once. */
   liveSwitch:
     "A switch here takes effect at once, with no draft and no new version. Switching off the last condition that is on switches the rule off too.",
