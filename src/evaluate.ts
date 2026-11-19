@@ -148,6 +148,11 @@ function checkType(value: unknown, where: string): CheckType {
  * with its wording and its own switches, `{ "text": ..., "message": true, "reply": false }`.
  */
 function parseCondition(condition: unknown, check: CheckType | undefined, named: string): NewCondition {
+  const text = typeof condition === "string" ? condition : isObject(condition) ? condition.text : undefined;
+  if (typeof text === "string" && !text.trim()) {
+    // A blank condition is never saved, so counting it would misstate the conditions scored.
+    throw new UsageError(`${named} has a condition with no wording.`);
+  }
   if (typeof condition === "string") {
     if (!check) throw new UsageError(`${named} has a condition given as text, which needs the rule's "check".`);
     return { text: condition, message: check === "message", reply: check === "reply" };

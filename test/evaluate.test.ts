@@ -286,6 +286,14 @@ describe("the evaluation file", () => {
       'needs a condition on for "message" or "reply"',
     ],
     [
+      "a condition with no wording",
+      {
+        rules: [{ name: "Brief", conditions: [{ text: "C.", message: true }, { text: "  ", reply: true }] }],
+        cases: [{ check: "message", text: "Hi", expected: [] }],
+      },
+      "has a condition with no wording",
+    ],
+    [
       "a switch that is not true or false",
       { rules: [{ name: "Brief", conditions: [{ text: "C.", message: "yes" }] }], cases: [{ check: "message", text: "Hi", expected: [] }] },
       `a condition's "message" is true or false`,
