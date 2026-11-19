@@ -426,6 +426,26 @@ export function rescoreDraft(id: number): Promise<RescoreResult> {
   return call("POST", `/api/rules/${id}/rescore`, {});
 }
 
+/**
+ * Typed conditions scored against a typed text. `cut` says the text was too
+ * long for Jev and lost its middle. A failure is an answer, not a refusal.
+ */
+export type TrialResult =
+  | {
+      status: "scored";
+      cutoff: number;
+      scores: { condition: string; score: number }[];
+      best: number;
+      matched: boolean;
+      cut: boolean;
+    }
+  | { status: "failed"; cutoff: number; error: string };
+
+/** Scores the conditions against the text with Jev, at the cutoff of the check type. Records nothing. */
+export function runTrial(trial: { text: string; checkType: CheckType; conditions: string[] }): Promise<TrialResult> {
+  return call("POST", "/api/trial", trial);
+}
+
 /** What the import proposes for a passage. */
 export type PassageVerdict = "becomes_rule" | "always_rule" | "too_vague";
 

@@ -5,6 +5,8 @@ import type { Outcome } from "../engine.ts";
 import { type Verdict, VERDICTS } from "../flags.ts";
 import type { ImportService } from "../import.ts";
 import {
+  CHECK_TYPES,
+  type CheckType,
   type DraftCondition,
   type NewCondition,
   type RuleFilter,
@@ -201,6 +203,8 @@ async function handleDecision(
  * - PUT  /api/rules/:id/scope                            set where the rule applies { scope }: at once,
  *                                                        with no new version and the draft untouched
  * - POST /api/rules/:id/rescore                          score the draft's conditions against the saved cases
+ * - POST /api/trial                                      score a typed text against typed conditions
+ *                                                        { text, checkType, conditions: [text] }
  * - POST /api/rules/:id/publish                          publish the draft
  * - DELETE /api/rules/:id/draft                          discard the draft
  * - POST /api/rules/:id/versions/:number/draft           start a draft from a published version
@@ -230,8 +234,9 @@ async function handleDecision(
  *
  * Every change answers with the rule as it now is, except a delete, which
  * answers { deleted: true }, a flag, which answers with the match's flag,
- * and a re-score, which changes nothing and answers with which saved cases
- * pass (a Jev failure is part of that answer, not a refusal). Refusals answer
+ * a re-score, which changes nothing and answers with which saved cases
+ * pass, and a trial, which changes nothing and answers with the scores (for
+ * both, a Jev failure is part of the answer, not a refusal). Refusals answer
  * with { error } and a 4xx status.
  */
 export async function handleApi(
@@ -275,6 +280,16 @@ export async function handleApi(
       const verdict = (await readJson(req)).verdict;
       if (!VERDICTS.includes(verdict as Verdict)) throw new HttpError(400, '"verdict" is wrong or right.');
       return send(res, 200, rules.flagMatch(matchId, verdict as Verdict, "user"));
+    }
+    if (parts.length === 1 && parts[0] === "trial" && method === "POST") {
+      const body = await readJson(req);
+      const checkType = body.checkType;
+      if (!CHECK_TYPES.includes(checkType as CheckType)) throw new HttpError(400, '"checkType" is message or reply.');
+      const conditions = body.conditions;
+      if (!Array.isArray(conditions) || !conditions.every((c) => typeof c === "string")) {
+        throw new HttpError(400, '"conditions" must be a list of texts.');
+      }
+      return send(res, 200, await rules.trial({ text: text(body, "text"), conditions, checkType: checkType as CheckType }));
     }
     if (parts[0] !== "rules") throw new HttpError(404, "Not found.");
     const id = parts[1] === undefined ? undefined : Number(parts[1]);

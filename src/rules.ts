@@ -6,6 +6,7 @@ import { conditionFits, estimateTokens, REQUEST_TOKEN_LIMIT, REQUEST_WARNING_SHA
 import type { Matcher } from "./matcher.ts";
 import { rescoreCases, type RescoreResult } from "./rescore.ts";
 import { type Store, transaction } from "./store.ts";
+import { runTrial, type TrialResult } from "./trial.ts";
 
 export type CheckType = "message" | "reply";
 
@@ -47,6 +48,13 @@ export interface DraftCondition {
   text: string;
   message?: boolean;
   reply?: boolean;
+}
+
+/** What a trial scores: a text, the conditions to score against it, and the kind of check whose cutoff applies. */
+export interface TrialInput {
+  text: string;
+  conditions: string[];
+  checkType: CheckType;
 }
 
 export interface NewRule {
@@ -336,6 +344,14 @@ export interface RulesService extends AnalyticsQueries, Flags {
    * no draft, or a draft that could not be published.
    */
   rescoreDraft(ruleId: number): Promise<RescoreResult>;
+  /**
+   * Scores typed text against typed conditions, as a check of this type would
+   * send them, at that check type's cutoff. Blank conditions are left out. It
+   * belongs to no rule, changes nothing and records nothing. A matcher failure
+   * is answered as a failed result, never thrown. Refuses a blank text, no
+   * condition, or a condition too long for Jev.
+   */
+  trial(trial: TrialInput): Promise<TrialResult>;
   /** Replaces the rule's draft, or starts one, with a copy of the given published version's text. Switches and scope stay as they are. */
   startDraftFrom(ruleId: number, versionNumber: number): void;
   /** Drops the draft, leaving the live version as it is. A rule never published has only its draft: delete it instead. */
@@ -990,6 +1006,14 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         cases: flags.savedCases(ruleId),
         cutoffs: { message: cutoffFor("message", settings), reply: cutoffFor("reply", settings) },
       });
+    },
+
+    async trial({ text, conditions, checkType }) {
+      if (!text.trim()) throw new RuleError("Type a text to try.");
+      const written = conditions.map((c) => c.trim()).filter((c) => c.length > 0);
+      if (written.length === 0) throw new RuleError("A trial needs at least one condition.");
+      if (!written.every((c) => conditionFits(c))) throw new RuleError("A condition is too long for one Jev request.");
+      return runTrial({ matcher: options.matcher, text, conditions: written, cutoff: cutoffFor(checkType, readSettings()) });
     },
 
     liveRules(checkType, project) {
