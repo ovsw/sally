@@ -27,14 +27,21 @@ const help = {
     "Whether the text stands for your message or Claude's reply. It picks the cutoff the scores are compared with, and which of a rule's conditions it fills in.",
   conditions:
     "Short, concrete statements that are true or false of the text. Each is scored on its own; a rule with these conditions would match when any one reaches the cutoff.",
-  rule: "Fills the conditions with a rule's conditions that are on for Message or Reply, worded as in its draft if it has one, otherwise as published. Editing them here never changes the rule.",
+  rule: "Fills the conditions with a rule's conditions that are on for Message or Reply, worded as in its draft if it has one, otherwise as published. Editing them here never changes the rule. The rule's instruction shows below for context; Jev never sees it.",
 };
 
-/** The conditions a rule gives a trial of this check type: from its draft if it has one, otherwise its published version. */
-async function conditionsOf(ruleId: number, checkType: CheckType): Promise<string[]> {
+/**
+ * What a rule gives a trial of this check type: its conditions on for that
+ * type, and its instruction to show beside them. Both come from its draft if
+ * it has one, otherwise its published version.
+ */
+async function ruleText(ruleId: number, checkType: CheckType): Promise<{ conditions: string[]; instruction: string }> {
   const rule = await getRule(ruleId);
   const version = rule.draft ?? rule.live;
-  return (version?.conditions ?? []).filter((c) => c[checkType]).map((c) => c.text);
+  return {
+    conditions: (version?.conditions ?? []).filter((c) => c[checkType]).map((c) => c.text),
+    instruction: version?.instruction ?? "",
+  };
 }
 
 type RunState = { kind: "idle" } | { kind: "running" } | { kind: "error"; message: string };
@@ -47,6 +54,8 @@ export function TrialScreen() {
   const [rulesError, setRulesError] = React.useState<string | null>(null);
   const [ruleId, setRuleId] = React.useState<string>("");
   const [fillNote, setFillNote] = React.useState<string | null>(null);
+  // The chosen rule's instruction, shown for context only: Jev never sees it.
+  const [instruction, setInstruction] = React.useState<string | null>(null);
   const [run, setRun] = React.useState<RunState>({ kind: "idle" });
   // The last run's answer stays until the next run, whatever is edited meanwhile.
   const [result, setResult] = React.useState<TrialResult | null>(null);
@@ -61,9 +70,11 @@ export function TrialScreen() {
     setRuleId(id);
     setFillNote(null);
     const rule = rules?.find((r) => String(r.id) === id);
+    setInstruction(null);
     try {
-      const filled = await conditionsOf(Number(id), checkType);
+      const { conditions: filled, instruction } = await ruleText(Number(id), checkType);
       setConditions(filled.length > 0 ? filled : [""]);
+      setInstruction(instruction);
       if (filled.length === 0) {
         setFillNote(`${rule?.name ?? "This rule"} has no conditions on for ${CHECK_NAMES[checkType]}.`);
       }
@@ -116,6 +127,14 @@ export function TrialScreen() {
               </Select>
               {rulesError && <p className="text-sm text-destructive">Could not load the rules: {rulesError}</p>}
               {fillNote && <p className="text-sm text-muted-foreground">{fillNote}</p>}
+              {instruction !== null && (
+                <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                  <p className="text-xs font-medium text-muted-foreground">Instruction · for context, not scored</p>
+                  <p className="mt-1 break-words whitespace-pre-wrap">
+                    {instruction.trim() || <span className="text-muted-foreground">This rule has no instruction yet.</span>}
+                  </p>
+                </div>
+              )}
             </Field>
 
             <Field>
