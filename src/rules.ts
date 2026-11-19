@@ -299,8 +299,9 @@ export interface RulesService extends AnalyticsQueries, Flags {
    */
   publish(ruleId: number): { versionNumber: number };
   /**
-   * Scores the draft's conditions against each of the rule's saved cases with
-   * the matcher and says which cases pass at the cutoff, so the user can see
+   * Scores each of the rule's saved cases with the matcher against the draft's
+   * conditions on for the case's check type, and says which cases pass at that
+   * check type's cutoff, so the user can see
    * before publishing whether the draft fixes the wrong matches without
    * losing the right ones. Changes nothing and records nothing. A matcher
    * failure is answered as a failed result, never thrown. Refuses a rule with
@@ -846,13 +847,13 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       requireComplete({ instruction: row.instruction, conditions });
       requireCompleteScope(scopeOf(row.id));
       requireFreeName(row.name, ruleId);
-      // The draft's first check type, and its conditions for that check.
-      const checkType = checkTypesOf(conditions)[0]!;
+      // Each case is scored against the draft's conditions for its own check type.
+      const settings = readSettings();
       return rescoreCases({
         matcher: options.matcher,
-        conditions: conditions.filter((c) => c[checkType]).map((c) => c.text),
+        conditions,
         cases: flags.savedCases(ruleId),
-        cutoff: cutoffFor(checkType, readSettings()),
+        cutoffs: { message: cutoffFor("message", settings), reply: cutoffFor("reply", settings) },
       });
     },
 

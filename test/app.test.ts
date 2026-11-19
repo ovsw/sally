@@ -475,12 +475,24 @@ describe("activity and analytics over HTTP", () => {
       "GET",
       "/api/activity?outcome=attached&checkType=message&limit=10",
     );
-    expect(checks).toMatchObject([{ text: "Make the header smaller", outcome: "attached" }]);
+    expect(checks).toMatchObject([
+      {
+        text: "Make the header smaller",
+        outcome: "attached",
+        checkType: "message",
+        matches: [{ name: "Local link first", condition: "The message asks for a visual change." }],
+      },
+    ]);
     expect((await app.call("GET", "/api/activity?outcome=maybe")).status).toBe(400);
     expect((await app.call("GET", "/api/activity?limit=lots")).status).toBe(400);
 
     const analytics = await app.json("GET", `/api/rules/${created.id}/analytics`);
-    expect(analytics).toMatchObject({ checks: 1, matches: 1, versions: [{ number: 1, matches: 1 }] });
+    expect(analytics).toMatchObject({
+      checks: 1,
+      matches: 1,
+      recentMatches: [{ checkType: "message", condition: "The message asks for a visual change." }],
+      versions: [{ number: 1, matches: 1 }],
+    });
     expect((await app.call("GET", "/api/rules/999/analytics")).status).toBe(404);
   });
 

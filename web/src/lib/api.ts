@@ -233,6 +233,8 @@ export interface ActivityMatch {
   ruleId: number;
   name: string | null;
   score: number;
+  /** The condition that scored highest; null when the rule has since been deleted. */
+  condition: string | null;
 }
 
 export interface ActivityCheck {
@@ -268,10 +270,14 @@ export interface RuleCheckView {
   checkId: number;
   createdAt: string;
   project: string | null;
+  /** The check the rule was scored in. */
+  checkType: CheckType;
   text: string;
   score: number;
+  /** The cutoff of that check. */
   cutoff: number;
   versionNumber: number | null;
+  /** The condition that scored highest. */
   condition: string | null;
 }
 
@@ -363,11 +369,15 @@ export function listSavedCases(ruleId: number): Promise<SavedCase[]> {
   return call<{ cases: SavedCase[] }>("GET", `/api/rules/${ruleId}/cases`).then((r) => r.cases);
 }
 
-/** How one saved case fares against the draft's conditions. */
+/** How one saved case fares against the draft's conditions for its check type. */
 export interface CaseResult {
   case: SavedCase;
+  /** The draft's conditions on for the case's check type, with their scores; empty when there are none. */
   scores: { condition: string; score: number }[];
-  best: number;
+  /** The best of those scores; null when there are none. */
+  best: number | null;
+  /** The cutoff of the case's check type. */
+  cutoff: number;
   /** The rule would match the case: a condition reaches the cutoff. */
   matched: boolean;
   /** That is what the case expects. */
@@ -376,9 +386,9 @@ export interface CaseResult {
 
 /** The draft scored against the rule's saved cases. A failure never blocks publishing. */
 export type RescoreResult =
-  | { status: "scored"; cutoff: number; cases: CaseResult[]; passed: number; failed: number }
-  | { status: "no_cases"; cutoff: number }
-  | { status: "failed"; cutoff: number; error: string; caseCount: number };
+  | { status: "scored"; cutoffs: Record<CheckType, number>; cases: CaseResult[]; passed: number; failed: number }
+  | { status: "no_cases"; cutoffs: Record<CheckType, number> }
+  | { status: "failed"; cutoffs: Record<CheckType, number>; error: string; caseCount: number };
 
 /** Scores the draft's conditions against the rule's saved cases with Jev. Changes nothing. */
 export function rescoreDraft(id: number): Promise<RescoreResult> {
