@@ -24,6 +24,7 @@ import * as React from "react";
 import { NewRuleDialog } from "@/components/new-rule-dialog";
 import { RescoreDialog } from "@/components/rescore-dialog";
 import {
+  ConditionChecks,
   ConditionsField,
   InstructionField,
   NameField,
@@ -109,9 +110,15 @@ function RuleBody({ version }: { version: VersionView }) {
     <div className="space-y-4">
       <div className="space-y-1.5">
         <h3 className="text-sm font-medium">Conditions</h3>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
+        <ul className="space-y-1.5 text-sm">
           {version.conditions.map((condition) => (
-            <li key={condition.id}>{condition.text}</li>
+            <li
+              key={condition.id}
+              className="flex items-start justify-between gap-3 rounded-md bg-muted/50 px-3 py-2"
+            >
+              <span className="min-w-0">{condition.text}</span>
+              <ConditionChecks condition={condition} />
+            </li>
           ))}
         </ul>
       </div>

@@ -198,6 +198,91 @@ describe("rules service", () => {
       });
     });
 
+    describe("switching a condition at once", () => {
+      it("takes effect on the next check with no new version, leaving the draft as it was", () => {
+        sandbox.withRules((rules) => {
+          const { ruleId } = rules.createRule({ ...rule, conditions: [message("First."), message("Second.")] });
+          rules.publish(ruleId);
+          const [first, second] = rules.getRule(ruleId).live!.conditions;
+          rules.saveDraft(ruleId, { instruction: "Do Y.", conditions: [{ id: first!.id, text: "First, reworded." }] });
+          const draftBefore = rules.getRule(ruleId).draft!;
+
+          rules.setConditionSwitch(ruleId, second!.id, "reply", true);
+          rules.setConditionSwitch(ruleId, first!.id, "message", false);
+
+          expect(texts(rules.liveRules("message"))).toEqual([["Second."]]);
+          expect(texts(rules.liveRules("reply"))).toEqual([["Second."]]);
+          const after = rules.getRule(ruleId);
+          expect(after.versions).toHaveLength(1);
+          expect(after.live!.conditions).toEqual([
+            { id: first!.id, text: "First.", message: false, reply: false },
+            { id: second!.id, ...both("Second.") },
+          ]);
+          expect(after.checkTypes).toEqual(["message", "reply"]);
+          expect(after.draft).toMatchObject({
+            savedAt: draftBefore.savedAt,
+            instruction: "Do Y.",
+            conditions: [{ id: first!.id, text: "First, reworded." }],
+          });
+          expect(after.on).toBe(true);
+        });
+      });
+
+      it("switches the rule off with its last condition, and keeps it off when a condition comes back on", () => {
+        sandbox.withRules((rules) => {
+          const { ruleId } = rules.createRule({ ...rule, conditions: [message("First."), both("Second.")] });
+          rules.publish(ruleId);
+          const [first, second] = rules.getRule(ruleId).live!.conditions;
+
+          rules.setConditionSwitch(ruleId, first!.id, "message", false);
+          rules.setConditionSwitch(ruleId, second!.id, "message", false);
+          expect(rules.getRule(ruleId).on).toBe(true);
+          rules.setConditionSwitch(ruleId, second!.id, "reply", false);
+          expect(rules.getRule(ruleId).on).toBe(false);
+          expect(rules.liveRules("message")).toEqual([]);
+          expect(rules.liveRules("reply")).toEqual([]);
+
+          rules.setConditionSwitch(ruleId, second!.id, "reply", true);
+          expect(rules.getRule(ruleId).on).toBe(false);
+          expect(rules.liveRules("reply")).toEqual([]);
+          rules.switchOn(ruleId);
+          expect(texts(rules.liveRules("reply"))).toEqual([["Second."]]);
+        });
+      });
+
+      it("refuses to switch a rule on while none of its conditions is on", () => {
+        sandbox.withRules((rules) => {
+          const { ruleId } = rules.createRule(rule);
+          rules.publish(ruleId);
+          const [condition] = rules.getRule(ruleId).live!.conditions;
+          rules.setConditionSwitch(ruleId, condition!.id, "message", false);
+
+          expect(() => rules.switchOn(ruleId)).toThrow(
+            "None of this rule's conditions is on. Switch a condition's Message or Reply on first, then the rule.",
+          );
+          expect(rules.getRule(ruleId)).toMatchObject({ on: false, live: { conditions: [{ message: false, reply: false }] } });
+        });
+      });
+
+      it("refuses a condition that is not published yet, or not the rule's, or a switch that is not one", () => {
+        sandbox.withRules((rules) => {
+          const { ruleId } = rules.createRule(rule);
+          const [unpublished] = rules.getRule(ruleId).draft!.conditions;
+          expect(() => rules.setConditionSwitch(ruleId, unpublished!.id, "reply", true)).toThrow(
+            "This condition is not published yet. Set its switches in the draft.",
+          );
+          rules.publish(ruleId);
+          const other = rules.createRule({ ...rule, name: "Other" }).ruleId;
+          rules.publish(other);
+          const [othersCondition] = rules.getRule(other).live!.conditions;
+          expect(() => rules.setConditionSwitch(ruleId, othersCondition!.id, "reply", true)).toThrow(RuleNotFoundError);
+          expect(() => rules.setConditionSwitch(999, unpublished!.id, "reply", true)).toThrow(RuleNotFoundError);
+          expect(() => rules.setConditionSwitch(ruleId, unpublished!.id, "both" as never, true)).toThrow(RuleError);
+          expect(rules.liveRules("reply")).toEqual([]);
+        });
+      });
+    });
+
     it("lists a rule under every check type one of its conditions is on for", () => {
       sandbox.withRules((rules) => {
         const messageOnly = rules.createRule({ ...rule, name: "Message only" }).ruleId;

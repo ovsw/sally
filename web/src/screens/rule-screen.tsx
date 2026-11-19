@@ -15,6 +15,7 @@ import * as React from "react";
 import { RescoreDialog } from "@/components/rescore-dialog";
 import {
   ConditionsField,
+  ConditionSwitch,
   InstructionField,
   NameField,
   publishedConditionIds,
@@ -52,6 +53,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
+  type CheckType,
   type ConditionView,
   deleteRule,
   discardDraft,
@@ -64,6 +66,7 @@ import {
   rescoreDraft,
   type RescoreResult,
   type RuleDetail,
+  setConditionSwitch,
   setScope,
   startDraftFrom,
   switchRule,
@@ -88,21 +91,57 @@ interface UndoStep {
   liveNumber: number | null;
 }
 
-/** Which checks use a condition, as small badges; "Off" when neither does. */
-function ConditionChecks({ condition }: { condition: ConditionView }) {
-  const on = [condition.message && "Message", condition.reply && "Reply"].filter(Boolean) as string[];
+interface PublishedVersionProps {
+  rule: RuleDetail;
+  /** Sets one switch of a published condition at once. */
+  onSwitch: (condition: ConditionView, checkType: CheckType, on: boolean) => void;
+  disabled: boolean;
+}
+
+/** A published condition's two switches, which take effect at once; "Off" beside them when both are off. */
+function LiveConditionSwitches({
+  condition,
+  index,
+  onSwitch,
+  disabled,
+}: {
+  condition: ConditionView;
+  index: number;
+  onSwitch: PublishedVersionProps["onSwitch"];
+  disabled: boolean;
+}) {
+  const idPrefix = React.useId();
+  const name = `Published condition ${index + 1}`;
   return (
-    <span className="flex shrink-0 gap-1">
-      {(on.length ? on : ["Off"]).map((label) => (
-        <Badge key={label} variant={label === "Off" ? "secondary" : "outline"} className="font-normal">
-          {label}
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+      <ConditionSwitch
+        id={`${idPrefix}-message`}
+        label="Message"
+        condition={name}
+        checked={condition.message}
+        disabled={disabled}
+        note={ruleHelp.liveSwitch}
+        onChange={(on) => onSwitch(condition, "message", on)}
+      />
+      <ConditionSwitch
+        id={`${idPrefix}-reply`}
+        label="Reply"
+        condition={name}
+        checked={condition.reply}
+        disabled={disabled}
+        note={ruleHelp.liveSwitch}
+        onChange={(on) => onSwitch(condition, "reply", on)}
+      />
+      {!condition.message && !condition.reply && (
+        <Badge variant="secondary" className="font-normal">
+          Off
         </Badge>
-      ))}
-    </span>
+      )}
+    </div>
   );
 }
 
-function PublishedVersion({ rule }: { rule: RuleDetail }) {
+function PublishedVersion({ rule, onSwitch, disabled }: PublishedVersionProps) {
   const live = rule.live;
   return (
     <section className="rounded-md border">
@@ -122,13 +161,15 @@ function PublishedVersion({ rule }: { rule: RuleDetail }) {
             </dt>
             <dd>
               <ul className="space-y-1.5">
-                {live.conditions.map((condition) => (
-                  <li
-                    key={condition.id}
-                    className="flex items-start justify-between gap-3 rounded-md bg-muted/50 px-3 py-2"
-                  >
-                    <span className="min-w-0">{condition.text}</span>
-                    <ConditionChecks condition={condition} />
+                {live.conditions.map((condition, index) => (
+                  <li key={condition.id} className="space-y-2 rounded-md bg-muted/50 px-3 py-2">
+                    <p className="min-w-0">{condition.text}</p>
+                    <LiveConditionSwitches
+                      condition={condition}
+                      index={index}
+                      onSwitch={onSwitch}
+                      disabled={disabled}
+                    />
                   </li>
                 ))}
               </ul>
@@ -710,6 +751,20 @@ export function RuleScreen({ id }: { id: number }) {
     await saver.inLine(async () => setRule(await setScope(id, scope)));
   };
 
+  /**
+   * Sets a published condition's switch at once. The server may switch the
+   * rule off with it, when it was the last condition on.
+   */
+  const switchCondition = (condition: ConditionView, checkType: CheckType, on: boolean) =>
+    act("switch-condition", async () => {
+      // In line with the saves, so a save answered later does not show the old switch.
+      const next = await saver.inLine(() => setConditionSwitch(id, condition.id, checkType, on));
+      setRule(next);
+      // The draft shows a published condition's switches as they are now.
+      const live = next.live;
+      if (live) setDraft((current) => current && withPublishedSwitches(current, live.conditions));
+    });
+
   const remove = () =>
     act("delete", async () => {
       await replacingDraft(async () => {
@@ -812,7 +867,11 @@ export function RuleScreen({ id }: { id: number }) {
         onRetryProjects={retryProjects}
       />
       <div className="grid grid-cols-1 gap-6 @4xl:grid-cols-2">
-        <PublishedVersion rule={rule} />
+        <PublishedVersion
+          rule={rule}
+          disabled={acting}
+          onSwitch={(condition, checkType, on) => void switchCondition(condition, checkType, on)}
+        />
         <section className="rounded-md border">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
             <div className="flex items-center gap-2">

@@ -89,22 +89,32 @@ function OutcomeBadge({ outcome }: { outcome: Outcome }) {
 function MatchLink({ match }: { match: ActivityMatch }) {
   const label = match.name ?? "Deleted rule";
   return (
-    <span className="flex items-center gap-1.5">
-      {match.name === null ? (
-        <span className="text-muted-foreground italic">{label}</span>
-      ) : (
-        <a
-          href={`/rules/${match.ruleId}`}
-          onClick={followLink}
-          className="font-medium hover:underline"
-        >
-          {label}
-        </a>
-      )}
-      <span className="text-xs text-muted-foreground tabular-nums">
-        {formatScore(match.score)}
+    <div>
+      <span className="flex items-center gap-1.5">
+        {match.name === null ? (
+          <span className="text-muted-foreground italic">{label}</span>
+        ) : (
+          <a
+            href={`/rules/${match.ruleId}`}
+            onClick={followLink}
+            className="font-medium hover:underline"
+          >
+            {label}
+          </a>
+        )}
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {formatScore(match.score)}
+        </span>
       </span>
-    </span>
+      {match.condition && (
+        <p
+          className="line-clamp-2 max-w-[280px] text-xs whitespace-normal text-muted-foreground"
+          title={match.condition}
+        >
+          {match.condition}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -179,7 +189,7 @@ const columns: ColumnDef<ActivityCheck>[] = [
     id: "attached",
     header: () => (
       <HeaderWithHelp title="Matched rules">
-        <p>The rules that matched this text, each with its score.</p>
+        <p>The rules that matched this text, each with its score and the condition that scored highest.</p>
         <p>
           A score from 0 to 1 is how likely the rule's condition holds for the text. A rule matches when a score
           reaches the cutoff set in Settings.

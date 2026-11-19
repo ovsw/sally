@@ -5,13 +5,14 @@
 import { Check, Loader2, Plus, X } from "lucide-react";
 import * as React from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LabelWithHelp, ruleHelp } from "@/components/field-help";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { ConditionDraft, RuleDetail } from "@/lib/api";
+import type { ConditionDraft, RuleDetail, Switches } from "@/lib/api";
 import type { SaveState } from "@/lib/draft-saver";
 
 export function SaveStatus({ state, hasDraft }: { state: SaveState; hasDraft: boolean }) {
@@ -45,6 +46,20 @@ const conditionExample = (condition: ConditionDraft) =>
     ? "e.g. The reply reports a finished visual change and gives no local link."
     : "e.g. The message asks for a visual change to a page.";
 
+/** Which checks use a condition, as small badges; "Off" when neither does. */
+export function ConditionChecks({ condition }: { condition: Switches }) {
+  const on = [condition.message && "Message", condition.reply && "Reply"].filter(Boolean) as string[];
+  return (
+    <span className="flex shrink-0 gap-1">
+      {(on.length ? on : ["Off"]).map((label) => (
+        <Badge key={label} variant={label === "Off" ? "secondary" : "outline"} className="font-normal">
+          {label}
+        </Badge>
+      ))}
+    </span>
+  );
+}
+
 /** The ids of the conditions in any of the rule's published versions: their switches are not the draft's to change. */
 export function publishedConditionIds(rule: RuleDetail): Set<number> {
   return new Set(rule.versions.flatMap((version) => version.conditions.map((condition) => condition.id)));
@@ -57,10 +72,12 @@ interface ConditionSwitchProps {
   condition: string;
   checked: boolean;
   disabled: boolean;
+  /** Said in the tooltip after what the switch means: how this switch takes effect. */
+  note?: string;
   onChange: (checked: boolean) => void;
 }
 
-function ConditionSwitch({ id, label, condition, checked, disabled, onChange }: ConditionSwitchProps) {
+export function ConditionSwitch({ id, label, condition, checked, disabled, note, onChange }: ConditionSwitchProps) {
   return (
     <div className="flex items-center gap-2">
       <Switch
@@ -73,7 +90,7 @@ function ConditionSwitch({ id, label, condition, checked, disabled, onChange }: 
       />
       <LabelWithHelp htmlFor={id} label={label} labelClassName="font-normal" about={`${label} switch`}>
         {label === "Message" ? ruleHelp.messageSwitch : ruleHelp.replySwitch}
-        {disabled && <p>{ruleHelp.publishedSwitch}</p>}
+        {note && <p>{note}</p>}
       </LabelWithHelp>
     </div>
   );
@@ -136,6 +153,7 @@ export function ConditionsField({ conditions, published, onChange }: ConditionsF
                   condition={name}
                   checked={condition.message}
                   disabled={fixed}
+                  note={fixed ? ruleHelp.publishedSwitch : undefined}
                   onChange={(message) => change(index, { message }, null)}
                 />
                 <ConditionSwitch
@@ -144,6 +162,7 @@ export function ConditionsField({ conditions, published, onChange }: ConditionsF
                   condition={name}
                   checked={condition.reply}
                   disabled={fixed}
+                  note={fixed ? ruleHelp.publishedSwitch : undefined}
                   onChange={(reply) => change(index, { reply }, null)}
                 />
               </div>

@@ -193,6 +193,115 @@ describe("adding passages", () => {
     ]);
   });
 
+  it("gives each condition the switches its proposal sets, and the draft carries them", () => {
+    const { id } = sandbox.withImports((imports) => imports.startImport(globalFile()));
+    const passage = becomesRule("Links", {
+      rules: [
+        {
+          name: "Links",
+          instruction: "Give the local link.",
+          conditions: [
+            { text: "The message asks for a visual change.", message: true, reply: false },
+            { text: "The reply reports a visual change with no local link.", message: false, reply: true },
+            { text: "The text is about page layout.", message: true, reply: true },
+          ],
+        },
+      ],
+    });
+    const [view] = sandbox.withImports((imports) => imports.addPassages(id, [passage])).passages;
+    const rule = view!.rules[0]!.rule!;
+    expect(rule.checkTypes).toEqual(["message", "reply"]);
+    expect(rule.draft!.conditions.map(({ text, message, reply }) => [text, message, reply])).toEqual([
+      ["The message asks for a visual change.", true, false],
+      ["The reply reports a visual change with no local link.", false, true],
+      ["The text is about page layout.", true, true],
+    ]);
+
+    // Published, the conditions keep those switches.
+    const published = sandbox.withImports((imports) => imports.publishProposedRule(view!.rules[0]!.id));
+    expect(
+      published.passages[0]!.rules[0]!.rule!.live!.conditions.map(({ message, reply }) => [message, reply]),
+    ).toEqual([
+      [true, false],
+      [false, true],
+      [true, true],
+    ]);
+  });
+
+  it("sets every condition's switches from a check type given for the whole rule", () => {
+    const { id } = sandbox.withImports((imports) => imports.startImport(globalFile()));
+    const passage = becomesRule("Release", {
+      rules: [
+        {
+          name: "Release",
+          checkType: "reply",
+          instruction: "Run the full suite.",
+          conditions: ["The reply says a release is ready.", { text: "The reply ships a build." }],
+        },
+      ],
+    });
+    const [view] = sandbox.withImports((imports) => imports.addPassages(id, [passage])).passages;
+    expect(view!.rules[0]!.rule!.draft!.conditions.map(({ message, reply }) => [message, reply])).toEqual([
+      [false, true],
+      [false, true],
+    ]);
+  });
+
+  it("switches Message on for every condition when the proposal names no check type", () => {
+    const { id } = sandbox.withImports((imports) => imports.startImport(globalFile()));
+    const passage = becomesRule("Links", {
+      rules: [
+        {
+          name: "Links",
+          instruction: "Give the local link.",
+          conditions: ["The message asks for a visual change.", { text: "The message is about a page." }],
+        },
+      ],
+    });
+    const [view] = sandbox.withImports((imports) => imports.addPassages(id, [passage])).passages;
+    expect(view!.rules[0]!.rule!.draft!.conditions.map(({ message, reply }) => [message, reply])).toEqual([
+      [true, false],
+      [true, false],
+    ]);
+  });
+
+  it("fills a switch a condition leaves out from the rule's check type", () => {
+    const { id } = sandbox.withImports((imports) => imports.startImport(globalFile()));
+    const passage = becomesRule("Release", {
+      rules: [
+        {
+          name: "Release",
+          checkType: "reply",
+          instruction: "Run the full suite.",
+          conditions: [{ text: "The text is about a release.", message: true }],
+        },
+      ],
+    });
+    const [view] = sandbox.withImports((imports) => imports.addPassages(id, [passage])).passages;
+    expect(view!.rules[0]!.rule!.draft!.conditions).toMatchObject([{ message: true, reply: true }]);
+  });
+
+  it("refuses proposed conditions that are not text or switches, an unknown check type, or no switch on", () => {
+    const { id } = sandbox.withImports((imports) => imports.startImport(globalFile()));
+    const withRule = (rule: Record<string, unknown>) => () =>
+      sandbox.withImports((imports) =>
+        imports.addPassages(id, [
+          becomesRule("Links", {
+            rules: [{ name: "Links", instruction: "Give the local link.", conditions: ["x"], ...rule } as never],
+          }),
+        ]),
+      );
+    expect(withRule({ conditions: [{ text: "The message is about Links.", message: "yes" }] })).toThrow(
+      /conditions must be a list/,
+    );
+    expect(withRule({ conditions: [42] })).toThrow(/conditions must be a list/);
+    expect(withRule({ checkType: "both" })).toThrow(/check type is message or reply/);
+    expect(withRule({ conditions: [{ text: "The message is about Links.", message: false }] })).toThrow(
+      /Passage 1, rule 1: .*Message or Reply switch on/,
+    );
+    expect(sandbox.withImports((imports) => imports.getImport(id)).passageCount).toBe(0);
+  });
+
   it("refuses a passage that becomes a rule without one, or stays with one, or has no known verdict", () => {
     const { id } = sandbox.withImports((imports) => imports.startImport(globalFile()));
     const add = (passage: NewPassage) => () => sandbox.withImports((imports) => imports.addPassages(id, [passage]));

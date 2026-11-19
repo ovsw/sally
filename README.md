@@ -184,6 +184,11 @@ than its sources.
   from an old one.
 - **Switching off:** stops a rule matching without deleting it. It is separate
   from publishing: a rule switched off keeps its published version and draft.
+- **Condition switches:** a published condition's Message and Reply switches
+  take effect at once, with no draft and no new version. A condition with both
+  off is not checked. Switching off a rule's last condition that is on
+  switches the rule off; switching a condition back on leaves the rule off
+  until you switch it on, which needs at least one condition on.
 
 ### Settings
 
@@ -338,7 +343,8 @@ full path: `node "<Sally's folder>/src/cli.ts" <command>`.
 
 An agent can read your rules and prepare drafts; it cannot publish, switch off
 or delete a rule. Those stay with you in the web app, where the agent's drafts
-show up like your own. Output is JSON.
+show up like your own. Output is JSON: each rule with its conditions, and each
+condition with its Message and Reply switches.
 
 ```sh
 node src/cli.ts rules list [--search TEXT] [--check-type message|reply] \
