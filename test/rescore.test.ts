@@ -5,7 +5,7 @@ import type { Matcher } from "../src/matcher.ts";
 import { runMessageHook } from "../src/message-hook.ts";
 import { runReplyHook } from "../src/reply-hook.ts";
 import type { RescoreResult } from "../src/rescore.ts";
-import type { RuleDetail } from "../src/rules.ts";
+import { conditionsFor, type RuleDetail } from "../src/rules.ts";
 import { type RunningApp, startApp } from "./support/app.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { type StandIn, standInMatcher } from "./support/stand-in-matcher.ts";
@@ -70,7 +70,7 @@ async function ruleWithCases(running: RunningApp, draftConditions: string[]): Pr
   await running.json("POST", `/api/matches/${matchOn("please fix the button colour")}/flag`, { verdict: "right" });
   await running.json("PUT", `/api/rules/${ruleId}/draft`, {
     instruction: "Give a local link.",
-    conditions: draftConditions,
+    conditions: conditionsFor("message", draftConditions),
   });
   return ruleId;
 }
@@ -165,9 +165,9 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
 
     expect(checkCount()).toBe(before);
     const rule = await running.json<RuleDetail>("GET", `/api/rules/${ruleId}`);
-    expect(rule).toMatchObject({ live: { number: 1, conditions: ["Old condition."] }, draft: { conditions: ["Mentions links."] } });
+    expect(rule).toMatchObject({ live: { number: 1, conditions: [{ text: "Old condition." }] }, draft: { conditions: [{ text: "Mentions links." }] } });
     // Going back to the draft: it is still there to edit.
-    await running.json("PUT", `/api/rules/${ruleId}/draft`, { instruction: "Give a local link.", conditions: ["Better."] });
+    await running.json("PUT", `/api/rules/${ruleId}/draft`, { instruction: "Give a local link.", conditions: conditionsFor("message", ["Better."]) });
     // Publishing anyway.
     const published = await running.json<{ versionNumber: number }>("POST", `/api/rules/${ruleId}/publish`, {});
     expect(published.versionNumber).toBe(2);
@@ -181,7 +181,7 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
     await running.json("POST", `/api/matches/${recentMatches[0]!.matchId}/flag`, { verdict: "right" });
     await running.json("PUT", `/api/rules/${ruleId}/draft`, {
       instruction: "Give a local link.",
-      conditions: ["Reports a visual change with no link."],
+      conditions: conditionsFor("reply", ["Reports a visual change with no link."]),
     });
 
     const result = await rescore(running, ruleId);
@@ -202,7 +202,7 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
     await running.json("POST", `/api/matches/${recentMatches[0]!.matchId}/flag`, { verdict: "wrong" });
     await running.json("PUT", `/api/rules/${ruleId}/draft`, {
       instruction: "Do it.",
-      conditions: ["Mentions other@example.com."],
+      conditions: conditionsFor("message", ["Mentions other@example.com."]),
     });
 
     await rescore(running, ruleId);
@@ -218,7 +218,7 @@ describe("a rule with no saved cases", () => {
     const jev = byText({});
     const running = await appWith(jev);
     const ruleId = sandbox.liveRule({ name: "Rule" });
-    await running.json("PUT", `/api/rules/${ruleId}/draft`, { instruction: "Do it.", conditions: ["New."] });
+    await running.json("PUT", `/api/rules/${ruleId}/draft`, { instruction: "Do it.", conditions: conditionsFor("message", ["New."]) });
 
     expect(await rescore(running, ruleId)).toEqual({ status: "no_cases", cutoff: 0.6 });
     expect(jev.calls).toEqual([]);
@@ -275,7 +275,7 @@ describe("refusals", () => {
 
     await running.json("PUT", `/api/rules/${ruleId}/draft`, {
       instruction: "Do it.",
-      conditions: ["When asked."],
+      conditions: conditionsFor("message", ["When asked."]),
       scope: { kind: "projects", projects: [] },
     });
     const noProjects = await running.call("POST", `/api/rules/${ruleId}/rescore`, {});

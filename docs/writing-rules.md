@@ -188,6 +188,11 @@ one rule.
   condition describes the failure itself. When it matches, Claude gets the
   instruction and one chance to revise the reply.
 
+Each condition has a Message switch and a Reply switch that say which check
+uses it. One rule can cover both checks: a condition worded for your message,
+on for Message, and one worded for the reply, on for Reply, sharing one
+instruction.
+
 A reply-check condition describes what is wrong with the reply, not only what
 the reply is about:
 
@@ -245,8 +250,8 @@ project's code belongs to that project.
 For each rule:
 
 - It is a conditional rule, not an always-rule.
-- Its check type fits: message check when the situation is in what you ask,
-  reply check when it is in Claude's handover.
+- Each condition is switched on for the right check: Message when the
+  situation is in what you ask, Reply when it is in Claude's handover.
 - Each condition is one sentence, starts with "The user's message" or
   "This reply", and describes one situation.
 - Each condition describes a request or a failure, not a subject.

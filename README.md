@@ -158,10 +158,11 @@ screens:
   have no such button: they go when the rule is fixed.
 - **Rules:** a searchable, filterable list. Each rule has a switch to turn it
   on or off, a green light when it is published and a yellow one when it has
-  a draft, its type (user message or agent reply), and its scope (all
-  projects, or the projects it is for).
+  a draft, the checks it takes part in (user message, agent reply or both),
+  and its scope (all projects, or the projects it is for).
 - **Rule:** opens in a panel beside the list: the published version beside
-  its draft; conditions, instruction, scope and an on/off switch; version
+  its draft; conditions, each with a Message and a Reply switch for the checks
+  that use it, instruction, scope and an on/off switch; version
   history with how each version performed; its matches, near misses and saved
   cases.
 - **Activity:** recent checks, newest first, with the text checked, the
@@ -343,8 +344,8 @@ node src/cli.ts rules list [--search TEXT] [--check-type message|reply] \
 node src/cli.ts rules show RULE   # id or exact name: published version beside draft
 node src/cli.ts rules create --name NAME --check-type message|reply \
   --instruction TEXT --condition TEXT [--condition TEXT ...]
-node src/cli.ts rules edit RULE [--name NAME] [--check-type message|reply] \
-  [--instruction TEXT] [--condition TEXT ...]
+node src/cli.ts rules edit RULE [--name NAME] [--instruction TEXT] \
+  [--condition TEXT ... [--check-type message|reply]]
 ```
 
 `node src/cli.ts rules help` lists every option.

@@ -30,7 +30,8 @@ export type AttentionReason = { summary: string } & (
 export interface AttentionEntry {
   ruleId: number;
   name: string;
-  checkType: CheckType;
+  /** The check types the rule takes part in: those its live conditions are on for. */
+  checkTypes: CheckType[];
   /** The live version the reasons are about. */
   versionNumber: number;
   /** Worst first. */
@@ -64,13 +65,17 @@ export function attentionList(db: Store, thresholds: Thresholds): AttentionEntry
 function readAttention(db: Store, t: Thresholds): AttentionEntry[] {
   const rules = db
     .prepare(
-      `SELECT r.id, r.name, r.check_type, v.id AS version_id, v.number
+      `SELECT r.id, r.name, v.id AS version_id, v.number,
+              EXISTS (SELECT 1 FROM version_conditions vc JOIN conditions c ON c.id = vc.condition_id
+                       WHERE vc.version_id = v.id AND c.message = 1) AS in_message,
+              EXISTS (SELECT 1 FROM version_conditions vc JOIN conditions c ON c.id = vc.condition_id
+                       WHERE vc.version_id = v.id AND c.reply = 1) AS in_reply
          FROM rules r
          JOIN versions v ON v.rule_id = r.id
                         AND v.number = (SELECT MAX(number) FROM versions WHERE rule_id = r.id)
         WHERE r.switched_off = 0`,
     )
-    .all() as { id: number; name: string; check_type: CheckType; version_id: number; number: number }[];
+    .all() as { id: number; name: string; version_id: number; number: number; in_message: number; in_reply: number }[];
 
   // The latest checks a version was scored in, and its matches in them.
   const latest = `SELECT DISTINCT check_id FROM scores WHERE version_id = :version ORDER BY check_id DESC LIMIT :limit`;
@@ -155,7 +160,7 @@ function readAttention(db: Store, t: Thresholds): AttentionEntry[] {
       entries.push({
         ruleId: rule.id,
         name: rule.name,
-        checkType: rule.check_type,
+        checkTypes: (["message", "reply"] as const).filter((type) => (type === "message" ? rule.in_message : rule.in_reply) === 1),
         versionNumber: rule.number,
         reasons,
       });

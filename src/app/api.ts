@@ -5,7 +5,8 @@ import type { Outcome } from "../engine.ts";
 import { type Verdict, VERDICTS } from "../flags.ts";
 import type { ImportService } from "../import.ts";
 import {
-  type CheckType,
+  type DraftCondition,
+  type NewCondition,
   type RuleFilter,
   RuleError,
   RuleNotFoundError,
@@ -58,12 +59,24 @@ function optionalText(body: Record<string, unknown>, key: string): string | unde
   return body[key] === undefined ? undefined : text(body, key);
 }
 
-function textList(body: Record<string, unknown>, key: string): string[] {
+/**
+ * The conditions: each { text, message, reply }, where message and reply are
+ * its two switches, and in a draft an id for one of the rule's conditions.
+ * The rules service says which of these each use needs.
+ */
+function conditionList(body: Record<string, unknown>, key: string): DraftCondition[] {
   const value = body[key];
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
-    throw new HttpError(400, `"${key}" must be a list of text.`);
+  const isCondition = (item: unknown) =>
+    typeof item === "object" && item !== null && !Array.isArray(item) && typeof (item as { text?: unknown }).text === "string";
+  if (!Array.isArray(value) || !value.every(isCondition)) {
+    throw new HttpError(400, `"${key}" must be a list of conditions, each with its text.`);
   }
-  return value;
+  return (value as Record<string, unknown>[]).map(({ id, text, message, reply }) => ({
+    ...(id === undefined ? {} : { id }),
+    text,
+    ...(message === undefined ? {} : { message }),
+    ...(reply === undefined ? {} : { reply }),
+  })) as DraftCondition[];
 }
 
 /** The scope, when given: { kind: "all" } or { kind: "projects", projects: [...] }. */
@@ -165,9 +178,8 @@ async function handleDecision(
   if (action === "passages/rules") {
     const detail = imports.writeRule(id, {
       name: text(body, "name"),
-      checkType: text(body, "checkType") as CheckType,
       instruction: text(body, "instruction"),
-      conditions: textList(body, "conditions"),
+      conditions: conditionList(body, "conditions") as NewCondition[],
     });
     return send(res, 201, detail);
   }
@@ -179,8 +191,10 @@ async function handleDecision(
  *
  * - GET  /api/rules?search=&checkType=&state=&hasDraft=  the rules list (state may repeat)
  * - POST /api/rules                                      create a rule (a draft only)
+ *                                                        { name, instruction, conditions: [{ text, message, reply }], scope? }
  * - GET  /api/rules/:id                                  a rule, live version and draft
- * - PUT  /api/rules/:id/draft                            save the draft
+ * - PUT  /api/rules/:id/draft                            save the draft { name?, instruction, scope?,
+ *                                                        conditions: [{ id?, text, message?, reply? }] }
  * - POST /api/rules/:id/rescore                          score the draft's conditions against the saved cases
  * - POST /api/rules/:id/publish                          publish the draft
  * - DELETE /api/rules/:id/draft                          discard the draft
@@ -203,7 +217,7 @@ async function handleDecision(
  * - POST /api/proposed-rules/:id/publish|keep|skip       decide one proposed rule
  * - POST /api/passages/:id/seen                          the user has seen the passage
  * - POST /api/passages/:id/stays                         the passage stays in the rules file; its rules are skipped
- * - POST /api/passages/:id/rules                         write a rule for the passage { name, checkType, instruction, conditions }
+ * - POST /api/passages/:id/rules                         write a rule for the passage { name, instruction, conditions }
  *   Each import decision answers with the import as it now is.
  *
  * Every change answers with the rule as it now is, except a delete, which
@@ -265,9 +279,8 @@ export async function handleApi(
       const body = await readJson(req);
       const { ruleId } = rules.createRule({
         name: text(body, "name"),
-        checkType: text(body, "checkType") as CheckType,
         instruction: text(body, "instruction"),
-        conditions: textList(body, "conditions"),
+        conditions: conditionList(body, "conditions") as NewCondition[],
         scope: optionalScope(body, "scope"),
       });
       return send(res, 201, rules.getRule(ruleId));
@@ -286,7 +299,7 @@ export async function handleApi(
       rules.saveDraft(id, {
         name: optionalText(body, "name"),
         instruction: text(body, "instruction"),
-        conditions: textList(body, "conditions"),
+        conditions: conditionList(body, "conditions"),
         scope: optionalScope(body, "scope"),
       });
       return send(res, 200, rules.getRule(id));

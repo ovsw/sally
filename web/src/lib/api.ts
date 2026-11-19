@@ -7,7 +7,8 @@ export type CheckType = "message" | "reply";
 export interface RuleSummary {
   id: number;
   name: string;
-  checkType: CheckType;
+  /** The checks the rule takes part in: those its conditions in force are on for, message first. */
+  checkTypes: CheckType[];
   /** True once the rule has a published version. */
   published: boolean;
   /** The scope in force: the published version's, or the draft's before the first publish. */
@@ -19,16 +20,37 @@ export interface RuleSummary {
 /** All projects, or only the named ones (owner/name, or a folder path). */
 export type Scope = { kind: "all" } | { kind: "projects"; projects: string[] };
 
-export interface VersionView {
+/** Which checks use a condition. With both off, the condition is off. */
+export interface Switches {
+  message: boolean;
+  reply: boolean;
+}
+
+/** A condition as a version words it, with its switches as they are now. */
+export interface ConditionView extends Switches {
+  id: number;
+  text: string;
+}
+
+/** A condition in a form: a new one has no id until the server has it. */
+export interface ConditionDraft extends Switches {
+  id?: number;
+  text: string;
+}
+
+/** What a draft holds, as the forms edit it and the server saves it. */
+export interface DraftContent {
   name: string;
   instruction: string;
-  conditions: string[];
+  conditions: ConditionDraft[];
   scope: Scope;
 }
 
-/** A version as the server returns it: with the check type it runs on. */
-export interface StoredVersion extends VersionView {
-  checkType: CheckType;
+export interface VersionView {
+  name: string;
+  instruction: string;
+  conditions: ConditionView[];
+  scope: Scope;
 }
 
 export interface Project {
@@ -36,14 +58,14 @@ export interface Project {
   firstSeenAt: string;
 }
 
-export interface PublishedVersion extends StoredVersion {
+export interface PublishedVersion extends VersionView {
   number: number;
   publishedAt: string;
 }
 
 export interface RuleDetail extends RuleSummary {
   live: PublishedVersion | null;
-  draft: (StoredVersion & { savedAt: string }) | null;
+  draft: (VersionView & { savedAt: string }) | null;
   /** Every published version, newest first. */
   versions: PublishedVersion[];
 }
@@ -101,14 +123,20 @@ export function getRule(id: number): Promise<RuleDetail> {
   return call("GET", `/api/rules/${id}`);
 }
 
-export function createRule(
-  rule: Omit<VersionView, "scope"> & { checkType: CheckType; scope?: Scope },
-): Promise<RuleDetail> {
+/** What a new rule is made of: each condition with its wording and its two switches. */
+export interface NewRule {
+  name: string;
+  instruction: string;
+  conditions: (Switches & { text: string })[];
+  scope?: Scope;
+}
+
+export function createRule(rule: NewRule): Promise<RuleDetail> {
   return call("POST", "/api/rules", rule);
 }
 
 /** `keepalive` lets the save finish after the page has gone. */
-export function saveDraft(id: number, draft: VersionView, keepalive = false): Promise<RuleDetail> {
+export function saveDraft(id: number, draft: DraftContent, keepalive = false): Promise<RuleDetail> {
   return call("PUT", `/api/rules/${id}/draft`, draft, keepalive);
 }
 
@@ -279,7 +307,8 @@ export interface AttentionReason {
 export interface AttentionEntry {
   ruleId: number;
   name: string;
-  checkType: CheckType;
+  /** The checks the rule takes part in. */
+  checkTypes: CheckType[];
   versionNumber: number;
   reasons: AttentionReason[];
 }
@@ -423,9 +452,6 @@ export function markPassageStays(passageId: number): Promise<ImportDetail> {
   return decide(`/api/passages/${passageId}/stays`);
 }
 
-export function writeRule(
-  passageId: number,
-  rule: { name: string; checkType: CheckType; instruction: string; conditions: string[] },
-): Promise<ImportDetail> {
+export function writeRule(passageId: number, rule: Omit<NewRule, "scope">): Promise<ImportDetail> {
   return decide(`/api/passages/${passageId}/rules`, rule);
 }

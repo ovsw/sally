@@ -6,6 +6,7 @@ import { ATTACHED_HEADER, REPORT_LINE, runMessageHook } from "../src/message-hoo
 import { databasePath } from "../src/paths.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { standInMatcher } from "./support/stand-in-matcher.ts";
+import { conditionsFor } from "../src/rules.ts";
 
 interface CheckRow {
   id: number;
@@ -92,7 +93,7 @@ describe("message check", () => {
 
     expect(context(output)).toContain("Several");
     const scores = sandbox.query<{ text: string; score: number; rule_id: number }>(
-      `SELECT c.text, s.score, s.rule_id FROM scores s JOIN conditions c ON c.id = s.condition_id ORDER BY c.position`,
+      `SELECT c.text, s.score, s.rule_id FROM scores s JOIN version_conditions c ON c.version_id = s.version_id AND c.condition_id = s.condition_id ORDER BY c.position`,
     );
     expect(scores).toEqual([
       { text: "First condition.", score: 0.1, rule_id: ruleId },
@@ -100,7 +101,7 @@ describe("message check", () => {
       { text: "Third condition.", score: 0.3, rule_id: ruleId },
     ]);
     const matches = sandbox.query<{ text: string; score: number }>(
-      "SELECT c.text, f.score FROM matches f JOIN conditions c ON c.id = f.condition_id",
+      "SELECT c.text, f.score FROM matches f JOIN version_conditions c ON c.version_id = f.version_id AND c.condition_id = f.condition_id",
     );
     expect(matches).toEqual([{ text: "Second condition.", score: 0.8 }]);
   });
@@ -158,7 +159,7 @@ describe("message check", () => {
 describe("drafts and publishing", () => {
   it("ignores a rule that has only a draft", async () => {
     sandbox.withRules((rules) =>
-      rules.createRule({ name: "Draft only", checkType: "message", instruction: "Do X.", conditions: ["Condition A."] }),
+      rules.createRule({ name: "Draft only", instruction: "Do X.", conditions: conditionsFor("message", ["Condition A."]) }),
     );
     const matcher = standInMatcher({ "Condition A.": 1 });
 
@@ -171,7 +172,7 @@ describe("drafts and publishing", () => {
   it("keeps using the live version while a draft is open, and the published draft on the next check", async () => {
     const ruleId = sandbox.liveRule({ name: "Evolving", instruction: "Version one.", conditions: ["Old condition."] });
     sandbox.withRules((rules) =>
-      rules.saveDraft(ruleId, { instruction: "Version two.", conditions: ["New condition."] }),
+      rules.saveDraft(ruleId, { instruction: "Version two.", conditions: conditionsFor("message", ["New condition."]) }),
     );
     const matcher = standInMatcher({ "Old condition.": 0.9, "New condition.": 0.9 });
 
@@ -220,7 +221,7 @@ describe("what is recorded", () => {
 
     const scores = sandbox.query<{ rule_id: number; version: number; text: string; score: number }>(
       `SELECT s.rule_id, v.number AS version, c.text, s.score
-         FROM scores s JOIN versions v ON v.id = s.version_id JOIN conditions c ON c.id = s.condition_id
+         FROM scores s JOIN versions v ON v.id = s.version_id JOIN version_conditions c ON c.version_id = s.version_id AND c.condition_id = s.condition_id
         WHERE s.check_id = ? ORDER BY c.text`,
       check!.id,
     );
@@ -231,7 +232,7 @@ describe("what is recorded", () => {
     ]);
     const matches = sandbox.query<{ rule_id: number; version: number; text: string; score: number }>(
       `SELECT f.rule_id, v.number AS version, c.text, f.score
-         FROM matches f JOIN versions v ON v.id = f.version_id JOIN conditions c ON c.id = f.condition_id
+         FROM matches f JOIN versions v ON v.id = f.version_id JOIN version_conditions c ON c.version_id = f.version_id AND c.condition_id = f.condition_id
         WHERE f.check_id = ?`,
       check!.id,
     );

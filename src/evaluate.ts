@@ -13,7 +13,7 @@ import { PADDING_AVAILABLE, paddingConditions } from "./evaluation-padding.ts";
 import { createJevMatcher } from "./jev.ts";
 import type { Matcher } from "./matcher.ts";
 import { type Env, readApiKey } from "./paths.ts";
-import { type CheckType, createRulesService, DEFAULT_SETTINGS, RuleError, type Settings } from "./rules.ts";
+import { type CheckType, conditionsFor, createRulesService, DEFAULT_SETTINGS, RuleError, type Settings } from "./rules.ts";
 import { openStore } from "./store.ts";
 
 /** How many conditions the scale run pads each check type to, unless told otherwise. */
@@ -306,7 +306,7 @@ export async function evaluate(
     const add = (name: string, check: CheckType, conditions: string[], instruction: string, isPadding: boolean) => {
       let ruleId: number;
       try {
-        ruleId = rules.createRule({ name, checkType: check, conditions, instruction }).ruleId;
+        ruleId = rules.createRule({ name, conditions: conditionsFor(check, conditions), instruction }).ruleId;
       } catch (error) {
         if (error instanceof RuleError) throw new UsageError(`Rule "${name}": ${error.message}`);
         throw error;

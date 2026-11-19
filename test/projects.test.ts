@@ -6,6 +6,7 @@ import { runReplyHook } from "../src/reply-hook.ts";
 import { folder, gitConfig, gitRepo, gitWorktree } from "./support/git.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { type StandIn, standInMatcher } from "./support/stand-in-matcher.ts";
+import { conditionsFor } from "../src/rules.ts";
 
 let sandbox: Sandbox;
 beforeEach(() => {
@@ -163,7 +164,7 @@ describe("rule scope", () => {
     const matcher = standInMatcher({ "Repo condition.": 0.99 });
 
     expect(await messageIn(elsewhere, matcher)).toBe("");
-    expect(sandbox.query("SELECT * FROM scores s JOIN conditions c ON c.id = s.condition_id WHERE c.text = 'Repo condition.'")).toEqual(
+    expect(sandbox.query("SELECT * FROM scores s JOIN version_conditions c ON c.version_id = s.version_id AND c.condition_id = s.condition_id WHERE c.text = 'Repo condition.'")).toEqual(
       [],
     );
   });
@@ -193,7 +194,7 @@ describe("rule scope", () => {
     const matcher = standInMatcher();
 
     sandbox.withRules((rules) =>
-      rules.saveDraft(id, { instruction: "Do it.", conditions: ["Repo condition."], scope: { kind: "all" } }),
+      rules.saveDraft(id, { instruction: "Do it.", conditions: conditionsFor("message", ["Repo condition."]), scope: { kind: "all" } }),
     );
     await messageIn(elsewhere, matcher);
     sandbox.withRules((rules) => rules.publish(id));

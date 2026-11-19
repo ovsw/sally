@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { type RuleDetail, saveDraft, type VersionView } from "@/lib/api";
+import { type DraftContent, type RuleDetail, saveDraft } from "@/lib/api";
 
 // How a rule's draft is saved as the user types, wherever it is edited: the
 // Rule screen and each proposed rule on the Import screen. Edits are saved
@@ -24,7 +24,7 @@ export interface DraftSaver {
   state: SaveState;
   setState: (state: SaveState) => void;
   /** Saves `content` into the draft after a pause; a later call replaces it. */
-  saveSoon: (content: VersionView) => void;
+  saveSoon: (content: DraftContent) => void;
   /**
    * Saves the latest edits now. Resolves to whether the last save succeeded.
    * Edits whose save failed are kept, so a later flush sends them again,
@@ -47,7 +47,7 @@ export interface DraftSaver {
 export function useDraftSaver(ruleId: number, onSaved: (rule: RuleDetail) => void): DraftSaver {
   const [state, setState] = React.useState<SaveState>({ kind: "idle" });
   const timer = React.useRef<number | undefined>(undefined);
-  const latest = React.useRef<VersionView | null>(null);
+  const latest = React.useRef<DraftContent | null>(null);
   // Counts edits, so a save that fails late can tell whether newer edits came.
   const edits = React.useRef(0);
   const inFlight = React.useRef<Promise<boolean>>(Promise.resolve(true));
@@ -79,7 +79,7 @@ export function useDraftSaver(ruleId: number, onSaved: (rule: RuleDetail) => voi
   }, [ruleId]);
 
   const saveSoon = React.useCallback(
-    (content: VersionView) => {
+    (content: DraftContent) => {
       latest.current = content;
       edits.current += 1;
       setState({ kind: "pending" });

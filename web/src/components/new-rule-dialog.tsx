@@ -15,17 +15,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { LabelWithHelp, ruleHelp } from "@/components/field-help";
 import { ConditionsField } from "@/components/rule-fields";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { type CheckType, createRule, type RuleDetail } from "@/lib/api";
+import { type ConditionDraft, createRule, type NewRule as RuleToCreate, type RuleDetail } from "@/lib/api";
 
-type NewRule = { name: string; checkType: CheckType; instruction: string; conditions: string[] };
+type NewRule = Omit<RuleToCreate, "scope">;
+
+/** The one empty condition a new rule starts with, on for the message. */
+const firstCondition = (): ConditionDraft[] => [{ text: "", message: true, reply: false }];
 
 interface NewRuleDialogProps<T> {
   onCreated: (created: T) => void;
@@ -46,8 +42,7 @@ export function NewRuleDialog<T = RuleDetail>({
 }: NewRuleDialogProps<T>) {
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
-  const [checkType, setCheckType] = React.useState<CheckType>("message");
-  const [conditions, setConditions] = React.useState<string[]>([""]);
+  const [conditions, setConditions] = React.useState<ConditionDraft[]>(firstCondition);
   const [instruction, setInstruction] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -58,8 +53,7 @@ export function NewRuleDialog<T = RuleDetail>({
 
   const reset = () => {
     setName("");
-    setCheckType("message");
-    setConditions([""]);
+    setConditions(firstCondition());
     setInstruction("");
     setError(null);
     setBusy(false);
@@ -73,9 +67,8 @@ export function NewRuleDialog<T = RuleDetail>({
     try {
       const rule = await create({
         name,
-        checkType,
         instruction,
-        conditions,
+        conditions: conditions.map(({ text, message, reply }) => ({ text, message, reply })),
       });
       if (session.current === mine) {
         session.current += 1;
@@ -116,42 +109,19 @@ export function NewRuleDialog<T = RuleDetail>({
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 px-6 pt-6 pb-6">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_200px]">
-              <div className="space-y-2">
-                <LabelWithHelp htmlFor="new-rule-name" label="Name">
-                  {ruleHelp.name}
-                </LabelWithHelp>
-                <Input
-                  id="new-rule-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Local link before a PR"
-                  autoFocus
-                />
-              </div>
-              <div className="space-y-2">
-                <LabelWithHelp htmlFor="new-rule-check" label="Type">
-                  {ruleHelp.check}
-                </LabelWithHelp>
-                <Select
-                  value={checkType}
-                  onValueChange={(value) => setCheckType(value as CheckType)}
-                >
-                  <SelectTrigger id="new-rule-check" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="message">User message</SelectItem>
-                    <SelectItem value="reply">Agent reply</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-2">
+              <LabelWithHelp htmlFor="new-rule-name" label="Name">
+                {ruleHelp.name}
+              </LabelWithHelp>
+              <Input
+                id="new-rule-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Local link before a PR"
+                autoFocus
+              />
             </div>
-            <ConditionsField
-              conditions={conditions}
-              checkType={checkType}
-              onChange={(next) => setConditions(next)}
-            />
+            <ConditionsField conditions={conditions} onChange={(next) => setConditions(next)} />
             <div className="space-y-2">
               <LabelWithHelp htmlFor="new-rule-instruction" label="Instruction">
                 {ruleHelp.instruction}
@@ -161,11 +131,7 @@ export function NewRuleDialog<T = RuleDetail>({
                 className="min-h-[100px] resize-none"
                 value={instruction}
                 onChange={(e) => setInstruction(e.target.value)}
-                placeholder={
-                  checkType === "message"
-                    ? "e.g. Before you open a pull request, give me the localhost link to the page and wait for my OK."
-                    : "e.g. Add the localhost link to the page you changed."
-                }
+                placeholder="e.g. Before you open a pull request, give me the localhost link to the page and wait for my OK."
               />
             </div>
             {error && (

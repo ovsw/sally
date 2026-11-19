@@ -8,7 +8,15 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { RuleError, RuleNotFoundError } from "./errors.ts";
 import { claudeDir, type Env } from "./paths.ts";
 import { resolveProject } from "./project.ts";
-import { type CheckType, createRulesService, type RuleDetail, type RulesService, type Scope } from "./rules.ts";
+import {
+  type CheckType,
+  conditionsFor,
+  createRulesService,
+  type NewRule,
+  type RuleDetail,
+  type RulesService,
+  type Scope,
+} from "./rules.ts";
 import { type Store, transaction } from "./store.ts";
 
 /**
@@ -122,7 +130,7 @@ export interface ImportDecisions {
    * its other rules. Overrules a verdict that the passage stays: it now
    * becomes a rule.
    */
-  writeRule(passageId: number, rule: ProposedRule): ImportDetail;
+  writeRule(passageId: number, rule: Omit<NewRule, "scope">): ImportDetail;
   /**
    * Overrules the verdict the other way: the passage stays in the rules file,
    * and its rules not yet published are skipped. Refuses a passage with a live
@@ -398,9 +406,8 @@ export function createImportService(db: Store, options: ImportServiceOptions): I
             try {
               ({ ruleId } = rules.createRule({
                 name: proposed.name,
-                checkType: proposed.checkType ?? "message",
                 instruction: proposed.instruction,
-                conditions: proposed.conditions,
+                conditions: conditionsFor(proposed.checkType ?? "message", proposed.conditions),
                 scope,
               }));
             } catch (error) {
@@ -536,7 +543,6 @@ function decisions(
         const passage = findPassage(passageId);
         const { ruleId } = rules.createRule({
           name: proposed.name,
-          checkType: proposed.checkType ?? "message",
           instruction: proposed.instruction,
           conditions: proposed.conditions,
           scope: scopeOf(requireImport(passage.import_id)),

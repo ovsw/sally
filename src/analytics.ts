@@ -242,7 +242,7 @@ function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalyt
            JOIN checks c ON c.id = f.check_id
            LEFT JOIN projects p ON p.id = c.project_id
            LEFT JOIN versions v ON v.id = f.version_id
-           LEFT JOIN conditions cond ON cond.id = f.condition_id
+           LEFT JOIN version_conditions cond ON cond.version_id = f.version_id AND cond.condition_id = f.condition_id
            LEFT JOIN flags fl ON fl.match_id = f.id
           WHERE f.rule_id = ?
           ORDER BY f.check_id DESC LIMIT ?`,
@@ -276,7 +276,7 @@ function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalyt
            JOIN checks c ON c.id = best.check_id
            LEFT JOIN projects p ON p.id = c.project_id
            LEFT JOIN versions v ON v.id = best.version_id
-           LEFT JOIN conditions cond ON cond.id = best.condition_id
+           LEFT JOIN version_conditions cond ON cond.version_id = best.version_id AND cond.condition_id = best.condition_id
           WHERE best.score < c.cutoff AND best.score >= c.cutoff - ? - ?
           ORDER BY best.check_id DESC LIMIT ?`,
       )

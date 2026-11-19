@@ -82,7 +82,7 @@ export function removalReport(imports: ImportService, importId: number): Removal
         live: proposal.rule?.live != null,
         on: proposal.rule?.on ?? false,
         instruction: version?.instruction ?? null,
-        conditions: version?.conditions ?? [],
+        conditions: version?.conditions.map((condition) => condition.text) ?? [],
       };
     });
     const inEffect = rules.filter((rule) => rule.live && rule.on).length;

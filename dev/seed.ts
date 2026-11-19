@@ -5,7 +5,7 @@ import { runMessageHook } from "../src/message-hook.ts";
 import { createImportService } from "../src/import.ts";
 import { databasePath, type Env } from "../src/paths.ts";
 import { runReplyHook } from "../src/reply-hook.ts";
-import { type CheckType, createRulesService, type RulesService, type Scope } from "../src/rules.ts";
+import { type CheckType, conditionsFor, createRulesService, type RulesService, type Scope } from "../src/rules.ts";
 import { openStore } from "../src/store.ts";
 import { devMatcher } from "./matcher.ts";
 
@@ -103,7 +103,12 @@ export async function seed(root: string): Promise<void> {
   const commits = withRules((rules) => {
     rules.updateSettings({ recentChecks: 40, quietChecks: 15, busyShare: 0.3, closeMargin: 0.05 });
     const live = (name: string, checkType: CheckType, instruction: string, conditions: string[], scope?: Scope) => {
-      const { ruleId } = rules.createRule({ name, checkType, instruction, conditions, ...(scope ? { scope } : {}) });
+      const { ruleId } = rules.createRule({
+        name,
+        instruction,
+        conditions: conditionsFor(checkType, conditions),
+        ...(scope ? { scope } : {}),
+      });
       rules.publish(ruleId);
       return ruleId;
     };
@@ -111,14 +116,15 @@ export async function seed(root: string): Promise<void> {
       "The user asks to write or make a git commit.",
     ]);
     // A second version and a waiting draft, for the version history.
+    const [first] = rules.getRule(commits).live!.conditions;
     rules.saveDraft(commits, {
       instruction: "Use Conventional Commits: type(scope): summary, imperative and lowercase. Say why in the body.",
-      conditions: ["The user asks to write or make a git commit.", "The user asks for a commit message."],
+      conditions: [first!, { text: "The user asks for a commit message.", message: true, reply: false }],
     });
     rules.publish(commits);
     rules.saveDraft(commits, {
       instruction: "Use Conventional Commits. Keep the summary under 72 characters.",
-      conditions: ["The user asks to write or make a git commit."],
+      conditions: [first!],
     });
     live("Answer briefly", "message", "Start with a short answer of a few lines.", [
       "The user asks a short answer question.",
@@ -142,11 +148,21 @@ export async function seed(root: string): Promise<void> {
     ]);
     live("Deploy checklist", "message", "Check the deploy checklist first.", ["The user asks to deploy."]);
     live("No apologies", "reply", "Do not apologise; state the fix.", ["The reply apologises to the user."]);
+    // One rule in both checks: a condition for the message and one for the reply.
+    rules.publish(
+      rules.createRule({
+        name: "Local link before a PR",
+        instruction: "Before opening a pull request for a visual change, give the localhost link and wait for an OK.",
+        conditions: [
+          { text: "The message asks for a visual change to a page.", message: true, reply: false },
+          { text: "The reply reports a finished visual change and gives no local link.", message: false, reply: true },
+        ],
+      }).ruleId,
+    );
     rules.createRule({
       name: "Ask before pushing",
-      checkType: "message",
       instruction: "Ask before pushing to a shared branch.",
-      conditions: ["The user asks to push."],
+      conditions: conditionsFor("message", ["The user asks to push."]),
     });
     return commits;
   });

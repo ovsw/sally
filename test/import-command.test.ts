@@ -99,7 +99,7 @@ describe("import add", () => {
     ]);
     expect(detail.passages[0]!.rules[0]!.rule).toMatchObject({
       name: "Screenshot changed pages",
-      checkType: "reply",
+      checkTypes: ["reply"],
       published: false,
     });
     expect(detail.pendingCount).toBe(2);

@@ -13,7 +13,13 @@ import {
 import * as React from "react";
 
 import { RescoreDialog } from "@/components/rescore-dialog";
-import { ConditionsField, InstructionField, NameField, SaveStatus } from "@/components/rule-fields";
+import {
+  ConditionsField,
+  InstructionField,
+  NameField,
+  publishedConditionIds,
+  SaveStatus,
+} from "@/components/rule-fields";
 import { RuleAnalyticsPanel } from "@/components/rule-analytics";
 import { RuleStatus } from "@/components/rule-status";
 import {
@@ -45,8 +51,10 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
+  type ConditionView,
   deleteRule,
   discardDraft,
+  type DraftContent,
   getRule,
   listProjects,
   type Project,
@@ -58,9 +66,9 @@ import {
   startDraftFrom,
   switchRule,
   type Scope,
-  type VersionView,
 } from "@/lib/api";
 import { errorText, useDraftSaver } from "@/lib/draft-saver";
+import { CHECK_LABELS } from "@/lib/format";
 import { navigate } from "@/lib/router";
 import { announceRuleChange, useRuleChanges } from "@/lib/rule-events";
 
@@ -73,9 +81,23 @@ const UNDO_LIMIT = 200;
  * and the live version it stood beside.
  */
 interface UndoStep {
-  content: VersionView;
+  content: DraftContent;
   hadDraft: boolean;
   liveNumber: number | null;
+}
+
+/** Which checks use a condition, as small badges; "Off" when neither does. */
+function ConditionChecks({ condition }: { condition: ConditionView }) {
+  const on = [condition.message && "Message", condition.reply && "Reply"].filter(Boolean) as string[];
+  return (
+    <span className="flex shrink-0 gap-1">
+      {(on.length ? on : ["Off"]).map((label) => (
+        <Badge key={label} variant={label === "Off" ? "secondary" : "outline"} className="font-normal">
+          {label}
+        </Badge>
+      ))}
+    </span>
+  );
 }
 
 function PublishedVersion({ rule }: { rule: RuleDetail }) {
@@ -98,9 +120,13 @@ function PublishedVersion({ rule }: { rule: RuleDetail }) {
             </dt>
             <dd>
               <ul className="space-y-1.5">
-                {live.conditions.map((condition, i) => (
-                  <li key={i} className="rounded-md bg-muted/50 px-3 py-2">
-                    {condition}
+                {live.conditions.map((condition) => (
+                  <li
+                    key={condition.id}
+                    className="flex items-start justify-between gap-3 rounded-md bg-muted/50 px-3 py-2"
+                  >
+                    <span className="min-w-0">{condition.text}</span>
+                    <ConditionChecks condition={condition} />
                   </li>
                 ))}
               </ul>
@@ -223,11 +249,12 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
 }
 
 interface DraftFormProps {
-  value: VersionView;
+  value: DraftContent;
   /** `field` names the field being typed in; null for a change made in one step. */
-  onChange: (next: VersionView, field: string | null) => void;
+  onChange: (next: DraftContent, field: string | null) => void;
   error: string | null;
-  checkType: RuleDetail["checkType"];
+  /** The conditions already published, whose switches the draft does not change. */
+  published: ReadonlySet<number>;
   projects: Project[] | null;
   projectsError: string | null;
   onRetryProjects: () => void;
@@ -237,7 +264,7 @@ function DraftForm({
   value,
   onChange,
   error,
-  checkType,
+  published,
   projects,
   projectsError,
   onRetryProjects,
@@ -247,7 +274,7 @@ function DraftForm({
       <NameField id="draft-name" name={value.name} onChange={(name) => onChange({ ...value, name }, "name")} />
       <ConditionsField
         conditions={value.conditions}
-        checkType={checkType}
+        published={published}
         onChange={(conditions, field) => onChange({ ...value, conditions }, field)}
       />
       <InstructionField
@@ -267,12 +294,14 @@ function DraftForm({
   );
 }
 
-const contentOf = (rule: RuleDetail): VersionView => {
+const contentOf = (rule: RuleDetail): DraftContent => {
   const source = rule.draft ?? rule.live;
   return {
     name: source?.name ?? rule.name,
     instruction: source?.instruction ?? "",
-    conditions: source?.conditions.length ? [...source.conditions] : [""],
+    conditions: source?.conditions.length
+      ? source.conditions.map((condition) => ({ ...condition }))
+      : [{ text: "", message: true, reply: false }],
     scope:
       source?.scope.kind === "projects"
         ? { kind: "projects", projects: [...source.scope.projects] }
@@ -322,8 +351,8 @@ function VersionHistory({
                   <p className="text-muted-foreground">Named "{version.name}"</p>
                 )}
                 <ul className="list-disc space-y-1 pl-5">
-                  {version.conditions.map((condition, i) => (
-                    <li key={i}>{condition}</li>
+                  {version.conditions.map((condition) => (
+                    <li key={condition.id}>{condition.text}</li>
                   ))}
                 </ul>
                 <p className="whitespace-pre-wrap text-muted-foreground">
@@ -352,7 +381,7 @@ function VersionHistory({
 export function RuleScreen({ id }: { id: number }) {
   const [rule, setRuleState] = React.useState<RuleDetail | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
-  const [draft, setDraft] = React.useState<VersionView | null>(null);
+  const [draft, setDraft] = React.useState<DraftContent | null>(null);
   const [projects, setProjects] = React.useState<Project[] | null>(null);
   const [projectsError, setProjectsError] = React.useState<string | null>(null);
   const [projectsAttempt, setProjectsAttempt] = React.useState(0);
@@ -458,14 +487,14 @@ export function RuleScreen({ id }: { id: number }) {
   };
 
   /** Puts `next` in the form and saves it into the draft after a pause. */
-  const saveSoon = (next: VersionView) => {
+  const saveSoon = (next: DraftContent) => {
     setDraft(next);
     setActionError(null);
     edits.current += 1;
     saver.saveSoon(next);
   };
 
-  const edit = (next: VersionView, field: string | null) => {
+  const edit = (next: DraftContent, field: string | null) => {
     if (draft) {
       const now = Date.now();
       const last = lastTyped.current;
@@ -633,6 +662,7 @@ export function RuleScreen({ id }: { id: number }) {
     action === "start-draft" || action === "discard" || action === "undo" || action === "delete";
   const canPublish = (rule.hasDraft || busySaving) && save.kind !== "error" && !acting;
   const canDiscard = rule.live !== null && showingDraft && !acting;
+  const publishedIds = publishedConditionIds(rule);
 
   return (
     <div className="@container w-full space-y-6">
@@ -641,9 +671,11 @@ export function RuleScreen({ id }: { id: number }) {
           <div className="min-w-0 space-y-2">
             <h1 className="text-2xl font-bold tracking-tight">{rule.name}</h1>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">
-                {rule.checkType === "message" ? "User message" : "Agent reply"}
-              </Badge>
+              {rule.checkTypes.map((type) => (
+                <Badge key={type} variant="outline">
+                  {CHECK_LABELS[type]}
+                </Badge>
+              ))}
               <RuleStatus published={rule.published} hasDraft={rule.hasDraft} />
             </div>
           </div>
@@ -729,7 +761,7 @@ export function RuleScreen({ id }: { id: number }) {
             <DraftForm
               value={draft}
               onChange={edit}
-              checkType={rule.draft?.checkType ?? rule.checkType}
+              published={publishedIds}
               projects={projects}
               projectsError={projectsError}
               onRetryProjects={retryProjects}
