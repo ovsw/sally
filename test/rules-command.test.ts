@@ -219,6 +219,18 @@ describe("preparing drafts", () => {
     ]);
   });
 
+  it("puts a new condition in the check the draft is in, not the one the live version is in", () => {
+    const ruleId = sandbox.liveRule({ name: "Links", conditions: ["The message asks for a visual change."] });
+    sandbox.withRules((rules) =>
+      rules.saveDraft(ruleId, { instruction: "Give a local link.", conditions: conditionsFor("reply", ["The reply gives no local link."]) }),
+    );
+    const edited = sallyJson("edit", "Links", "--condition", "The reply gives no local link.", "--condition", "The reply hands back a page.");
+    expect(edited.draft.conditions).toMatchObject([
+      { text: "The reply gives no local link.", message: false, reply: true },
+      { text: "The reply hands back a page.", message: false, reply: true },
+    ]);
+  });
+
   it("refuses an edit that changes nothing or names another rule's name", () => {
     sandbox.liveRule({ name: "Links" });
     sandbox.liveRule({ name: "Brief" });

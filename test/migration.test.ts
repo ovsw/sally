@@ -240,7 +240,7 @@ describe("a database from before the import", () => {
  * two published versions and a draft, a reply rule, and a rule never
  * published, with scores, matches, a flag and a saved case.
  */
-function writeBeforeSwitchesDatabase(): void {
+function writeBeforeSwitchesDatabase(extra = ""): void {
   const path = databasePath(sandbox.env);
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
@@ -276,6 +276,7 @@ function writeBeforeSwitchesDatabase(): void {
       INSERT INTO flags (id, match_id, verdict, raised_by, created_at) VALUES (1, 1, 'wrong', 'user', '${AT}');
       INSERT INTO saved_cases (rule_id, check_type, text, expected, flag_id, created_at)
         VALUES (1, 'message', 'first message', 'should_not_match', 1, '${AT}');
+      ${extra}
       PRAGMA user_version = ${BEFORE_SWITCHES_SCHEMA_VERSION};
     `);
   } finally {
@@ -284,6 +285,34 @@ function writeBeforeSwitchesDatabase(): void {
 }
 
 describe("a database from before conditions had switches", () => {
+  it("keeps a draft's pending move to the other check until it is published", () => {
+    // A message rule whose draft moves it to the reply check, with one wording kept and one new.
+    writeBeforeSwitchesDatabase(`
+      INSERT INTO rules (id, name, check_type, created_at) VALUES (4, 'Moving rule', 'message', '${AT}');
+      INSERT INTO versions (id, rule_id, number, name, check_type, instruction, all_projects, created_at, published_at) VALUES
+        (6, 4, 1, 'Moving rule', 'message', 'Do M.', 1, '${AT}', '${AT}'),
+        (7, 4, NULL, 'Moving rule', 'reply', 'Do M.', 1, '${AT}', NULL);
+      INSERT INTO conditions (id, version_id, position, text) VALUES
+        (9, 6, 0, 'Is about M.'), (10, 7, 0, 'Is about M.'), (11, 7, 1, 'Reply only.');
+    `);
+
+    sandbox.withRules((rules) => {
+      const live = (checkType: "message" | "reply") => rules.liveRules(checkType).filter((r) => r.ruleId === 4);
+      expect(live("message")).toMatchObject([{ conditions: [{ text: "Is about M." }] }]);
+      expect(live("reply")).toEqual([]);
+      const before = rules.getRule(4);
+      expect(before.draft!.conditions.map((c) => [c.text, c.message, c.reply])).toEqual([
+        ["Is about M.", false, true],
+        ["Reply only.", false, true],
+      ]);
+      expect(before.draft!.conditions[0]!.id).not.toBe(before.live!.conditions[0]!.id);
+
+      rules.publish(4);
+      expect(live("message")).toEqual([]);
+      expect(live("reply")).toMatchObject([{ conditions: [{ text: "Is about M." }, { text: "Reply only." }] }]);
+    });
+  });
+
   it("matches every rule exactly as before, each condition on for its rule's check type", () => {
     writeBeforeSwitchesDatabase();
 

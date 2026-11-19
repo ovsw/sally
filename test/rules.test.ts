@@ -25,6 +25,16 @@ describe("rules service", () => {
     });
   });
 
+  it("never gives a dropped condition's id to a later condition", () => {
+    sandbox.withRules((rules) => {
+      const { ruleId } = rules.createRule(rule);
+      const dropped = rules.getRule(ruleId).draft!.conditions[0]!.id;
+      rules.saveDraft(ruleId, { instruction: "Do X.", conditions: [] });
+      rules.saveDraft(ruleId, { instruction: "Do X.", conditions: conditionsFor("reply", ["Condition R."]) });
+      expect(rules.getRule(ruleId).draft!.conditions[0]!.id).not.toBe(dropped);
+    });
+  });
+
   it("numbers each publish as a new version and leaves no draft behind", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);

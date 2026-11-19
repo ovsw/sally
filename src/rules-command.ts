@@ -161,11 +161,16 @@ function edit(rules: RulesService, args: string[]): unknown {
     name: values.name,
     instruction: values.instruction ?? base.instruction,
     conditions: values.condition
-      ? newConditions(values.condition, base.conditions, checkType ?? oneCheckType(rule.checkTypes))
+      ? newConditions(values.condition, base.conditions, checkType ?? oneCheckType(checkTypesOf(base.conditions)))
       : base.conditions.map(({ id, text }) => ({ id, text })),
   };
   rules.saveDraft(ruleId, content);
   return rules.getRule(ruleId);
+}
+
+/** The checks these conditions are on for: the draft's own, which can differ from the live version's. */
+function checkTypesOf(conditions: { message: boolean; reply: boolean }[]): CheckType[] {
+  return CHECK_TYPES.filter((checkType) => conditions.some((condition) => condition[checkType]));
 }
 
 /** The check a rule is in, when it is in only one; message when it is in none. */
