@@ -23,7 +23,14 @@ import * as React from "react";
 
 import { NewRuleDialog } from "@/components/new-rule-dialog";
 import { RescoreDialog } from "@/components/rescore-dialog";
-import { ConditionsField, InstructionField, NameField, SaveStatus } from "@/components/rule-fields";
+import {
+  ConditionChecks,
+  ConditionsField,
+  InstructionField,
+  NameField,
+  publishedConditionIds,
+  SaveStatus,
+} from "@/components/rule-fields";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -44,6 +51,7 @@ import { Progress } from "@/components/ui/progress";
 import {
   ApiError,
   discardDraft,
+  type DraftContent,
   getImport,
   type ImportDetail,
   keepProposedRule,
@@ -63,6 +71,7 @@ import {
   writeRule,
 } from "@/lib/api";
 import { errorText, useDraftSaver } from "@/lib/draft-saver";
+import { checkTypesOf, checkTypesText } from "@/lib/format";
 import { followLink, isPlainClick, navigate } from "@/lib/router";
 
 const VERDICTS: Record<PassageVerdict, string> = {
@@ -83,13 +92,14 @@ function passageToShow(detail: ImportDetail, position: number | undefined): Pass
   return detail.passages.find((p) => p.pending);
 }
 
-const contentOf = (rule: RuleDetail): VersionView => {
+const contentOf = (rule: RuleDetail): DraftContent => {
   const source = rule.draft ?? rule.live!;
   return {
     name: source.name,
     instruction: source.instruction,
-    conditions: source.conditions.length ? [...source.conditions] : [""],
-    scope: source.scope,
+    conditions: source.conditions.length
+      ? source.conditions.map((condition) => ({ ...condition }))
+      : [{ text: "", message: true, reply: false }],
   };
 };
 
@@ -100,9 +110,15 @@ function RuleBody({ version }: { version: VersionView }) {
     <div className="space-y-4">
       <div className="space-y-1.5">
         <h3 className="text-sm font-medium">Conditions</h3>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          {version.conditions.map((condition, index) => (
-            <li key={index}>{condition}</li>
+        <ul className="space-y-1.5 text-sm">
+          {version.conditions.map((condition) => (
+            <li
+              key={condition.id}
+              className="flex items-start justify-between gap-3 rounded-md bg-muted/50 px-3 py-2"
+            >
+              <span className="min-w-0">{condition.text}</span>
+              <ConditionChecks condition={condition} />
+            </li>
           ))}
         </ul>
       </div>
@@ -142,7 +158,7 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
   const saver = useDraftSaver(rule.id, onSaved);
   const kept = proposed.decision === "kept";
 
-  const edit = (next: VersionView) => {
+  const edit = (next: DraftContent) => {
     setContent(next);
     saver.saveSoon(next);
   };
@@ -181,7 +197,7 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
           {kept ? <Badge variant="secondary">Kept as a draft</Badge> : <Badge variant="outline">To decide</Badge>}
         </div>
         <CardDescription>
-          {rule.checkType === "message" ? "User message" : "Agent reply"} · {scopeText(content.scope)}
+          {checkTypesText(checkTypesOf(content.conditions))} · {scopeText(rule.scope)}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -195,7 +211,7 @@ function OpenRuleCard({ proposed, rule, decide }: { proposed: ProposedRule; rule
             />
             <ConditionsField
               conditions={content.conditions}
-              checkType={rule.checkType}
+              published={publishedConditionIds(rule)}
               onChange={(conditions) => edit({ ...content, conditions })}
             />
             <InstructionField
@@ -286,7 +302,7 @@ function PublishedRuleCard({ rule, importId, decide }: { rule: RuleDetail; impor
           </Badge>
         </div>
         <CardDescription>
-          {rule.checkType === "message" ? "User message" : "Agent reply"} · {scopeText(rule.live!.scope)}
+          {checkTypesText(rule.checkTypes)} · {scopeText(rule.scope)}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -335,7 +351,7 @@ function EditPublishedCard({
   const saver = useDraftSaver(rule.id, onSaved);
   const saving = saver.state.kind === "pending" || saver.state.kind === "saving";
 
-  const edit = (next: VersionView) => {
+  const edit = (next: DraftContent) => {
     setContent(next);
     saver.saveSoon(next);
   };
@@ -424,7 +440,7 @@ function EditPublishedCard({
           {hasDraft && <Badge variant="secondary">Changes not published</Badge>}
         </div>
         <CardDescription>
-          {rule.checkType === "message" ? "User message" : "Agent reply"} · {scopeText(content.scope)}
+          {checkTypesText(rule.checkTypes)} · {scopeText(rule.scope)}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -437,7 +453,7 @@ function EditPublishedCard({
             />
             <ConditionsField
               conditions={content.conditions}
-              checkType={rule.checkType}
+              published={publishedConditionIds(rule)}
               onChange={(conditions) => edit({ ...content, conditions })}
             />
             <InstructionField

@@ -163,7 +163,7 @@ describe("rule scope", () => {
     const matcher = standInMatcher({ "Repo condition.": 0.99 });
 
     expect(await messageIn(elsewhere, matcher)).toBe("");
-    expect(sandbox.query("SELECT * FROM scores s JOIN conditions c ON c.id = s.condition_id WHERE c.text = 'Repo condition.'")).toEqual(
+    expect(sandbox.query("SELECT * FROM scores s JOIN version_conditions c ON c.version_id = s.version_id AND c.condition_id = s.condition_id WHERE c.text = 'Repo condition.'")).toEqual(
       [],
     );
   });
@@ -187,16 +187,13 @@ describe("rule scope", () => {
     expect(matcher.calls).toEqual([]);
   });
 
-  it("changes only when the draft holding the new scope is published", async () => {
+  it("changes at once when the scope is set, with no publish", async () => {
     const { elsewhere } = await setUp();
     const [{ id }] = sandbox.query<{ id: number }>("SELECT id FROM rules WHERE name = 'Only repo'") as [{ id: number }];
     const matcher = standInMatcher();
 
-    sandbox.withRules((rules) =>
-      rules.saveDraft(id, { instruction: "Do it.", conditions: ["Repo condition."], scope: { kind: "all" } }),
-    );
     await messageIn(elsewhere, matcher);
-    sandbox.withRules((rules) => rules.publish(id));
+    sandbox.withRules((rules) => rules.setScope(id, { kind: "all" }));
     await messageIn(elsewhere, matcher);
 
     expect(sentConditions(matcher)).toEqual([["Everywhere condition."], ["Everywhere condition.", "Repo condition."]]);

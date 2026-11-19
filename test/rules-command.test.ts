@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { RuleDetail, RuleSummary } from "../src/rules.ts";
+import { conditionsFor, type RuleDetail, type RuleSummary } from "../src/rules.ts";
 import { startApp } from "./support/app.ts";
 import { createSandbox, type Sandbox } from "./support/sandbox.ts";
 
@@ -34,22 +34,60 @@ function sallyJson(...args: string[]) {
 function ruleWithDraft(): number {
   const ruleId = sandbox.liveRule({ name: "Links", instruction: "Give a local link.", conditions: ["The reply is visual."] });
   sandbox.withRules((rules) =>
-    rules.saveDraft(ruleId, { instruction: "Give the localhost link.", conditions: ["The reply reports a visual change."] }),
+    rules.saveDraft(ruleId, { instruction: "Give the localhost link.", conditions: conditionsFor("message", ["The reply reports a visual change."]) }),
   );
   return ruleId;
 }
 
 describe("reading rules", () => {
-  it("lists every rule as JSON with its check type, published, on and draft", () => {
+  it("lists every rule as JSON with its conditions in force, each with its two switches, and no check type", () => {
     const linksId = ruleWithDraft();
     const draftId = sandbox.withRules(
       (rules) =>
-        rules.createRule({ name: "Brief", checkType: "reply", instruction: "Be brief.", conditions: ["The reply is long."] })
+        rules.createRule({ name: "Brief", instruction: "Be brief.", conditions: conditionsFor("reply", ["The reply is long."]) })
           .ruleId,
     );
+    const bothId = sandbox.liveRule({
+      name: "Visual",
+      instruction: "Give the localhost link.",
+      conditions: [
+        { text: "The message asks for a visual change.", message: true, reply: false },
+        { text: "The reply gives no local link.", message: false, reply: true },
+        { text: "The text is about a page's layout.", message: true, reply: true },
+      ],
+    });
+    const common = { scope: { kind: "all" }, on: true, hasDraft: true };
     expect(sallyJson("list")).toEqual([
-      { id: draftId, name: "Brief", checkType: "reply", published: false, scope: { kind: "all" }, on: true, hasDraft: true },
-      { id: linksId, name: "Links", checkType: "message", published: true, scope: { kind: "all" }, on: true, hasDraft: true },
+      {
+        id: draftId,
+        name: "Brief",
+        published: false,
+        ...common,
+        instruction: "Be brief.",
+        conditions: [{ id: expect.any(Number), text: "The reply is long.", message: false, reply: true }],
+      },
+      {
+        id: linksId,
+        name: "Links",
+        published: true,
+        ...common,
+        // The published version's, not the draft's.
+        instruction: "Give a local link.",
+        conditions: [{ id: expect.any(Number), text: "The reply is visual.", message: true, reply: false }],
+      },
+      {
+        id: bothId,
+        name: "Visual",
+        published: true,
+        ...common,
+        hasDraft: false,
+        instruction: "Give the localhost link.",
+        conditions: [
+          { id: expect.any(Number), text: "The message asks for a visual change.", message: true, reply: false },
+          { id: expect.any(Number), text: "The reply gives no local link.", message: false, reply: true },
+          { id: expect.any(Number), text: "The text is about a page's layout.", message: true, reply: true },
+        ],
+      },
     ]);
   });
 
@@ -59,13 +97,16 @@ describe("reading rules", () => {
     const names = (...args: string[]) => sallyJson("list", ...args).map((rule: { name: string }) => rule.name);
     expect(names("--search", "localhost")).toEqual(["Links"]);
     expect(names("--check-type", "reply")).toEqual(["Brief"]);
+    sandbox.liveRule({ name: "Both", conditions: [{ text: "The text is about layout.", message: true, reply: true }] });
+    expect(names("--check-type", "message")).toEqual(["Both", "Links"]);
+    expect(names("--check-type", "reply")).toEqual(["Both", "Brief"]);
     expect(names("--unpublished")).toEqual([]);
-    expect(names("--published", "--without-draft")).toEqual(["Brief"]);
-    expect(names("--on")).toEqual(["Brief", "Links"]);
+    expect(names("--published", "--without-draft")).toEqual(["Both", "Brief"]);
+    expect(names("--on")).toEqual(["Both", "Brief", "Links"]);
     expect(names("--off")).toEqual([]);
     expect(sally("list", "--on", "--off")).toMatchObject({ status: 1, stderr: expect.stringContaining("Use --on or --off, not both.") });
     expect(names("--with-draft")).toEqual(["Links"]);
-    expect(names("--without-draft")).toEqual(["Brief"]);
+    expect(names("--without-draft")).toEqual(["Both", "Brief"]);
   });
 
   it("shows one rule, by id or by name, with its live version beside its draft", () => {
@@ -73,25 +114,23 @@ describe("reading rules", () => {
     const expected = {
       id: ruleId,
       name: "Links",
-      checkType: "message",
       published: true,
       hasDraft: true,
       live: {
         number: 1,
         name: "Links",
-        checkType: "message",
         instruction: "Give a local link.",
-        conditions: ["The reply is visual."],
+        conditions: [{ text: "The reply is visual.", message: true, reply: false }],
       },
       draft: {
         name: "Links",
-        checkType: "message",
         instruction: "Give the localhost link.",
-        conditions: ["The reply reports a visual change."],
+        conditions: [{ text: "The reply reports a visual change.", message: true, reply: false }],
       },
     };
     expect(sallyJson("show", String(ruleId))).toMatchObject(expected);
     expect(sallyJson("show", "Links")).toMatchObject(expected);
+    expect(sallyJson("show", "Links")).not.toHaveProperty("checkTypes");
   });
 
   it("fails clearly for a rule that does not exist", () => {
@@ -115,14 +154,17 @@ describe("preparing drafts", () => {
       "--condition",
       "The reply hands back a page without a link.",
     );
-    expect(created).toMatchObject({ name: "Links", checkType: "reply", published: false, hasDraft: true, live: null });
+    expect(created).toMatchObject({ name: "Links", published: false, hasDraft: true, live: null });
+    expect(created).not.toHaveProperty("checkTypes");
     sandbox.withRules((rules) => {
       expect(rules.liveRules("reply")).toEqual([]);
       expect(rules.listRules()).toMatchObject([{ id: created.id, name: "Links", published: false, hasDraft: true }]);
       expect(rules.getRule(created.id).draft).toMatchObject({
-        checkType: "reply",
         instruction: "Give the localhost link.",
-        conditions: ["The reply reports a visual change.", "The reply hands back a page without a link."],
+        conditions: [
+          { text: "The reply reports a visual change.", message: false, reply: true },
+          { text: "The reply hands back a page without a link.", message: false, reply: true },
+        ],
       });
     });
   });
@@ -140,7 +182,7 @@ describe("preparing drafts", () => {
     sandbox.withRules((rules) => expect(rules.listRules().map((rule) => rule.name)).toEqual(["Links"]));
   });
 
-  it("edits a live rule's name, instruction, conditions and check type into a draft, leaving the live version alone", () => {
+  it("edits a live rule's name, instruction and conditions into a draft, new ones for the check given, leaving the live version alone", () => {
     const ruleId = sandbox.liveRule({ name: "Links", instruction: "Give a local link.", conditions: ["The reply is visual."] });
     const edited = sallyJson(
       "edit",
@@ -157,13 +199,11 @@ describe("preparing drafts", () => {
     expect(edited).toMatchObject({
       id: ruleId,
       name: "Links",
-      checkType: "message",
-      live: { name: "Links", checkType: "message", instruction: "Give a local link.", conditions: ["The reply is visual."] },
+      live: { name: "Links", instruction: "Give a local link.", conditions: [{ text: "The reply is visual.", message: true, reply: false }] },
       draft: {
         name: "Local links",
-        checkType: "reply",
         instruction: "Give the localhost link.",
-        conditions: ["The reply reports a visual change."],
+        conditions: [{ text: "The reply reports a visual change.", message: false, reply: true }],
       },
     });
     sandbox.withRules((rules) => {
@@ -183,12 +223,53 @@ describe("preparing drafts", () => {
     const edited = sallyJson("edit", String(ruleId), "--instruction", "Always give the localhost link.");
     expect(edited.draft).toMatchObject({
       name: "Links",
-      checkType: "message",
       instruction: "Always give the localhost link.",
-      conditions: ["The reply reports a visual change."],
+      conditions: [{ text: "The reply reports a visual change." }],
     });
     const renamed = sallyJson("edit", "Links", "--name", "Local links");
     expect(renamed.draft).toMatchObject({ name: "Local links", instruction: "Always give the localhost link." });
+  });
+
+  it("keeps a condition worded as before, and asks which check a new condition is for in a rule in both checks", () => {
+    const ruleId = sandbox.liveRule({
+      name: "Links",
+      conditions: [
+        { text: "The message asks for a visual change.", message: true, reply: false },
+        { text: "The reply gives no local link.", message: false, reply: true },
+      ],
+    });
+    const [kept] = sandbox.withRules((rules) => rules.getRule(ruleId).live!.conditions);
+    const bothChecks = sally("edit", "Links", "--condition", "The message asks for a visual change.", "--condition", "New.");
+    expect(bothChecks).toMatchObject({ status: 1, stderr: expect.stringContaining("--check-type") });
+    const typeAlone = sally("edit", "Links", "--check-type", "reply");
+    expect(typeAlone).toMatchObject({ status: 1, stderr: expect.stringContaining("needs --condition") });
+
+    const edited = sallyJson(
+      "edit",
+      "Links",
+      "--condition",
+      "The message asks for a visual change.",
+      "--condition",
+      "The reply hands back a page.",
+      "--check-type",
+      "reply",
+    );
+    expect(edited.draft.conditions).toEqual([
+      { id: kept!.id, text: "The message asks for a visual change.", message: true, reply: false },
+      { id: expect.any(Number), text: "The reply hands back a page.", message: false, reply: true },
+    ]);
+  });
+
+  it("puts a new condition in the check the draft is in, not the one the live version is in", () => {
+    const ruleId = sandbox.liveRule({ name: "Links", conditions: ["The message asks for a visual change."] });
+    sandbox.withRules((rules) =>
+      rules.saveDraft(ruleId, { instruction: "Give a local link.", conditions: conditionsFor("reply", ["The reply gives no local link."]) }),
+    );
+    const edited = sallyJson("edit", "Links", "--condition", "The reply gives no local link.", "--condition", "The reply hands back a page.");
+    expect(edited.draft.conditions).toMatchObject([
+      { text: "The reply gives no local link.", message: false, reply: true },
+      { text: "The reply hands back a page.", message: false, reply: true },
+    ]);
   });
 
   it("refuses an edit that changes nothing or names another rule's name", () => {
@@ -206,7 +287,7 @@ describe("preparing drafts", () => {
 });
 
 describe("drafts in the app", () => {
-  it("shows a rule created and edited here in the app, with the draft's check type", async () => {
+  it("shows a rule created and edited here in the app, with the check its draft's conditions are on for", async () => {
     const created = sallyJson(
       "create",
       "--name",
@@ -231,15 +312,14 @@ describe("drafts in the app", () => {
     const app = await startApp(sandbox);
     try {
       const { rules } = await app.json<{ rules: RuleSummary[] }>("GET", "/api/rules?checkType=reply&hasDraft=true");
-      expect(rules).toEqual([{ id: created.id, name: "Links", checkType: "reply", published: false, scope: { kind: "all" }, on: true, hasDraft: true }]);
+      expect(rules).toEqual([{ id: created.id, name: "Links", checkTypes: ["reply"], published: false, scope: { kind: "all" }, on: true, hasDraft: true }]);
       const rule = await app.json<RuleDetail>("GET", `/api/rules/${created.id}`);
       expect(rule).toMatchObject({
         live: null,
         draft: {
           name: "Links",
-          checkType: "reply",
           instruction: "Give the localhost link.",
-          conditions: ["The reply reports a visual change."],
+          conditions: [{ text: "The reply reports a visual change.", message: false, reply: true }],
         },
       });
       // The user publishes it in the app.
@@ -248,7 +328,7 @@ describe("drafts in the app", () => {
         `/api/rules/${created.id}/publish`,
         {},
       );
-      expect(published).toMatchObject({ versionNumber: 1, rule: { published: true, live: { checkType: "reply" } } });
+      expect(published).toMatchObject({ versionNumber: 1, rule: { published: true, checkTypes: ["reply"] } });
     } finally {
       await app.close();
     }
@@ -256,16 +336,15 @@ describe("drafts in the app", () => {
 
   it("shows an agent's edit of a live rule as the draft beside the live version in the app", async () => {
     const ruleId = sandbox.liveRule({ name: "Links", instruction: "Give a local link.", conditions: ["The reply is visual."] });
-    sallyJson("edit", "Links", "--name", "Local links", "--check-type", "reply");
+    sallyJson("edit", "Links", "--name", "Local links");
     const app = await startApp(sandbox);
     try {
       expect(await app.json<RuleDetail>("GET", `/api/rules/${ruleId}`)).toMatchObject({
         name: "Links",
-        checkType: "message",
         published: true,
         hasDraft: true,
-        live: { number: 1, name: "Links", checkType: "message", instruction: "Give a local link." },
-        draft: { name: "Local links", checkType: "reply", instruction: "Give a local link." },
+        live: { number: 1, name: "Links", instruction: "Give a local link." },
+        draft: { name: "Local links", instruction: "Give a local link." },
       });
     } finally {
       await app.close();

@@ -17,26 +17,65 @@ export type Scope = { kind: "all" } | { kind: "projects"; projects: string[] };
 
 export const ALL_PROJECTS: Readonly<Scope> = Object.freeze({ kind: "all" });
 
-export interface RuleContent {
-  instruction: string;
-  conditions: string[];
+/** The two check types, message first. */
+export const CHECK_TYPES: readonly CheckType[] = Object.freeze(["message", "reply"]);
+
+/**
+ * Which checks use a condition: a message check uses the conditions on for
+ * Message, a reply check those on for Reply. With both off the condition is
+ * off and is never scored.
+ */
+export interface Switches {
+  message: boolean;
+  reply: boolean;
 }
 
-export interface NewRule extends RuleContent {
+/** A condition of a new rule: its wording and its two switches. */
+export interface NewCondition extends Switches {
+  text: string;
+}
+
+/**
+ * A condition in a draft. With an id it is one of the rule's conditions, and
+ * `text` is its wording in the draft; a condition that is in a published
+ * version keeps its switches, whatever is given here. Without an id it is a
+ * new condition, and needs its switches. A condition left out of the draft
+ * goes when the draft is published.
+ */
+export interface DraftCondition {
+  id?: number;
+  text: string;
+  message?: boolean;
+  reply?: boolean;
+}
+
+export interface NewRule {
   name: string;
-  checkType: CheckType;
+  instruction: string;
+  conditions: NewCondition[];
   /** All projects when left out. */
   scope?: Scope;
 }
 
 /**
- * What a draft holds. Without a name, a check type or a scope, the draft keeps
- * the one it has (or the live version's, when it starts a new draft).
+ * What a draft holds: the rule's text only. Without a name, the draft keeps
+ * the one it has (or the live version's, when it starts a new draft). The
+ * scope is not part of a draft: it is set on the rule (see setScope).
  */
-export interface DraftContent extends RuleContent {
+export interface DraftContent {
   name?: string;
-  checkType?: CheckType;
-  scope?: Scope;
+  instruction: string;
+  conditions: DraftCondition[];
+}
+
+/** Each condition on for one check type only, as a rule for that one check is written. */
+export function conditionsFor(checkType: CheckType, texts: string[]): NewCondition[] {
+  return texts.map((text) => ({ text, message: checkType === "message", reply: checkType === "reply" }));
+}
+
+/** The check types these conditions are on for, message first. */
+export function checkTypesOf(conditions: Switches[]): CheckType[] {
+  return CHECK_TYPES.filter((type) => conditions.some((condition) => condition[type]));
 }
 
 /** A project Sally has seen a session run in. */
@@ -68,22 +107,31 @@ export interface LiveRule {
 export interface RuleSummary {
   id: number;
   name: string;
-  checkType: CheckType;
+  /**
+   * The check types the rule takes part in: those its conditions in force (the
+   * published version's, or the draft's before the first publish) are on for.
+   */
+  checkTypes: CheckType[];
   /** True once the rule has a published version. */
   published: boolean;
-  /** The scope in force: the published version's, or the draft's before the first publish. */
+  /** Where the rule applies. It belongs to the rule, not to a version, and changes at once. */
   scope: Scope;
   /** False once switched off: the engine skips it. A rule switched off before its first publish stays off when published. */
   on: boolean;
   hasDraft: boolean;
 }
 
+/** A condition as a version words it, with its switches as they are now (switches are not part of a version). */
+export interface ConditionView extends Switches {
+  id: number;
+  text: string;
+}
+
+/** A version's text: its name, instruction and the wording of its conditions. */
 export interface VersionView {
   name: string;
-  checkType: CheckType;
   instruction: string;
-  conditions: string[];
-  scope: Scope;
+  conditions: ConditionView[];
 }
 
 export interface PublishedVersionView extends VersionView {
@@ -95,17 +143,46 @@ export interface DraftView extends VersionView {
   savedAt: string;
 }
 
+/**
+ * One change to the rule's switch, to one switch of a condition, or to the
+ * rule's scope, with its time and the new value. These take effect at once and
+ * make no new version, so they are kept to explain a shift in how a rule matches.
+ */
+export type SwitchChange =
+  | {
+      id: number;
+      at: string;
+      what: "rule";
+      on: boolean;
+      /** True when Sally switched the rule off itself, because its last condition went off. */
+      bySally: boolean;
+    }
+  | {
+      id: number;
+      at: string;
+      what: "condition";
+      conditionId: number;
+      /** The condition's wording in the published version when it was switched. */
+      conditionText: string;
+      checkType: CheckType;
+      on: boolean;
+    }
+  | { id: number; at: string; what: "scope"; scope: Scope };
+
 /** A rule with its live version and its draft side by side, and every published version. */
 export interface RuleDetail extends RuleSummary {
   live: PublishedVersionView | null;
   draft: DraftView | null;
   /** Every published version, newest first. Published versions never change. */
   versions: PublishedVersionView[];
+  /** Every change to the rule's switch, its conditions' switches and its scope, newest first. */
+  switchChanges: SwitchChange[];
 }
 
 export interface RuleFilter {
   /** Matches the name, instruction or conditions of the live version or the draft, ignoring case. */
   search?: string;
+  /** The rules with a condition in force on for this check type. */
   checkType?: CheckType;
   published?: boolean;
   on?: boolean;
@@ -239,34 +316,57 @@ export interface RulesService extends AnalyticsQueries, Flags {
   /**
    * Replaces the rule's draft with this content, creating the draft if there
    * is none. A draft may be unfinished (no instruction, no conditions) but
-   * always has a name no other rule uses.
+   * always has a name no other rule uses. A new condition's switches are set
+   * here, and can change with each save until the condition is published.
    */
   saveDraft(ruleId: number, content: DraftContent): void;
-  /** Turns the draft into a new live version and returns its number. */
+  /**
+   * Turns the draft into a new live version and returns its number. Its
+   * conditions count from now on, each with its switches; conditions the
+   * draft left out no longer count.
+   */
   publish(ruleId: number): { versionNumber: number };
   /**
-   * Scores the draft's conditions against each of the rule's saved cases with
-   * the matcher and says which cases pass at the cutoff, so the user can see
+   * Scores each of the rule's saved cases with the matcher against the draft's
+   * conditions on for the case's check type, and says which cases pass at that
+   * check type's cutoff, so the user can see
    * before publishing whether the draft fixes the wrong matches without
    * losing the right ones. Changes nothing and records nothing. A matcher
    * failure is answered as a failed result, never thrown. Refuses a rule with
    * no draft, or a draft that could not be published.
    */
   rescoreDraft(ruleId: number): Promise<RescoreResult>;
-  /** Replaces the rule's draft, or starts one, with a copy of the given published version. */
+  /** Replaces the rule's draft, or starts one, with a copy of the given published version's text. Switches and scope stay as they are. */
   startDraftFrom(ruleId: number, versionNumber: number): void;
   /** Drops the draft, leaving the live version as it is. A rule never published has only its draft: delete it instead. */
   discardDraft(ruleId: number): void;
   /** Switches the rule off: it keeps its versions and draft, and the engine skips it. */
   switchOff(ruleId: number): void;
-  /** Switches the rule back on. */
+  /**
+   * Switches the rule back on. Refuses a published rule none of whose live
+   * conditions is on: a condition has to be switched on first.
+   */
   switchOn(ruleId: number): void;
+  /**
+   * Sets where the rule applies. It takes effect at once, for the next check:
+   * it makes no new version and leaves the draft as it is. Refuses a project
+   * Sally has not seen, and a list of no projects.
+   */
+  setScope(ruleId: number, scope: Scope): void;
+  /**
+   * Sets one switch of a published condition, at once: no draft, no new
+   * version, and the next check uses it. Switching off the last live condition
+   * that is on switches the rule off in the same change; switching a condition
+   * on never switches the rule on. Refuses a condition not yet published,
+   * whose switches are set in the draft.
+   */
+  setConditionSwitch(ruleId: number, conditionId: number, checkType: CheckType, on: boolean): void;
   /** Deletes the rule with all its versions and its draft. */
   deleteRule(ruleId: number): void;
   /**
-   * The live version of every rule of this check type that is on and in scope
-   * for the project, read fresh from the database. Without a project, only
-   * rules for all projects.
+   * The live version of every rule that is on, in scope for the project and
+   * has a live condition on for this check type, with only those conditions,
+   * read fresh from the database. Without a project, only rules for all projects.
    */
   liveRules(checkType: CheckType, project?: string): LiveRule[];
   /** Every rule matching the filter, by name. */
@@ -294,19 +394,38 @@ export interface RulesService extends AnalyticsQueries, Flags {
 
 const now = () => new Date().toISOString();
 
-const cleanConditions = (conditions: string[]) => conditions.map((c) => c.trim()).filter((c) => c.length > 0);
-
 /** What a version needs before it can be live. */
-function requireComplete(content: RuleContent): void {
+function requireComplete(content: { instruction: string; conditions: (Switches & { text: string })[] }): void {
   if (!content.instruction.trim()) throw new RuleError("A rule needs an instruction.");
-  const conditions = cleanConditions(content.conditions);
+  const conditions = content.conditions.filter((c) => c.text.trim().length > 0);
   if (conditions.length === 0) throw new RuleError("A rule needs at least one condition.");
-  if (!conditions.every(conditionFits)) throw new RuleError("A condition is too long for one Jev request.");
+  if (!conditions.every((c) => conditionFits(c.text.trim()))) {
+    throw new RuleError("A condition is too long for one Jev request.");
+  }
+  if (checkTypesOf(conditions).length === 0) {
+    throw new RuleError("A rule needs at least one condition with its Message or Reply switch on.");
+  }
 }
 
-function requireCheckType(checkType: unknown): asserts checkType is CheckType {
-  if (checkType !== "message" && checkType !== "reply") {
-    throw new RuleError("A rule's check type is message or reply.");
+const hasSwitches = (condition: DraftCondition): condition is DraftCondition & Switches =>
+  typeof condition.message === "boolean" && typeof condition.reply === "boolean";
+
+/** Refuses conditions that are not each a wording, with an id or switches where given. */
+function requireConditions(conditions: unknown, needSwitches: boolean): asserts conditions is DraftCondition[] {
+  if (!Array.isArray(conditions)) throw new RuleError("A rule's conditions are a list.");
+  for (const condition of conditions as unknown[]) {
+    const c = condition as Partial<Record<keyof DraftCondition, unknown>> | null;
+    const valid =
+      typeof c === "object" &&
+      c !== null &&
+      typeof c.text === "string" &&
+      (c.id === undefined || (typeof c.id === "number" && Number.isSafeInteger(c.id))) &&
+      (c.message === undefined || typeof c.message === "boolean") &&
+      (c.reply === undefined || typeof c.reply === "boolean");
+    if (!valid) throw new RuleError("Each condition is its wording, with its Message and Reply switches.");
+    if (needSwitches && !hasSwitches(c as DraftCondition)) {
+      throw new RuleError("Each condition needs its Message and Reply switches.");
+    }
   }
 }
 
@@ -321,7 +440,7 @@ function requireScope(scope: unknown): asserts scope is Scope {
   if (!valid) throw new RuleError("A rule's scope is all projects or a list of projects.");
 }
 
-/** What a scope needs before it can be live. */
+/** What a scope needs before a rule can have it. */
 function requireCompleteScope(scope: Scope): void {
   if (scope.kind === "projects" && scope.projects.length === 0) {
     throw new RuleError("Pick at least one project, or apply the rule to all projects.");
@@ -338,7 +457,6 @@ interface VersionRow {
   id: number;
   number: number | null;
   name: string;
-  check_type: CheckType;
   instruction: string;
   created_at: string;
   published_at: string | null;
@@ -362,18 +480,80 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     return [...ids];
   }
 
+  /**
+   * Inserts the draft. A condition with an id the rule has keeps its place as
+   * that condition; a new one becomes a condition of the rule, which counts
+   * only once a version holding it is published. A condition never published
+   * takes the switches given; one in a published version keeps its own.
+   */
   function insertDraft(ruleId: number, content: Required<DraftContent>): void {
-    const ids = content.scope.kind === "projects" ? projectIds(content.scope.projects) : [];
-    const { lastInsertRowid } = db
+    const { lastInsertRowid: versionId } = db
+      .prepare("INSERT INTO versions (rule_id, number, name, instruction, created_at) VALUES (?, NULL, ?, ?, ?)")
+      .run(ruleId, content.name, content.instruction, now());
+    const owned = new Set(
+      (db.prepare("SELECT id FROM conditions WHERE rule_id = ?").all(ruleId) as { id: number }[]).map((row) => row.id),
+    );
+    const setSwitches = db.prepare("UPDATE conditions SET message = ?, reply = ? WHERE id = ?");
+    const addCondition = db.prepare("INSERT INTO conditions (rule_id, message, reply) VALUES (?, ?, ?)");
+    const addWording = db.prepare(
+      "INSERT INTO version_conditions (version_id, condition_id, position, text) VALUES (?, ?, ?, ?)",
+    );
+    const placed = new Set<number>();
+    let position = 0;
+    for (const condition of content.conditions) {
+      const text = condition.text.trim();
+      if (!text) continue;
+      let id = condition.id;
+      if (id !== undefined && owned.has(id)) {
+        if (hasSwitches(condition) && !isPublished(id)) {
+          setSwitches.run(Number(condition.message), Number(condition.reply), id);
+        }
+      } else if (hasSwitches(condition)) {
+        // An id the rule no longer has, such as a draft-only condition of a discarded
+        // draft brought back by undo, is written again as a new condition.
+        id = Number(addCondition.run(ruleId, Number(condition.message), Number(condition.reply)).lastInsertRowid);
+      } else if (id !== undefined) {
+        throw new RuleError(`This rule has no condition ${id}.`);
+      } else {
+        throw new RuleError("A new condition needs its Message and Reply switches.");
+      }
+      if (placed.has(id)) throw new RuleError("A condition can be in a draft only once.");
+      placed.add(id);
+      addWording.run(versionId, id, position++, text);
+    }
+    dropUnusedConditions(ruleId);
+  }
+
+  /** True when a published version, live or older, holds the condition: its switches are no longer the draft's. */
+  function isPublished(conditionId: number): boolean {
+    return (
+      db
+        .prepare(
+          `SELECT 1 FROM version_conditions vc JOIN versions v ON v.id = vc.version_id
+            WHERE vc.condition_id = ? AND v.number IS NOT NULL`,
+        )
+        .get(conditionId) !== undefined
+    );
+  }
+
+  /** How many conditions of the rule's live version are on for a check; null for a rule never published. */
+  function liveConditionsOn(ruleId: number): number | null {
+    const version = live(ruleId);
+    if (!version) return null;
+    const { count } = db
       .prepare(
-        `INSERT INTO versions (rule_id, number, name, check_type, instruction, all_projects, created_at)
-          VALUES (?, NULL, ?, ?, ?, ?, ?)`,
+        `SELECT COUNT(*) AS count FROM version_conditions vc JOIN conditions c ON c.id = vc.condition_id
+          WHERE vc.version_id = ? AND (c.message = 1 OR c.reply = 1)`,
       )
-      .run(ruleId, content.name, content.checkType, content.instruction, content.scope.kind === "all" ? 1 : 0, now());
-    const addCondition = db.prepare("INSERT INTO conditions (version_id, position, text) VALUES (?, ?, ?)");
-    cleanConditions(content.conditions).forEach((text, position) => addCondition.run(lastInsertRowid, position, text));
-    const addProject = db.prepare("INSERT INTO version_projects (version_id, project_id) VALUES (?, ?)");
-    for (const id of ids) addProject.run(lastInsertRowid, id);
+      .get(version.id) as { count: number };
+    return count;
+  }
+
+  /** Deletes the rule's conditions that no version holds: those only a replaced or discarded draft had. */
+  function dropUnusedConditions(ruleId: number): void {
+    db.prepare(
+      "DELETE FROM conditions WHERE rule_id = ? AND id NOT IN (SELECT condition_id FROM version_conditions)",
+    ).run(ruleId);
   }
 
   /** The latest of the recent checks with the largest request, with what its text and conditions took. */
@@ -391,7 +571,11 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       | undefined;
     if (!check) return null;
     const conditions = db
-      .prepare("SELECT text FROM conditions WHERE id IN (SELECT condition_id FROM scores WHERE check_id = ?)")
+      .prepare(
+        `SELECT vc.text FROM scores s
+           JOIN version_conditions vc ON vc.version_id = s.version_id AND vc.condition_id = s.condition_id
+          WHERE s.check_id = ?`,
+      )
       .all(check.id) as { text: string }[];
     // Jev reports only the total, so the split is estimated from the lengths.
     const textTokens = estimateTokens(check.text);
@@ -411,72 +595,171 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     const rule = requireRule(ruleId);
     const versions = published(ruleId).map(publishedView);
     const draftRow = draft(ruleId);
-    const on = rule.switched_off === 0;
+    const draftView = draftRow
+      ? {
+          savedAt: draftRow.created_at,
+          name: draftRow.name,
+          instruction: draftRow.instruction,
+          conditions: conditionsOf(draftRow.id),
+        }
+      : null;
+    // A rule always has a published version or a draft.
+    const inForce = (versions[0] ?? draftView)!;
     return {
       id: ruleId,
       name: rule.name,
-      checkType: rule.check_type,
+      checkTypes: checkTypesOf(inForce.conditions),
       published: versions.length > 0,
-      // A rule always has a published version or a draft.
-      scope: versions[0]?.scope ?? scopeOf(draftRow!.id),
-      on,
+      scope: scopeOf(ruleId),
+      on: rule.switched_off === 0,
       hasDraft: draftRow !== undefined,
       live: versions[0] ?? null,
       versions,
-      draft: draftRow
-        ? {
-            savedAt: draftRow.created_at,
-            name: draftRow.name,
-            checkType: draftRow.check_type,
-            instruction: draftRow.instruction,
-            conditions: conditionsOf(draftRow.id),
-            scope: scopeOf(draftRow.id),
-          }
-        : null,
+      draft: draftView,
+      switchChanges: switchChangesOf(ruleId),
     };
   }
 
-  function scopeOf(versionId: number): Scope {
-    const { all_projects } = db.prepare("SELECT all_projects FROM versions WHERE id = ?").get(versionId) as {
+  /** The rule's switch changes, newest first: of two made in one change, the later one comes first. */
+  function switchChangesOf(ruleId: number): SwitchChange[] {
+    const rows = db
+      .prepare(
+        `SELECT id, created_at, what, condition_id, condition_text, check_type, switched_on, all_projects, projects, by_sally
+           FROM switch_changes WHERE rule_id = ? ORDER BY id DESC`,
+      )
+      .all(ruleId) as {
+      id: number;
+      created_at: string;
+      what: SwitchChange["what"];
+      condition_id: number | null;
+      condition_text: string | null;
+      check_type: CheckType | null;
+      switched_on: number | null;
+      all_projects: number | null;
+      projects: string | null;
+      by_sally: number;
+    }[];
+    return rows.map((row): SwitchChange => {
+      const base = { id: row.id, at: row.created_at };
+      if (row.what === "rule") return { ...base, what: "rule", on: row.switched_on === 1, bySally: row.by_sally === 1 };
+      if (row.what === "condition") {
+        return {
+          ...base,
+          what: "condition",
+          conditionId: row.condition_id!,
+          conditionText: row.condition_text ?? "",
+          checkType: row.check_type!,
+          on: row.switched_on === 1,
+        };
+      }
+      const scope: Scope =
+        row.all_projects === 1
+          ? { kind: "all" }
+          : { kind: "projects", projects: JSON.parse(row.projects ?? "[]") as string[] };
+      return { ...base, what: "scope", scope };
+    });
+  }
+
+  /** Records one switch change of the rule, at this moment. */
+  function recordSwitchChange(
+    ruleId: number,
+    change:
+      | { what: "rule"; on: boolean; bySally?: boolean }
+      | { what: "condition"; conditionId: number; checkType: CheckType; on: boolean }
+      | { what: "scope"; scope: Scope },
+  ): void {
+    const insert = db.prepare(
+      `INSERT INTO switch_changes
+         (rule_id, created_at, what, condition_id, condition_text, check_type, switched_on, all_projects, projects, by_sally)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    if (change.what === "rule") {
+      insert.run(ruleId, now(), "rule", null, null, null, Number(change.on), null, null, Number(change.bySally ?? false));
+    } else if (change.what === "condition") {
+      insert.run(
+        ruleId,
+        now(),
+        "condition",
+        change.conditionId,
+        publishedWording(change.conditionId),
+        change.checkType,
+        Number(change.on),
+        null,
+        null,
+        0,
+      );
+    } else {
+      const { scope } = change;
+      const projects = scope.kind === "all" ? null : JSON.stringify(scope.projects);
+      insert.run(ruleId, now(), "scope", null, null, null, null, Number(scope.kind === "all"), projects, 0);
+    }
+  }
+
+  /** The condition's wording in the latest published version that holds it. */
+  function publishedWording(conditionId: number): string | null {
+    const row = db
+      .prepare(
+        `SELECT vc.text FROM version_conditions vc JOIN versions v ON v.id = vc.version_id
+          WHERE vc.condition_id = ? AND v.number IS NOT NULL ORDER BY v.number DESC LIMIT 1`,
+      )
+      .get(conditionId) as { text: string } | undefined;
+    return row?.text ?? null;
+  }
+
+  function scopeOf(ruleId: number): Scope {
+    const { all_projects } = db.prepare("SELECT all_projects FROM rules WHERE id = ?").get(ruleId) as {
       all_projects: number;
     };
     if (all_projects === 1) return { kind: "all" };
     const rows = db
       .prepare(
-        `SELECT p.name FROM version_projects vp JOIN projects p ON p.id = vp.project_id
-          WHERE vp.version_id = ? ORDER BY lower(p.name), p.name`,
+        `SELECT p.name FROM rule_projects rp JOIN projects p ON p.id = rp.project_id
+          WHERE rp.rule_id = ? ORDER BY lower(p.name), p.name`,
       )
-      .all(versionId) as { name: string }[];
+      .all(ruleId) as { name: string }[];
     return { kind: "projects", projects: rows.map((row) => row.name) };
+  }
+
+  /** Writes the rule's scope; the caller has checked it is complete. */
+  function writeScope(ruleId: number, scope: Scope): void {
+    const ids = scope.kind === "projects" ? projectIds(scope.projects) : [];
+    db.prepare("UPDATE rules SET all_projects = ? WHERE id = ?").run(scope.kind === "all" ? 1 : 0, ruleId);
+    db.prepare("DELETE FROM rule_projects WHERE rule_id = ?").run(ruleId);
+    const addProject = db.prepare("INSERT INTO rule_projects (rule_id, project_id) VALUES (?, ?)");
+    for (const id of ids) addProject.run(ruleId, id);
   }
 
   function draft(ruleId: number): VersionRow | undefined {
     return db
-      .prepare("SELECT id, number, name, check_type, instruction, created_at, published_at FROM versions WHERE rule_id = ? AND number IS NULL")
+      .prepare("SELECT id, number, name, instruction, created_at, published_at FROM versions WHERE rule_id = ? AND number IS NULL")
       .get(ruleId) as VersionRow | undefined;
   }
 
   function live(ruleId: number): VersionRow | undefined {
     return db
       .prepare(
-        `SELECT id, number, name, check_type, instruction, created_at, published_at FROM versions
+        `SELECT id, number, name, instruction, created_at, published_at FROM versions
           WHERE rule_id = ? AND number IS NOT NULL ORDER BY number DESC LIMIT 1`,
       )
       .get(ruleId) as VersionRow | undefined;
   }
 
-  function conditionsOf(versionId: number): string[] {
+  /** The version's conditions in order: its wording of each, with the condition's switches as they are now. */
+  function conditionsOf(versionId: number): ConditionView[] {
     return (
-      db.prepare("SELECT text FROM conditions WHERE version_id = ? ORDER BY position").all(versionId) as {
-        text: string;
-      }[]
-    ).map((row) => row.text);
+      db
+        .prepare(
+          `SELECT c.id, vc.text, c.message, c.reply FROM version_conditions vc JOIN conditions c ON c.id = vc.condition_id
+            WHERE vc.version_id = ? ORDER BY vc.position`,
+        )
+        .all(versionId) as { id: number; text: string; message: number; reply: number }[]
+    ).map((row) => ({ id: row.id, text: row.text, message: row.message === 1, reply: row.reply === 1 }));
   }
 
   function published(ruleId: number): VersionRow[] {
     return db
       .prepare(
-        `SELECT id, number, name, check_type, instruction, created_at, published_at FROM versions
+        `SELECT id, number, name, instruction, created_at, published_at FROM versions
           WHERE rule_id = ? AND number IS NOT NULL ORDER BY number DESC`,
       )
       .all(ruleId) as unknown as VersionRow[];
@@ -487,25 +770,26 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       number: row.number!,
       publishedAt: row.published_at!,
       name: row.name,
-      checkType: row.check_type,
       instruction: row.instruction,
       conditions: conditionsOf(row.id),
-      scope: scopeOf(row.id),
     };
   }
 
-  function requireRule(ruleId: number): { name: string; check_type: CheckType; switched_off: number } {
-    const row = db.prepare("SELECT name, check_type, switched_off FROM rules WHERE id = ?").get(ruleId) as
-      | { name: string; check_type: CheckType; switched_off: number }
+  function requireRule(ruleId: number): { name: string; switched_off: number } {
+    const row = db.prepare("SELECT name, switched_off FROM rules WHERE id = ?").get(ruleId) as
+      | { name: string; switched_off: number }
       | undefined;
     if (!row) throw new RuleNotFoundError(`No rule with id ${ruleId}.`);
     return row;
   }
 
-  function setSwitchedOff(ruleId: number, off: boolean): void {
+  /** Sets the rule's switch, recording the change when there is one. */
+  function setSwitchedOff(ruleId: number, off: boolean, bySally = false): void {
     transaction(db, () => {
-      requireRule(ruleId);
+      const rule = requireRule(ruleId);
+      if (rule.switched_off === Number(off)) return;
       db.prepare("UPDATE rules SET switched_off = ? WHERE id = ?").run(off ? 1 : 0, ruleId);
+      recordSwitchChange(ruleId, { what: "rule", on: !off, bySally });
     });
   }
 
@@ -515,10 +799,8 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     const existing = draft(ruleId);
     if (existing) db.prepare("DELETE FROM versions WHERE id = ?").run(existing.id);
     insertDraft(ruleId, content);
-    // A rule never published goes by its draft's name and check type.
-    if (!live(ruleId)) {
-      db.prepare("UPDATE rules SET name = ?, check_type = ? WHERE id = ?").run(content.name, content.checkType, ruleId);
-    }
+    // A rule never published goes by its draft's name.
+    if (!live(ruleId)) db.prepare("UPDATE rules SET name = ? WHERE id = ?").run(content.name, ruleId);
   }
 
   /** Refuses a name that another rule uses, as its name in force or in its draft. */
@@ -557,7 +839,7 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
 
     createRule(rule) {
       const name = cleanName(rule.name);
-      requireCheckType(rule.checkType);
+      requireConditions(rule.conditions, true);
       requireComplete(rule);
       const scope = rule.scope ?? ALL_PROJECTS;
       requireScope(scope);
@@ -573,35 +855,21 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
                         COALESCE((SELECT MAX(rule_id) FROM scores), 0)) + 1 AS next`,
           )
           .get() as { next: number };
-        db.prepare("INSERT INTO rules (id, name, check_type, created_at) VALUES (?, ?, ?, ?)").run(
-          next,
-          name,
-          rule.checkType,
-          now(),
-        );
+        db.prepare("INSERT INTO rules (id, name, created_at) VALUES (?, ?, ?)").run(next, name, now());
         const ruleId = Number(next);
-        insertDraft(ruleId, {
-          name,
-          checkType: rule.checkType,
-          instruction: rule.instruction,
-          conditions: rule.conditions,
-          scope,
-        });
+        writeScope(ruleId, scope);
+        insertDraft(ruleId, { name, instruction: rule.instruction, conditions: rule.conditions });
         return { ruleId };
       });
     },
 
     saveDraft(ruleId, content) {
-      if (content.scope !== undefined) requireScope(content.scope);
+      requireConditions(content.conditions, false);
       transaction(db, () => {
         const rule = requireRule(ruleId);
         const existing = draft(ruleId);
         const name = content.name === undefined ? (existing?.name ?? rule.name) : cleanName(content.name);
-        const kept = existing ?? live(ruleId);
-        const checkType = content.checkType ?? kept?.check_type ?? rule.check_type;
-        requireCheckType(checkType);
-        const scope = content.scope ?? (kept ? scopeOf(kept.id) : ALL_PROJECTS);
-        replaceDraft(ruleId, { name, checkType, instruction: content.instruction, conditions: content.conditions, scope });
+        replaceDraft(ruleId, { name, instruction: content.instruction, conditions: content.conditions });
       });
     },
 
@@ -612,10 +880,9 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         if (!source) throw new RuleNotFoundError(`This rule has no version ${versionNumber}.`);
         replaceDraft(ruleId, {
           name: source.name,
-          checkType: source.check_type,
           instruction: source.instruction,
-          conditions: conditionsOf(source.id),
-          scope: scopeOf(source.id),
+          // The wording only: each condition keeps the switches it has now.
+          conditions: conditionsOf(source.id).map(({ id, text }) => ({ id, text })),
         });
       });
     },
@@ -627,6 +894,7 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         if (!row) throw new RuleError("This rule has no draft to discard.");
         if (!live(ruleId)) throw new RuleError("This rule has never been published, so its draft is all it has. Delete the rule instead.");
         db.prepare("DELETE FROM versions WHERE id = ?").run(row.id);
+        dropUnusedConditions(ruleId);
       });
     },
 
@@ -635,7 +903,54 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     },
 
     switchOn(ruleId) {
-      setSwitchedOff(ruleId, false);
+      transaction(db, () => {
+        requireRule(ruleId);
+        // Conditions switched off on purpose are not switched back on with the rule.
+        if (liveConditionsOn(ruleId) === 0) {
+          throw new RuleError(
+            "None of this rule's conditions is on. Switch a condition's Message or Reply on first, then the rule.",
+          );
+        }
+        setSwitchedOff(ruleId, false);
+      });
+    },
+
+    setConditionSwitch(ruleId, conditionId, checkType, on) {
+      if (!CHECK_TYPES.includes(checkType)) throw new RuleError("A condition's switches are Message and Reply.");
+      if (typeof on !== "boolean") throw new RuleError("A switch is on or off.");
+      transaction(db, () => {
+        const rule = requireRule(ruleId);
+        const condition = db
+          .prepare("SELECT message, reply FROM conditions WHERE id = ? AND rule_id = ?")
+          .get(conditionId, ruleId) as { message: number; reply: number } | undefined;
+        if (!condition) throw new RuleNotFoundError(`This rule has no condition ${conditionId}.`);
+        if (!isPublished(conditionId)) {
+          throw new RuleError("This condition is not published yet. Set its switches in the draft.");
+        }
+        const wasOn = condition.message === 1 || condition.reply === 1;
+        // The column name comes from CHECK_TYPES, never from the caller's text.
+        const column = checkType === "message" ? "message" : "reply";
+        if (condition[column] === Number(on)) return;
+        db.prepare(`UPDATE conditions SET ${column} = ? WHERE id = ?`).run(Number(on), conditionId);
+        recordSwitchChange(ruleId, { what: "condition", conditionId, checkType, on });
+        // The rule's switch tells the truth: with no condition on, the rule is off.
+        if (wasOn && !on && rule.switched_off === 0 && liveConditionsOn(ruleId) === 0) {
+          setSwitchedOff(ruleId, true, true);
+        }
+      });
+    },
+
+    setScope(ruleId, scope) {
+      requireScope(scope);
+      requireCompleteScope(scope);
+      transaction(db, () => {
+        requireRule(ruleId);
+        const before = scopeOf(ruleId);
+        writeScope(ruleId, scope);
+        // Recorded as stored: each project once, in order.
+        const after = scopeOf(ruleId);
+        if (JSON.stringify(after) !== JSON.stringify(before)) recordSwitchChange(ruleId, { what: "scope", scope: after });
+      });
     },
 
     deleteRule(ruleId) {
@@ -651,11 +966,10 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         const row = draft(ruleId);
         if (!row) throw new RuleError("This rule has no draft to publish.");
         requireComplete({ instruction: row.instruction, conditions: conditionsOf(row.id) });
-        requireCompleteScope(scopeOf(row.id));
         requireFreeName(row.name, ruleId);
         const versionNumber = (live(ruleId)?.number ?? 0) + 1;
         db.prepare("UPDATE versions SET number = ?, published_at = ? WHERE id = ?").run(versionNumber, now(), row.id);
-        db.prepare("UPDATE rules SET name = ?, check_type = ? WHERE id = ?").run(row.name, row.check_type, ruleId);
+        db.prepare("UPDATE rules SET name = ? WHERE id = ?").run(row.name, ruleId);
         return { versionNumber };
       });
     },
@@ -667,13 +981,14 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       const conditions = conditionsOf(row.id);
       // The same refusals as publish, so a draft that scores can be published.
       requireComplete({ instruction: row.instruction, conditions });
-      requireCompleteScope(scopeOf(row.id));
       requireFreeName(row.name, ruleId);
+      // Each case is scored against the draft's conditions for its own check type.
+      const settings = readSettings();
       return rescoreCases({
         matcher: options.matcher,
         conditions,
         cases: flags.savedCases(ruleId),
-        cutoff: cutoffFor(row.check_type, readSettings()),
+        cutoffs: { message: cutoffFor("message", settings), reply: cutoffFor("reply", settings) },
       });
     },
 
@@ -681,16 +996,18 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       const rows = db
         .prepare(
           `SELECT r.id AS ruleId, r.name AS name, v.id AS versionId, v.number AS versionNumber,
-                  v.instruction AS instruction, c.id AS conditionId, c.text AS conditionText
+                  v.instruction AS instruction, c.id AS conditionId, vc.text AS conditionText
              FROM rules r
              JOIN versions v ON v.rule_id = r.id
                             AND v.number = (SELECT MAX(number) FROM versions WHERE rule_id = r.id)
-             JOIN conditions c ON c.version_id = v.id
-            WHERE r.check_type = ? AND r.switched_off = 0
-              AND (v.all_projects = 1
-                   OR EXISTS (SELECT 1 FROM version_projects vp JOIN projects p ON p.id = vp.project_id
-                               WHERE vp.version_id = v.id AND p.name = ?))
-            ORDER BY r.id, c.position`,
+             JOIN version_conditions vc ON vc.version_id = v.id
+             JOIN conditions c ON c.id = vc.condition_id
+            WHERE r.switched_off = 0
+              AND CASE ? WHEN 'message' THEN c.message WHEN 'reply' THEN c.reply ELSE 0 END = 1
+              AND (r.all_projects = 1
+                   OR EXISTS (SELECT 1 FROM rule_projects rp JOIN projects p ON p.id = rp.project_id
+                               WHERE rp.rule_id = r.id AND p.name = ?))
+            ORDER BY r.id, vc.position`,
         )
         .all(checkType, project ?? null) as {
         ruleId: number;
@@ -723,10 +1040,9 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     listRules(filter = {}) {
       const where: string[] = [];
       const params: (string | number)[] = [];
-      if (filter.checkType) {
-        where.push("check_type = ?");
-        params.push(filter.checkType);
-      }
+      if (filter.checkType === "message") where.push("in_message = 1");
+      else if (filter.checkType === "reply") where.push("in_reply = 1");
+      else if (filter.checkType !== undefined) throw new RuleError("A check type is message or reply.");
       if (filter.published !== undefined) {
         where.push("published = ?");
         params.push(filter.published ? 1 : 0);
@@ -751,19 +1067,24 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
            WHERE v.rule_id = r.id
              AND (v.number IS NULL OR v.number = (SELECT MAX(number) FROM versions WHERE rule_id = r.id))
              AND (instr(lower(v.name), ?) OR instr(lower(v.instruction), ?)
-                  OR EXISTS (SELECT 1 FROM conditions c WHERE c.version_id = v.id AND instr(lower(c.text), ?))))`);
+                  OR EXISTS (SELECT 1 FROM version_conditions vc
+                              WHERE vc.version_id = v.id AND instr(lower(vc.text), ?))))`);
         const needle = search.toLowerCase();
         params.push(needle, needle, needle);
       }
+      const onFor = (column: "message" | "reply") =>
+        `EXISTS (SELECT 1 FROM version_conditions vc JOIN conditions c ON c.id = vc.condition_id
+                  WHERE vc.version_id = v.id AND c.${column} = 1)`;
       const rows = db
         .prepare(
           `SELECT * FROM (
-             SELECT r.id, r.name, r.check_type, r.switched_off,
+             SELECT r.id, r.name, r.switched_off,
                     EXISTS (SELECT 1 FROM versions WHERE rule_id = r.id AND number IS NOT NULL) AS published,
                     EXISTS (SELECT 1 FROM versions WHERE rule_id = r.id AND number IS NULL) AS has_draft,
-                    v.id AS scope_version, v.all_projects
+                    r.all_projects,
+                    ${onFor("message")} AS in_message, ${onFor("reply")} AS in_reply
                FROM rules r
-               -- The version whose scope is in force: the latest published, else the draft.
+               -- The version in force: the latest published, else the draft.
                JOIN versions v ON v.id = (SELECT id FROM versions WHERE rule_id = r.id
                                            ORDER BY number IS NULL, number DESC LIMIT 1)) r
            ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
@@ -772,18 +1093,18 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
         .all(...params) as {
         id: number;
         name: string;
-        check_type: CheckType;
         switched_off: number;
         published: number;
         has_draft: number;
-        scope_version: number;
+        in_message: number;
+        in_reply: number;
       }[];
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
-        checkType: row.check_type,
+        checkTypes: checkTypesOf([{ message: row.in_message === 1, reply: row.in_reply === 1 }]),
         published: row.published === 1,
-        scope: scopeOf(row.scope_version),
+        scope: scopeOf(row.id),
         on: row.switched_off === 0,
         hasDraft: row.has_draft === 1,
       }));

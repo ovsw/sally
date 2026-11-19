@@ -7,10 +7,11 @@ export type CheckType = "message" | "reply";
 export interface RuleSummary {
   id: number;
   name: string;
-  checkType: CheckType;
+  /** The checks the rule takes part in: those its conditions in force are on for, message first. */
+  checkTypes: CheckType[];
   /** True once the rule has a published version. */
   published: boolean;
-  /** The scope in force: the published version's, or the draft's before the first publish. */
+  /** Where the rule applies. It belongs to the rule, not to a version, and changes at once. */
   scope: Scope;
   on: boolean;
   hasDraft: boolean;
@@ -19,16 +20,36 @@ export interface RuleSummary {
 /** All projects, or only the named ones (owner/name, or a folder path). */
 export type Scope = { kind: "all" } | { kind: "projects"; projects: string[] };
 
+/** Which checks use a condition. With both off, the condition is off. */
+export interface Switches {
+  message: boolean;
+  reply: boolean;
+}
+
+/** A condition as a version words it, with its switches as they are now. */
+export interface ConditionView extends Switches {
+  id: number;
+  text: string;
+}
+
+/** A condition in a form: a new one has no id until the server has it. */
+export interface ConditionDraft extends Switches {
+  id?: number;
+  text: string;
+}
+
+/** What a draft holds, as the forms edit it and the server saves it: the rule's text only. */
+export interface DraftContent {
+  name: string;
+  instruction: string;
+  conditions: ConditionDraft[];
+}
+
+/** A version's text: its name, instruction and the wording of its conditions. */
 export interface VersionView {
   name: string;
   instruction: string;
-  conditions: string[];
-  scope: Scope;
-}
-
-/** A version as the server returns it: with the check type it runs on. */
-export interface StoredVersion extends VersionView {
-  checkType: CheckType;
+  conditions: ConditionView[];
 }
 
 export interface Project {
@@ -36,16 +57,43 @@ export interface Project {
   firstSeenAt: string;
 }
 
-export interface PublishedVersion extends StoredVersion {
+export interface PublishedVersion extends VersionView {
   number: number;
   publishedAt: string;
 }
 
+/**
+ * One change to the rule's switch, one switch of a condition, or the rule's
+ * scope, with its time and the new value. These make no new version.
+ */
+export type SwitchChange =
+  | {
+      id: number;
+      at: string;
+      what: "rule";
+      on: boolean;
+      /** True when Sally switched the rule off itself, because its last condition went off. */
+      bySally: boolean;
+    }
+  | {
+      id: number;
+      at: string;
+      what: "condition";
+      conditionId: number;
+      /** The condition's wording in the published version when it was switched. */
+      conditionText: string;
+      checkType: CheckType;
+      on: boolean;
+    }
+  | { id: number; at: string; what: "scope"; scope: Scope };
+
 export interface RuleDetail extends RuleSummary {
   live: PublishedVersion | null;
-  draft: (StoredVersion & { savedAt: string }) | null;
+  draft: (VersionView & { savedAt: string }) | null;
   /** Every published version, newest first. */
   versions: PublishedVersion[];
+  /** Every change to the rule's switch, its conditions' switches and its scope, newest first. */
+  switchChanges: SwitchChange[];
 }
 
 export interface RuleFilter {
@@ -101,14 +149,20 @@ export function getRule(id: number): Promise<RuleDetail> {
   return call("GET", `/api/rules/${id}`);
 }
 
-export function createRule(
-  rule: Omit<VersionView, "scope"> & { checkType: CheckType; scope?: Scope },
-): Promise<RuleDetail> {
+/** What a new rule is made of: each condition with its wording and its two switches. */
+export interface NewRule {
+  name: string;
+  instruction: string;
+  conditions: (Switches & { text: string })[];
+  scope?: Scope;
+}
+
+export function createRule(rule: NewRule): Promise<RuleDetail> {
   return call("POST", "/api/rules", rule);
 }
 
 /** `keepalive` lets the save finish after the page has gone. */
-export function saveDraft(id: number, draft: VersionView, keepalive = false): Promise<RuleDetail> {
+export function saveDraft(id: number, draft: DraftContent, keepalive = false): Promise<RuleDetail> {
   return call("PUT", `/api/rules/${id}/draft`, draft, keepalive);
 }
 
@@ -126,6 +180,21 @@ export function startDraftFrom(id: number, versionNumber: number): Promise<RuleD
 
 export function switchRule(id: number, on: boolean): Promise<RuleDetail> {
   return call("POST", `/api/rules/${id}/${on ? "on" : "off"}`, {});
+}
+
+/** Sets where the rule applies, at once: no new version, and the draft stays as it is. */
+export function setScope(id: number, scope: Scope): Promise<RuleDetail> {
+  return call("PUT", `/api/rules/${id}/scope`, { scope });
+}
+
+/** Sets one switch of a published condition at once: no draft, no new version. */
+export function setConditionSwitch(
+  id: number,
+  conditionId: number,
+  checkType: CheckType,
+  on: boolean,
+): Promise<RuleDetail> {
+  return call("PUT", `/api/rules/${id}/conditions/${conditionId}/${checkType}`, { on });
 }
 
 export function deleteRule(id: number): Promise<{ deleted: true }> {
@@ -195,6 +264,8 @@ export interface ActivityMatch {
   ruleId: number;
   name: string | null;
   score: number;
+  /** The condition that scored highest; null when the rule has since been deleted. */
+  condition: string | null;
 }
 
 export interface ActivityCheck {
@@ -230,10 +301,14 @@ export interface RuleCheckView {
   checkId: number;
   createdAt: string;
   project: string | null;
+  /** The check the rule was scored in. */
+  checkType: CheckType;
   text: string;
   score: number;
+  /** The cutoff of that check. */
   cutoff: number;
   versionNumber: number | null;
+  /** The condition that scored highest. */
   condition: string | null;
 }
 
@@ -279,7 +354,8 @@ export interface AttentionReason {
 export interface AttentionEntry {
   ruleId: number;
   name: string;
-  checkType: CheckType;
+  /** The checks the rule takes part in. */
+  checkTypes: CheckType[];
   versionNumber: number;
   reasons: AttentionReason[];
 }
@@ -324,11 +400,15 @@ export function listSavedCases(ruleId: number): Promise<SavedCase[]> {
   return call<{ cases: SavedCase[] }>("GET", `/api/rules/${ruleId}/cases`).then((r) => r.cases);
 }
 
-/** How one saved case fares against the draft's conditions. */
+/** How one saved case fares against the draft's conditions for its check type. */
 export interface CaseResult {
   case: SavedCase;
+  /** The draft's conditions on for the case's check type, with their scores; empty when there are none. */
   scores: { condition: string; score: number }[];
-  best: number;
+  /** The best of those scores; null when there are none. */
+  best: number | null;
+  /** The cutoff of the case's check type. */
+  cutoff: number;
   /** The rule would match the case: a condition reaches the cutoff. */
   matched: boolean;
   /** That is what the case expects. */
@@ -337,9 +417,9 @@ export interface CaseResult {
 
 /** The draft scored against the rule's saved cases. A failure never blocks publishing. */
 export type RescoreResult =
-  | { status: "scored"; cutoff: number; cases: CaseResult[]; passed: number; failed: number }
-  | { status: "no_cases"; cutoff: number }
-  | { status: "failed"; cutoff: number; error: string; caseCount: number };
+  | { status: "scored"; cutoffs: Record<CheckType, number>; cases: CaseResult[]; passed: number; failed: number }
+  | { status: "no_cases"; cutoffs: Record<CheckType, number> }
+  | { status: "failed"; cutoffs: Record<CheckType, number>; error: string; caseCount: number };
 
 /** Scores the draft's conditions against the rule's saved cases with Jev. Changes nothing. */
 export function rescoreDraft(id: number): Promise<RescoreResult> {
@@ -423,9 +503,6 @@ export function markPassageStays(passageId: number): Promise<ImportDetail> {
   return decide(`/api/passages/${passageId}/stays`);
 }
 
-export function writeRule(
-  passageId: number,
-  rule: { name: string; checkType: CheckType; instruction: string; conditions: string[] },
-): Promise<ImportDetail> {
+export function writeRule(passageId: number, rule: Omit<NewRule, "scope">): Promise<ImportDetail> {
   return decide(`/api/passages/${passageId}/rules`, rule);
 }

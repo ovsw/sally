@@ -6,7 +6,7 @@ import type { RuleAnalytics } from "../src/analytics.ts";
 import type { FlagResult, SavedCaseView } from "../src/flags.ts";
 import { runMessageHook } from "../src/message-hook.ts";
 import { runReplyHook } from "../src/reply-hook.ts";
-import { RuleError, RuleNotFoundError } from "../src/rules.ts";
+import { conditionsFor, RuleError, RuleNotFoundError } from "../src/rules.ts";
 import { type RunningApp, startApp } from "./support/app.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { type StandIn, standInMatcher } from "./support/stand-in-matcher.ts";
@@ -186,7 +186,7 @@ describe("flags and saved cases", () => {
     const matcher = standInMatcher({ "Condition A.": 0.8, "Condition B.": 0.8 });
     await message("on version one", matcher);
     sandbox.withRules((rules) => {
-      rules.saveDraft(ruleId, { instruction: "Do it.", conditions: ["Condition B."] });
+      rules.saveDraft(ruleId, { instruction: "Do it.", conditions: conditionsFor("message", ["Condition B."]) });
       rules.publish(ruleId);
     });
     await message("first on version two", matcher);

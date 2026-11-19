@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import {
   type AttentionEntry,
   type AttentionKind,
+  type CheckType,
   clearAttentionReason,
   listAttention,
 } from "@/lib/api";
@@ -153,19 +154,23 @@ const columns: ColumnDef<AttentionEntry>[] = [
     meta: { label: "Rule" },
   },
   {
-    accessorKey: "checkType",
+    // The checks the rule takes part in; a rule in both is listed under either.
+    id: "checkType",
+    accessorFn: (row) => row.checkTypes,
     header: "Type",
-    cell: ({ row }) => {
-      const meta = checkTypes.find((t) => t.value === row.original.checkType);
-      const Icon = meta?.icon;
-      return (
-        <span className="flex items-center gap-2 text-muted-foreground">
-          {Icon && <Icon className="size-4" />}
-          {meta?.label}
-        </span>
-      );
-    },
-    filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
+    cell: ({ row }) => (
+      <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
+        {checkTypes
+          .filter((t) => row.original.checkTypes.includes(t.value as CheckType))
+          .map(({ value, label, icon: Icon }) => (
+            <span key={value} className="flex items-center gap-2">
+              <Icon className="size-4" />
+              {label}
+            </span>
+          ))}
+      </span>
+    ),
+    filterFn: (row, _id, value: string[]) => value.some((type) => row.original.checkTypes.includes(type as CheckType)),
     meta: { label: "Type" },
   },
   {

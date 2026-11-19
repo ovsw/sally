@@ -1,6 +1,6 @@
-// The Rule panel, opened beside the rules list: the published version beside the draft, then the version
-// history. The draft form follows the shadcnblocks block form-layouts-1
-// (vertical field layout).
+// The Rule panel, opened beside the rules list: the rule's scope, the published version beside the
+// draft, then the rule's history (versions and switch changes). The draft form and the scope follow the shadcnblocks block
+// form-layouts-1 (vertical field layout).
 import { LabelWithHelp, ruleHelp } from "@/components/field-help";
 import {
   FilePen,
@@ -13,7 +13,14 @@ import {
 import * as React from "react";
 
 import { RescoreDialog } from "@/components/rescore-dialog";
-import { ConditionsField, InstructionField, NameField, SaveStatus } from "@/components/rule-fields";
+import {
+  ConditionsField,
+  ConditionSwitch,
+  InstructionField,
+  NameField,
+  publishedConditionIds,
+  SaveStatus,
+} from "@/components/rule-fields";
 import { RuleAnalyticsPanel } from "@/components/rule-analytics";
 import { RuleStatus } from "@/components/rule-status";
 import {
@@ -32,6 +39,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
+  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -45,8 +53,11 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
+  type CheckType,
+  type ConditionView,
   deleteRule,
   discardDraft,
+  type DraftContent,
   getRule,
   listProjects,
   type Project,
@@ -55,12 +66,15 @@ import {
   rescoreDraft,
   type RescoreResult,
   type RuleDetail,
+  setConditionSwitch,
+  setScope,
   startDraftFrom,
   switchRule,
   type Scope,
-  type VersionView,
+  type SwitchChange,
 } from "@/lib/api";
 import { errorText, useDraftSaver } from "@/lib/draft-saver";
+import { CHECK_LABELS } from "@/lib/format";
 import { navigate } from "@/lib/router";
 import { announceRuleChange, useRuleChanges } from "@/lib/rule-events";
 
@@ -73,12 +87,62 @@ const UNDO_LIMIT = 200;
  * and the live version it stood beside.
  */
 interface UndoStep {
-  content: VersionView;
+  content: DraftContent;
   hadDraft: boolean;
   liveNumber: number | null;
 }
 
-function PublishedVersion({ rule }: { rule: RuleDetail }) {
+interface PublishedVersionProps {
+  rule: RuleDetail;
+  /** Sets one switch of a published condition at once. */
+  onSwitch: (condition: ConditionView, checkType: CheckType, on: boolean) => void;
+  disabled: boolean;
+}
+
+/** A published condition's two switches, which take effect at once; "Off" beside them when both are off. */
+function LiveConditionSwitches({
+  condition,
+  index,
+  onSwitch,
+  disabled,
+}: {
+  condition: ConditionView;
+  index: number;
+  onSwitch: PublishedVersionProps["onSwitch"];
+  disabled: boolean;
+}) {
+  const idPrefix = React.useId();
+  const name = `Published condition ${index + 1}`;
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+      <ConditionSwitch
+        id={`${idPrefix}-message`}
+        label="Message"
+        condition={name}
+        checked={condition.message}
+        disabled={disabled}
+        note={ruleHelp.liveSwitch}
+        onChange={(on) => onSwitch(condition, "message", on)}
+      />
+      <ConditionSwitch
+        id={`${idPrefix}-reply`}
+        label="Reply"
+        condition={name}
+        checked={condition.reply}
+        disabled={disabled}
+        note={ruleHelp.liveSwitch}
+        onChange={(on) => onSwitch(condition, "reply", on)}
+      />
+      {!condition.message && !condition.reply && (
+        <Badge variant="secondary" className="font-normal">
+          Off
+        </Badge>
+      )}
+    </div>
+  );
+}
+
+function PublishedVersion({ rule, onSwitch, disabled }: PublishedVersionProps) {
   const live = rule.live;
   return (
     <section className="rounded-md border">
@@ -98,9 +162,15 @@ function PublishedVersion({ rule }: { rule: RuleDetail }) {
             </dt>
             <dd>
               <ul className="space-y-1.5">
-                {live.conditions.map((condition, i) => (
-                  <li key={i} className="rounded-md bg-muted/50 px-3 py-2">
-                    {condition}
+                {live.conditions.map((condition, index) => (
+                  <li key={condition.id} className="space-y-2 rounded-md bg-muted/50 px-3 py-2">
+                    <p className="min-w-0">{condition.text}</p>
+                    <LiveConditionSwitches
+                      condition={condition}
+                      index={index}
+                      onSwitch={onSwitch}
+                      disabled={disabled}
+                    />
                   </li>
                 ))}
               </ul>
@@ -110,22 +180,6 @@ function PublishedVersion({ rule }: { rule: RuleDetail }) {
             <dt className="font-medium">Instruction</dt>
             <dd className="rounded-md bg-muted/50 px-3 py-2 whitespace-pre-wrap">
               {live.instruction}
-            </dd>
-          </div>
-          <div className="space-y-1.5">
-            <dt className="font-medium">Scope</dt>
-            <dd>
-              {live.scope.kind === "all" ? (
-                "All projects"
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {live.scope.projects.map((project) => (
-                    <Badge key={project} variant="secondary">
-                      {project}
-                    </Badge>
-                  ))}
-                </div>
-              )}
             </dd>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -168,7 +222,7 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
 
   return (
     <Field>
-      <LabelWithHelp htmlFor="draft-scope" label="Scope">
+      <LabelWithHelp htmlFor="rule-scope" label="Scope">
         {ruleHelp.scope}
       </LabelWithHelp>
       <Select
@@ -177,7 +231,7 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
           onChange(kind === "all" ? { kind: "all" } : { kind: "projects", projects: selected })
         }
       >
-        <SelectTrigger id="draft-scope" className="w-full bg-background">
+        <SelectTrigger id="rule-scope" className="w-full bg-background">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -207,47 +261,107 @@ function ScopeField({ value, onChange, projects, projectsError, onRetryProjects 
             {names.map((name, index) => (
               <Field key={name} orientation="horizontal">
                 <Checkbox
-                  id={`draft-project-${index}`}
+                  id={`rule-project-${index}`}
                   checked={selected.includes(name)}
                   onCheckedChange={(checked) => toggle(name, checked === true)}
                 />
-                <FieldLabel htmlFor={`draft-project-${index}`} className="font-normal">
+                <FieldLabel htmlFor={`rule-project-${index}`} className="font-normal">
                   {name}
                 </FieldLabel>
               </Field>
             ))}
           </div>
         ))}
+      {value.kind === "projects" && value.projects.length === 0 && names.length > 0 && (
+        <FieldDescription>Pick at least one project. Until then the rule keeps the scope it has.</FieldDescription>
+      )}
     </Field>
   );
 }
 
-interface DraftFormProps {
-  value: VersionView;
-  /** `field` names the field being typed in; null for a change made in one step. */
-  onChange: (next: VersionView, field: string | null) => void;
-  error: string | null;
-  checkType: RuleDetail["checkType"];
+/** A scope a rule can have: all projects, or at least one project. */
+const completeScope = (scope: Scope) => scope.kind === "all" || scope.projects.length > 0;
+
+interface ScopeSectionProps {
+  /** The rule's scope as the server last said. */
+  scope: Scope;
+  /** Stores a complete scope; resolves once the server has it, rejects if it refused. */
+  onSave: (scope: Scope) => Promise<void>;
+  disabled: boolean;
   projects: Project[] | null;
   projectsError: string | null;
   onRetryProjects: () => void;
 }
 
-function DraftForm({
-  value,
-  onChange,
-  error,
-  checkType,
-  projects,
-  projectsError,
-  onRetryProjects,
-}: DraftFormProps) {
+/**
+ * The rule's scope, outside the draft: each complete choice is stored at once.
+ * A list of projects with none ticked yet stays here until one is.
+ */
+function ScopeSection({ scope, onSave, disabled, projects, projectsError, onRetryProjects }: ScopeSectionProps) {
+  const [value, setValue] = React.useState<Scope>(scope);
+  const [error, setError] = React.useState<string | null>(null);
+  /** Scopes sent and not yet answered: the server's answer to an earlier one must not undo a later choice. */
+  const pending = React.useRef(0);
+  const latest = React.useRef(scope);
+  const serverScope = JSON.stringify(scope);
+  React.useEffect(() => {
+    latest.current = JSON.parse(serverScope) as Scope;
+    if (pending.current === 0) setValue(latest.current);
+  }, [serverScope]);
+
+  const change = (next: Scope) => {
+    setValue(next);
+    setError(null);
+    if (!completeScope(next)) return;
+    pending.current += 1;
+    onSave(next)
+      .catch((e: unknown) => {
+        setError(errorText(e));
+        // Back to what the server has, once nothing else is on its way.
+        if (pending.current === 1) setValue(latest.current);
+      })
+      .finally(() => {
+        pending.current -= 1;
+      });
+  };
+
+  return (
+    <section className="rounded-md border">
+      <fieldset disabled={disabled} className="min-w-0 px-4 py-4">
+        <FieldGroup>
+          <ScopeField
+            value={value}
+            onChange={change}
+            projects={projects}
+            projectsError={projectsError}
+            onRetryProjects={onRetryProjects}
+          />
+          {error && <FieldError>{error}</FieldError>}
+        </FieldGroup>
+      </fieldset>
+    </section>
+  );
+}
+
+interface DraftFormProps {
+  value: DraftContent;
+  /** `field` names the field being typed in; null for a change made in one step. */
+  onChange: (next: DraftContent, field: string | null) => void;
+  error: string | null;
+  /** The conditions already published, whose switches the draft does not change. */
+  published: ReadonlySet<number>;
+  /** Sets a published condition's switch at once, as the published version's own switches do. */
+  onPublishedSwitch: (conditionId: number, checkType: CheckType, on: boolean) => void;
+}
+
+function DraftForm({ value, onChange, error, published, onPublishedSwitch }: DraftFormProps) {
   return (
     <FieldGroup>
       <NameField id="draft-name" name={value.name} onChange={(name) => onChange({ ...value, name }, "name")} />
       <ConditionsField
         conditions={value.conditions}
-        checkType={checkType}
+        published={published}
+        onPublishedSwitch={onPublishedSwitch}
         onChange={(conditions, field) => onChange({ ...value, conditions }, field)}
       />
       <InstructionField
@@ -255,32 +369,99 @@ function DraftForm({
         instruction={value.instruction}
         onChange={(instruction) => onChange({ ...value, instruction }, "instruction")}
       />
-      <ScopeField
-        value={value.scope}
-        onChange={(scope) => onChange({ ...value, scope }, null)}
-        projects={projects}
-        projectsError={projectsError}
-        onRetryProjects={onRetryProjects}
-      />
       {error && <FieldError>{error}</FieldError>}
     </FieldGroup>
   );
 }
 
-const contentOf = (rule: RuleDetail): VersionView => {
+/**
+ * `content` with each new condition given the id the server gave it in
+ * `published`, so a later save keeps that condition instead of starting
+ * another. A new condition is the published one with the same wording, or,
+ * when none was added or removed since, the one in the same place.
+ */
+const withPublishedIds = (content: DraftContent, published: ConditionView[]): DraftContent => {
+  const taken = new Set(content.conditions.map((condition) => condition.id));
+  const samePlaces = content.conditions.length === published.length;
+  const conditions = content.conditions.map((condition, index) => {
+    if (condition.id !== undefined) return condition;
+    const free = (candidate: ConditionView | undefined) => candidate !== undefined && !taken.has(candidate.id);
+    const sameWording = published.find((candidate) => free(candidate) && candidate.text === condition.text.trim());
+    const match = sameWording ?? (samePlaces && free(published[index]) ? published[index] : undefined);
+    if (!match) return condition;
+    taken.add(match.id);
+    return { ...condition, id: match.id };
+  });
+  return { ...content, conditions };
+};
+
+/** `content` with every published condition's switches as they are in force: a draft cannot change those. */
+const withPublishedSwitches = (content: DraftContent, published: ConditionView[]): DraftContent => ({
+  ...content,
+  conditions: content.conditions.map((condition) => {
+    const live = published.find((candidate) => candidate.id === condition.id);
+    return live ? { ...condition, message: live.message, reply: live.reply } : condition;
+  }),
+});
+
+const contentOf = (rule: RuleDetail): DraftContent => {
   const source = rule.draft ?? rule.live;
   return {
     name: source?.name ?? rule.name,
     instruction: source?.instruction ?? "",
-    conditions: source?.conditions.length ? [...source.conditions] : [""],
-    scope:
-      source?.scope.kind === "projects"
-        ? { kind: "projects", projects: [...source.scope.projects] }
-        : { kind: "all" },
+    conditions: source?.conditions.length
+      ? source.conditions.map((condition) => ({ ...condition }))
+      : [{ text: "", message: true, reply: false }],
   };
 };
 
-function VersionHistory({
+/** What a switch change did, in plain words. */
+function switchChangeText(change: SwitchChange): string {
+  const state = (on: boolean) => (on ? "on" : "off");
+  if (change.what === "rule") {
+    return change.bySally
+      ? "Rule switched off by Sally, because its last condition went off"
+      : `Rule switched ${state(change.on)}`;
+  }
+  if (change.what === "condition") {
+    const which = change.checkType === "message" ? "Message" : "Reply";
+    return `${which} switched ${state(change.on)} for the condition "${change.conditionText}"`;
+  }
+  return change.scope.kind === "all"
+    ? "Scope set to all projects"
+    : `Scope set to ${change.scope.projects.join(", ")}`;
+}
+
+/** What kind of switch change it was, for its badge. */
+const SWITCH_CHANGE_LABELS: Record<SwitchChange["what"], string> = {
+  rule: "Rule switch",
+  condition: "Condition switch",
+  scope: "Scope",
+};
+
+type HistoryEntry =
+  | { kind: "version"; at: string; version: PublishedVersion }
+  | { kind: "switch"; at: string; change: SwitchChange };
+
+/**
+ * Versions and switch changes in one list, newest first. Each list comes
+ * newest first already; at the same time, a switch change goes first.
+ */
+function historyOf(rule: RuleDetail): HistoryEntry[] {
+  const entries: HistoryEntry[] = [
+    ...rule.switchChanges.map((change) => ({ kind: "switch" as const, at: change.at, change })),
+    ...rule.versions.map((version) => ({ kind: "version" as const, at: version.publishedAt, version })),
+  ];
+  // A stable sort keeps each list's own order for equal times.
+  return entries.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+}
+
+/**
+ * The rule's history: its published versions and its switch changes in one
+ * list, newest first. Each entry's head follows the shadcnblocks block
+ * changelog1 (a badge, then the date, then the title).
+ */
+function RuleHistory({
   rule,
   busy,
   onStartDraft,
@@ -289,62 +470,88 @@ function VersionHistory({
   busy: boolean;
   onStartDraft: (version: PublishedVersion) => void;
 }) {
+  const entries = historyOf(rule);
   return (
     <section className="rounded-md border">
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-        <h2 className="font-medium">Version history</h2>
+        <h2 className="font-medium">History</h2>
         <span className="text-xs text-muted-foreground">
-          Published versions never change
+          Versions and switch changes, newest first
         </span>
       </div>
-      {rule.versions.length === 0 ? (
+      {entries.length === 0 ? (
         <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-          No published versions yet.
+          No published versions or switch changes yet.
         </p>
       ) : (
         <ol className="divide-y">
-          {rule.versions.map((version) => (
-            <li
-              key={version.number}
-              className="flex flex-col gap-3 px-4 py-4 @xl:flex-row @xl:items-start @xl:justify-between"
-            >
-              <div className="min-w-0 space-y-2 text-sm">
+          {entries.map((entry) =>
+            entry.kind === "switch" ? (
+              <li key={`switch-${entry.change.id}`} className="space-y-2 px-4 py-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">Version {version.number}</span>
-                  {version.number === rule.live?.number && (
-                    <Badge variant="secondary">Latest</Badge>
-                  )}
+                  <Badge variant="outline">{SWITCH_CHANGE_LABELS[entry.change.what]}</Badge>
                   <span className="text-xs text-muted-foreground">
-                    Published {new Date(version.publishedAt).toLocaleString()}
+                    {new Date(entry.at).toLocaleString()}
                   </span>
                 </div>
-                {version.name !== rule.name && (
-                  <p className="text-muted-foreground">Named "{version.name}"</p>
-                )}
-                <ul className="list-disc space-y-1 pl-5">
-                  {version.conditions.map((condition, i) => (
-                    <li key={i}>{condition}</li>
-                  ))}
-                </ul>
-                <p className="whitespace-pre-wrap text-muted-foreground">
-                  {version.instruction}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="self-start"
-                disabled={busy}
-                onClick={() => onStartDraft(version)}
-              >
-                <FilePen />
-                Start a draft from this
-              </Button>
-            </li>
-          ))}
+                <p>{switchChangeText(entry.change)}</p>
+              </li>
+            ) : (
+              <VersionEntry
+                key={`version-${entry.version.number}`}
+                rule={rule}
+                version={entry.version}
+                busy={busy}
+                onStartDraft={onStartDraft}
+              />
+            ),
+          )}
         </ol>
       )}
     </section>
+  );
+}
+
+function VersionEntry({
+  rule,
+  version,
+  busy,
+  onStartDraft,
+}: {
+  rule: RuleDetail;
+  version: PublishedVersion;
+  busy: boolean;
+  onStartDraft: (version: PublishedVersion) => void;
+}) {
+  return (
+    <li className="flex flex-col gap-3 px-4 py-4 @xl:flex-row @xl:items-start @xl:justify-between">
+      <div className="min-w-0 space-y-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary">Version {version.number}</Badge>
+          <span className="text-xs text-muted-foreground">
+            Published {new Date(version.publishedAt).toLocaleString()}
+          </span>
+          {version.number === rule.live?.number && <Badge variant="outline">Latest</Badge>}
+        </div>
+        {version.name !== rule.name && <p className="text-muted-foreground">Named "{version.name}"</p>}
+        <ul className="list-disc space-y-1 pl-5">
+          {version.conditions.map((condition) => (
+            <li key={condition.id}>{condition.text}</li>
+          ))}
+        </ul>
+        <p className="whitespace-pre-wrap text-muted-foreground">{version.instruction}</p>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start"
+        disabled={busy}
+        onClick={() => onStartDraft(version)}
+      >
+        <FilePen />
+        Start a draft from this
+      </Button>
+    </li>
   );
 }
 
@@ -352,7 +559,7 @@ function VersionHistory({
 export function RuleScreen({ id }: { id: number }) {
   const [rule, setRuleState] = React.useState<RuleDetail | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
-  const [draft, setDraft] = React.useState<VersionView | null>(null);
+  const [draft, setDraft] = React.useState<DraftContent | null>(null);
   const [projects, setProjects] = React.useState<Project[] | null>(null);
   const [projectsError, setProjectsError] = React.useState<string | null>(null);
   const [projectsAttempt, setProjectsAttempt] = React.useState(0);
@@ -458,14 +665,14 @@ export function RuleScreen({ id }: { id: number }) {
   };
 
   /** Puts `next` in the form and saves it into the draft after a pause. */
-  const saveSoon = (next: VersionView) => {
+  const saveSoon = (next: DraftContent) => {
     setDraft(next);
     setActionError(null);
     edits.current += 1;
     saver.saveSoon(next);
   };
 
-  const edit = (next: VersionView, field: string | null) => {
+  const edit = (next: DraftContent, field: string | null) => {
     if (draft) {
       const now = Date.now();
       const last = lastTyped.current;
@@ -509,7 +716,8 @@ export function RuleScreen({ id }: { id: number }) {
       // longer has, so it comes back as a draft.
       const live = ruleRef.current?.live ?? null;
       if (step.hadDraft || !live || live.number !== step.liveNumber) {
-        saveSoon(step.content);
+        // An undo cannot move the switches of a condition published since.
+        saveSoon(live ? withPublishedSwitches(step.content, live.conditions) : step.content);
       } else {
         await dropDraft();
       }
@@ -537,13 +745,23 @@ export function RuleScreen({ id }: { id: number }) {
     });
 
   const publishNow = async () => {
-    const result = await publish(id);
-    setRule(result.rule);
+    // In line with scope changes, so an older publish response cannot replace
+    // a scope chosen while publishing.
+    const result = await saver.inLine(async () => {
+      const published = await publish(id);
+      setRule(published.rule);
+      return published;
+    });
     // Edits typed while publishing stay in the form and are saved as the
     // next draft.
     if (!saver.hasUnsent()) {
       setDraft(contentOf(result.rule));
       setSave({ kind: "idle" });
+    } else {
+      // The conditions just published have ids now; the edits kept must use them.
+      const adopt = (content: DraftContent) => withPublishedIds(content, result.rule.live?.conditions ?? []);
+      setDraft((current) => current && adopt(current));
+      saver.amendUnsent(adopt);
     }
   };
 
@@ -604,6 +822,26 @@ export function RuleScreen({ id }: { id: number }) {
     }
   };
 
+  // In line with the saves, so the last scope chosen is what is stored and shown.
+  const saveScope = async (scope: Scope) => {
+    await saver.inLine(async () => setRule(await setScope(id, scope)));
+  };
+
+  /**
+   * Sets a published condition's switch at once. The server may switch the
+   * rule off with it, when it was the last condition on.
+   */
+  const switchCondition = (conditionId: number, checkType: CheckType, on: boolean) =>
+    act("switch-condition", async () => {
+      // In line with the saves, so a save answered later does not show the old switch.
+      const next = await saver.inLine(() => setConditionSwitch(id, conditionId, checkType, on));
+      setRule(next);
+      // The draft shows a published condition's switches as they are now.
+      // The condition may be one only an older version holds, brought back into the draft.
+      const published = next.versions.flatMap((version) => version.conditions);
+      setDraft((current) => current && withPublishedSwitches(current, published));
+    });
+
   const remove = () =>
     act("delete", async () => {
       await replacingDraft(async () => {
@@ -633,6 +871,7 @@ export function RuleScreen({ id }: { id: number }) {
     action === "start-draft" || action === "discard" || action === "undo" || action === "delete";
   const canPublish = (rule.hasDraft || busySaving) && save.kind !== "error" && !acting;
   const canDiscard = rule.live !== null && showingDraft && !acting;
+  const publishedIds = publishedConditionIds(rule);
 
   return (
     <div className="@container w-full space-y-6">
@@ -641,9 +880,11 @@ export function RuleScreen({ id }: { id: number }) {
           <div className="min-w-0 space-y-2">
             <h1 className="text-2xl font-bold tracking-tight">{rule.name}</h1>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">
-                {rule.checkType === "message" ? "User message" : "Agent reply"}
-              </Badge>
+              {rule.checkTypes.map((type) => (
+                <Badge key={type} variant="outline">
+                  {CHECK_LABELS[type]}
+                </Badge>
+              ))}
               <RuleStatus published={rule.published} hasDraft={rule.hasDraft} />
             </div>
           </div>
@@ -694,8 +935,20 @@ export function RuleScreen({ id }: { id: number }) {
           {actionError}
         </p>
       )}
+      <ScopeSection
+        scope={rule.scope}
+        onSave={saveScope}
+        disabled={replacing}
+        projects={projects}
+        projectsError={projectsError}
+        onRetryProjects={retryProjects}
+      />
       <div className="grid grid-cols-1 gap-6 @4xl:grid-cols-2">
-        <PublishedVersion rule={rule} />
+        <PublishedVersion
+          rule={rule}
+          disabled={acting}
+          onSwitch={(condition, checkType, on) => void switchCondition(condition.id, checkType, on)}
+        />
         <section className="rounded-md border">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
             <div className="flex items-center gap-2">
@@ -729,17 +982,15 @@ export function RuleScreen({ id }: { id: number }) {
             <DraftForm
               value={draft}
               onChange={edit}
-              checkType={rule.draft?.checkType ?? rule.checkType}
-              projects={projects}
-              projectsError={projectsError}
-              onRetryProjects={retryProjects}
+              published={publishedIds}
+              onPublishedSwitch={(conditionId, checkType, on) => void switchCondition(conditionId, checkType, on)}
               error={save.kind === "error" ? save.message : null}
             />
           </fieldset>
         </section>
       </div>
       <RescoreDialog result={rescore} onPublish={publishAnyway} onBack={() => setRescore(null)} />
-      <VersionHistory rule={rule} busy={acting} onStartDraft={(v) => void startFrom(v)} />
+      <RuleHistory rule={rule} busy={acting} onStartDraft={(v) => void startFrom(v)} />
       {/* Reloads after a publish, so the new version shows. */}
       <RuleAnalyticsPanel key={rule.live?.number ?? 0} id={id} />
     </div>

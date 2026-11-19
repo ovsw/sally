@@ -5,7 +5,7 @@ import { runMessageHook } from "../src/message-hook.ts";
 import { databasePath } from "../src/paths.ts";
 import { runReplyHook } from "../src/reply-hook.ts";
 import type { AttentionKind } from "../src/attention.ts";
-import { RuleError, RuleNotFoundError, type Settings } from "../src/rules.ts";
+import { conditionsFor, RuleError, RuleNotFoundError, type Settings } from "../src/rules.ts";
 import { gitRepo } from "./support/git.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { standInMatcher } from "./support/stand-in-matcher.ts";
@@ -89,7 +89,7 @@ describe("needs attention", () => {
       {
         ruleId: eager,
         name: "Eager",
-        checkType: "message",
+        checkTypes: ["message"],
         versionNumber: 1,
         reasons: [
           {
@@ -157,7 +157,7 @@ describe("needs attention", () => {
       {
         ruleId: dead,
         name: "Dead",
-        checkType: "message",
+        checkTypes: ["message"],
         versionNumber: 1,
         reasons: [{ kind: "never_matches", checks: 3, summary: "No matches in its last 3 checks." }],
       },
@@ -175,8 +175,57 @@ describe("needs attention", () => {
     await reply({});
 
     expect(attention()).toMatchObject([
-      { ruleId: handover, checkType: "reply", reasons: [{ kind: "never_matches", checks: 2 }] },
+      { ruleId: handover, checkTypes: ["reply"], reasons: [{ kind: "never_matches", checks: 2 }] },
     ]);
+  });
+
+  describe("a rule in both checks", () => {
+    const ruleInBothChecks = () =>
+      sandbox.liveRule({
+        name: "Local link",
+        conditions: [
+          { text: "Asks for a visual change.", message: true, reply: false },
+          { text: "Reports a change with no link.", message: false, reply: true },
+        ],
+      });
+
+    it("judges each weak match at the cutoff of the check it came from", async () => {
+      thresholds({ busyShare: 1, closeMargin: 0.05, cutoff: 0.6, replyCutoff: 0.8 });
+      const ruleId = ruleInBothChecks();
+      // Far above the message cutoff, though close above the reply cutoff: not weak.
+      await message({ "Asks for a visual change.": 0.82 });
+      // Close above the reply cutoff, though far above the message cutoff: weak.
+      await reply({ "Reports a change with no link.": 0.83 });
+      await message({});
+
+      expect(attention()).toMatchObject([
+        {
+          ruleId,
+          checkTypes: ["message", "reply"],
+          reasons: [{ kind: "weak_matches", weakMatches: 1, matches: 2 }],
+        },
+      ]);
+    });
+
+    it("is listed once, with the reasons from both checks together", async () => {
+      thresholds({ quietChecks: 3 });
+      const ruleId = ruleInBothChecks();
+      await message({});
+      await reply({});
+      expect(attention()).toEqual([]);
+
+      await message({});
+
+      expect(attention()).toEqual([
+        {
+          ruleId,
+          name: "Local link",
+          checkTypes: ["message", "reply"],
+          versionNumber: 1,
+          reasons: [{ kind: "never_matches", checks: 3, summary: "No matches in its last 3 checks." }],
+        },
+      ]);
+    });
   });
 
   it("starts a rule's record afresh when a new version is published", async () => {
@@ -187,7 +236,7 @@ describe("needs attention", () => {
     expect(attention().map((entry) => entry.name)).toEqual(["Reworded"]);
 
     sandbox.withRules((rules) => {
-      rules.saveDraft(ruleId, { instruction: "Do it.", conditions: ["New wording."] });
+      rules.saveDraft(ruleId, { instruction: "Do it.", conditions: conditionsFor("message", ["New wording."]) });
       rules.publish(ruleId);
     });
     await message({});
@@ -199,7 +248,7 @@ describe("needs attention", () => {
     const off = sandbox.liveRule({ name: "Off", conditions: ["Condition A."] });
     const gone = sandbox.liveRule({ name: "Gone", conditions: ["Condition B."] });
     sandbox.withRules((rules) =>
-      rules.createRule({ name: "Draft", checkType: "message", instruction: "Do X.", conditions: ["Condition C."] }),
+      rules.createRule({ name: "Draft", instruction: "Do X.", conditions: conditionsFor("message", ["Condition C."]) }),
     );
     await message({});
     sandbox.withRules((rules) => {
@@ -226,7 +275,7 @@ describe("needs attention", () => {
       {
         ruleId: wrong,
         name: "Wrong matches",
-        checkType: "message",
+        checkTypes: ["message"],
         versionNumber: 1,
         reasons: [{ kind: "wrong_matches", flags: 2, summary: "2 matches of version 1 flagged as a wrong match." }],
       },
@@ -234,7 +283,7 @@ describe("needs attention", () => {
 
     // A new version has no wrong matches yet.
     sandbox.withRules((rules) => {
-      rules.saveDraft(wrong, { instruction: "Do it.", conditions: ["Sharper condition."] });
+      rules.saveDraft(wrong, { instruction: "Do it.", conditions: conditionsFor("message", ["Sharper condition."]) });
       rules.publish(wrong);
     });
     expect(attention()).toEqual([]);
@@ -269,7 +318,7 @@ describe("needs attention", () => {
       thresholds({ quietChecks: 1 });
       const ruleId = sandbox.liveRule({ name: "Reworded", conditions: ["Old wording."] });
       sandbox.withRules((rules) => {
-        rules.saveDraft(ruleId, { instruction: "Do it.", conditions: ["New wording."] });
+        rules.saveDraft(ruleId, { instruction: "Do it.", conditions: conditionsFor("message", ["New wording."]) });
         rules.publish(ruleId);
       });
       await message({});
@@ -325,7 +374,7 @@ describe("needs attention", () => {
       expect(attention()).toEqual([]);
 
       sandbox.withRules((rules) => {
-        rules.saveDraft(quiet, { instruction: "Do it.", conditions: ["New wording."] });
+        rules.saveDraft(quiet, { instruction: "Do it.", conditions: conditionsFor("message", ["New wording."]) });
         rules.publish(quiet);
       });
       await message({});

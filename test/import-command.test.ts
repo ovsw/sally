@@ -99,10 +99,34 @@ describe("import add", () => {
     ]);
     expect(detail.passages[0]!.rules[0]!.rule).toMatchObject({
       name: "Screenshot changed pages",
-      checkType: "reply",
+      checkTypes: ["reply"],
       published: false,
     });
     expect(detail.pendingCount).toBe(2);
+  });
+
+  it("adds a proposed rule with switches on each condition, as the skill writes it", () => {
+    const { id } = sallyJson<ImportSummary>(["start", globalFile()]);
+    const passage = {
+      ...PASSAGES[0],
+      rules: [
+        {
+          name: "Screenshot changed pages",
+          instruction: "Take a full-page screenshot of the changed page.",
+          conditions: [
+            { text: "The message asks to change a page's layout.", message: true, reply: false },
+            { text: "The reply says a page's layout changed.", message: false, reply: true },
+          ],
+        },
+      ],
+    };
+    const detail = sallyJson<ImportDetail>(["add", String(id)], JSON.stringify([passage]));
+    const rule = detail.passages[0]!.rules[0]!.rule!;
+    expect(rule.checkTypes).toEqual(["message", "reply"]);
+    expect(rule.draft!.conditions.map(({ message, reply }) => [message, reply])).toEqual([
+      [true, false],
+      [false, true],
+    ]);
   });
 
   it("reads passages from a file, as a list or under \"passages\"", () => {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ImportDetail, ImportSummary } from "../src/import.ts";
 import { runMessageHook } from "../src/message-hook.ts";
-import type { RuleDetail, RuleSummary } from "../src/rules.ts";
+import { type CheckType, conditionsFor, type RuleDetail, type RuleSummary } from "../src/rules.ts";
 import { type RunningApp, startApp } from "./support/app.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { standInMatcher } from "./support/stand-in-matcher.ts";
@@ -23,12 +23,19 @@ afterEach(async () => {
 
 const newRule = {
   name: "Local link first",
-  checkType: "message",
+  checkType: "message" as CheckType,
   instruction: "Show the change on the local dev server first.",
   conditions: ["The message asks for a visual change."],
 };
 
-const create = (rule: Partial<typeof newRule> = {}) => app.json<RuleDetail>("POST", "/api/rules", { ...newRule, ...rule });
+/** The body of a new rule: each condition given as plain text is on for the rule's check type. */
+const ruleBody = (rule: Partial<typeof newRule> = {}) => {
+  const { checkType, conditions, ...rest } = { ...newRule, ...rule };
+  return { ...rest, conditions: conditionsFor(checkType, conditions) };
+};
+const create = (rule: Partial<typeof newRule> = {}) => app.json<RuleDetail>("POST", "/api/rules", ruleBody(rule));
+/** New conditions on for Message, as a draft gives them. */
+const messageConditions = (...texts: string[]) => conditionsFor("message", texts);
 const list = async (query = "") => (await app.json<{ rules: RuleSummary[] }>("GET", `/api/rules${query}`)).rules;
 const names = async (query = "") => (await list(query)).map((r) => r.name);
 
@@ -96,13 +103,13 @@ describe("the rules list", () => {
     await app.json("POST", `/api/rules/${live.id}/publish`, {});
     const edited = await create({ name: "Edited rule", checkType: "reply" });
     await app.json("POST", `/api/rules/${edited.id}/publish`, {});
-    await app.json("PUT", `/api/rules/${edited.id}/draft`, { instruction: "New wording.", conditions: ["C."] });
+    await app.json("PUT", `/api/rules/${edited.id}/draft`, { instruction: "New wording.", conditions: conditionsFor("reply", ["C."]) });
     await create({ name: "New rule" });
 
     expect(await list()).toEqual([
-      { id: edited.id, name: "Edited rule", checkType: "reply", published: true, scope: { kind: "all" }, on: true, hasDraft: true },
-      { id: live.id, name: "Live rule", checkType: "message", published: true, scope: { kind: "all" }, on: true, hasDraft: false },
-      { id: expect.any(Number), name: "New rule", checkType: "message", published: false, scope: { kind: "all" }, on: true, hasDraft: true },
+      { id: edited.id, name: "Edited rule", checkTypes: ["reply"], published: true, scope: { kind: "all" }, on: true, hasDraft: true },
+      { id: live.id, name: "Live rule", checkTypes: ["message"], published: true, scope: { kind: "all" }, on: true, hasDraft: false },
+      { id: expect.any(Number), name: "New rule", checkTypes: ["message"], published: false, scope: { kind: "all" }, on: true, hasDraft: true },
     ]);
   });
 
@@ -112,7 +119,7 @@ describe("the rules list", () => {
     await create({ name: "Beta", checkType: "reply", instruction: "Say what changed.", conditions: ["Reports a fix."] });
     const c = await create({ name: "Gamma", conditions: ["Mentions a deadline."] });
     await app.json("POST", `/api/rules/${c.id}/publish`, {});
-    await app.json("PUT", `/api/rules/${c.id}/draft`, { instruction: "Ask about the PULL request.", conditions: ["X."] });
+    await app.json("PUT", `/api/rules/${c.id}/draft`, { instruction: "Ask about the PULL request.", conditions: messageConditions("X.") });
 
     expect(await names("?search=beta")).toEqual(["Beta"]);
     expect(await names("?search=pull%20request")).toEqual(["Alpha", "Gamma"]);
@@ -139,14 +146,35 @@ describe("creating, editing and publishing a rule", () => {
     expect(await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher })).toBe("");
   });
 
+  it("creates a rule with conditions on for Message, Reply or both, and refuses a condition without its switches", async () => {
+    const both = [
+      { text: "The message asks for a visual change.", message: true, reply: false },
+      { text: "The reply gives no local link.", message: false, reply: true },
+    ];
+    const rule = await app.json<RuleDetail>("POST", "/api/rules", { name: "Both", instruction: "Do it.", conditions: both });
+    expect(rule).toMatchObject({ checkTypes: ["message", "reply"], draft: { conditions: both } });
+    expect(await names("?checkType=message")).toEqual(["Both"]);
+    expect(await names("?checkType=reply")).toEqual(["Both"]);
+
+    const plain = await app.call("POST", "/api/rules", { name: "Plain", instruction: "Do it.", conditions: ["M."] });
+    expect(plain.status).toBe(400);
+    const noSwitches = await app.call("POST", "/api/rules", { name: "Bare", instruction: "Do it.", conditions: [{ text: "M." }] });
+    expect(noSwitches.status).toBe(400);
+    expect(await noSwitches.json()).toEqual({ error: "Each condition needs its Message and Reply switches." });
+    const newInDraft = await app.call("PUT", `/api/rules/${rule.id}/draft`, { instruction: "Do it.", conditions: [{ text: "M." }] });
+    expect(newInDraft.status).toBe(400);
+    expect(await names()).toEqual(["Both"]);
+  });
+
   it("saves edits to name, instruction and conditions into the draft, and they survive a reload", async () => {
     const rule = await create({ conditions: ["First.", "Second.", "Third."] });
+    const [first, , third] = rule.draft!.conditions;
 
     // Change one condition, remove one, add one, rename and reword.
     await app.json("PUT", `/api/rules/${rule.id}/draft`, {
       name: "Local link before PR",
       instruction: "Show it on localhost first.",
-      conditions: ["First, changed.", "Third.", "Fourth."],
+      conditions: [{ id: first!.id, text: "First, changed." }, third, { text: "Fourth.", message: false, reply: true }],
     });
 
     await app.close();
@@ -155,8 +183,13 @@ describe("creating, editing and publishing a rule", () => {
     expect(reloaded.draft).toMatchObject({
       name: "Local link before PR",
       instruction: "Show it on localhost first.",
-      conditions: ["First, changed.", "Third.", "Fourth."],
+      conditions: [
+        { id: first!.id, text: "First, changed.", message: true, reply: false },
+        { id: third!.id, text: "Third.", message: true, reply: false },
+        { text: "Fourth.", message: false, reply: true },
+      ],
     });
+    expect(reloaded.checkTypes).toEqual(["message", "reply"]);
     expect(await names()).toEqual(["Local link before PR"]);
   });
 
@@ -178,7 +211,7 @@ describe("creating, editing and publishing a rule", () => {
     await app.json("PUT", `/api/rules/${rule.id}/draft`, {
       name: "Renamed",
       instruction: "New wording.",
-      conditions: ["A new condition."],
+      conditions: messageConditions("A new condition."),
     });
 
     const detail = await app.json<RuleDetail>("GET", `/api/rules/${rule.id}`);
@@ -190,9 +223,9 @@ describe("creating, editing and publishing a rule", () => {
         number: 1,
         name: "Local link first",
         instruction: newRule.instruction,
-        conditions: newRule.conditions,
+        conditions: [{ id: expect.any(Number), text: newRule.conditions[0], message: true, reply: false }],
       },
-      draft: { name: "Renamed", instruction: "New wording.", conditions: ["A new condition."] },
+      draft: { name: "Renamed", instruction: "New wording.", conditions: [{ text: "A new condition." }] },
     });
   });
 
@@ -209,7 +242,7 @@ describe("creating, editing and publishing a rule", () => {
     await app.json("PUT", `/api/rules/${rule.id}/draft`, {
       name: "Localhost first",
       instruction: "Reworded instruction.",
-      conditions: ["The message asks for a layout change."],
+      conditions: messageConditions("The message asks for a layout change."),
     });
     const matcher = standInMatcher({
       "The message asks for a visual change.": 0.9,
@@ -232,14 +265,14 @@ describe("creating, editing and publishing a rule", () => {
     const first = await create({ name: "First" });
     const second = await create({ name: "Second" });
 
-    const taken = await app.call("POST", "/api/rules", { ...newRule, name: "First" });
+    const taken = await app.call("POST", "/api/rules", ruleBody({ name: "First" }));
     expect(taken.status).toBe(400);
     expect(await taken.json()).toEqual({ error: 'A rule named "First" already exists.' });
 
     const rename = await app.call("PUT", `/api/rules/${second.id}/draft`, {
       name: "First",
       instruction: "X.",
-      conditions: ["Y."],
+      conditions: messageConditions("Y."),
     });
     expect(rename.status).toBe(400);
 
@@ -254,7 +287,7 @@ describe("creating, editing and publishing a rule", () => {
 describe("history and the rest of a rule's life", () => {
   const publish = (id: number) => app.json("POST", `/api/rules/${id}/publish`, {});
   const reword = (id: number, instruction: string, conditions = newRule.conditions) =>
-    app.json<RuleDetail>("PUT", `/api/rules/${id}/draft`, { instruction, conditions });
+    app.json<RuleDetail>("PUT", `/api/rules/${id}/draft`, { instruction, conditions: messageConditions(...conditions) });
   const sentToJev = async () => {
     const matcher = standInMatcher({ "The message asks for a visual change.": 0.9 });
     const output = await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
@@ -318,6 +351,67 @@ describe("history and the rest of a rule's life", () => {
     expect(JSON.parse(output).hookSpecificOutput.additionalContext).toContain("Second wording.");
   });
 
+  it("switches a condition at once, the rule going off with its last one and refusing to come on without one", async () => {
+    const rule = await create();
+    await publish(rule.id);
+    await reword(rule.id, "A draft, not a version.");
+    const [condition] = (await app.json<RuleDetail>("GET", `/api/rules/${rule.id}`)).live!.conditions;
+    const path = (type: string) => `/api/rules/${rule.id}/conditions/${condition!.id}/${type}`;
+
+    const withReply = await app.json<RuleDetail>("PUT", path("reply"), { on: true });
+    expect(withReply).toMatchObject({ on: true, checkTypes: ["message", "reply"], live: { conditions: [{ message: true, reply: true }] } });
+    expect(withReply.versions).toHaveLength(1);
+    expect(withReply.draft).toMatchObject({ instruction: "A draft, not a version." });
+
+    await app.json("PUT", path("reply"), { on: false });
+    const off = await app.json<RuleDetail>("PUT", path("message"), { on: false });
+    expect(off).toMatchObject({ on: false, live: { conditions: [{ message: false, reply: false }] } });
+    expect(await sentToJev()).toEqual({ output: "", conditions: [] });
+
+    const refused = await app.call("POST", `/api/rules/${rule.id}/on`, {});
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({
+      error: "None of this rule's conditions is on. Switch a condition's Message or Reply on first, then the rule.",
+    });
+    // Switching a condition on leaves the rule off until it is switched on.
+    expect(await app.json<RuleDetail>("PUT", path("message"), { on: true })).toMatchObject({ on: false });
+    expect(await app.json<RuleDetail>("POST", `/api/rules/${rule.id}/on`, {})).toMatchObject({ on: true });
+    expect((await sentToJev()).conditions).toEqual(newRule.conditions);
+
+    expect((await app.call("PUT", path("message"), { on: "yes" })).status).toBe(400);
+    expect((await app.call("PUT", path("both"), { on: true })).status).toBe(404);
+    expect((await app.call("PUT", `/api/rules/${rule.id}/conditions/999/message`, { on: true })).status).toBe(404);
+  });
+
+  it("returns the rule's switch changes with its versions, newest first", async () => {
+    const rule = await create();
+    await publish(rule.id);
+    const [condition] = (await app.json<RuleDetail>("GET", `/api/rules/${rule.id}`)).live!.conditions;
+    expect(rule.switchChanges).toEqual([]);
+
+    await app.json("PUT", `/api/rules/${rule.id}/conditions/${condition!.id}/message`, { on: false });
+    await app.json("PUT", `/api/rules/${rule.id}/conditions/${condition!.id}/message`, { on: true });
+    await app.json("POST", `/api/rules/${rule.id}/on`, {});
+    await app.json("PUT", `/api/rules/${rule.id}/scope`, { scope: { kind: "all" } });
+
+    const detail = await app.json<RuleDetail>("GET", `/api/rules/${rule.id}`);
+    expect(detail.versions).toHaveLength(1);
+    expect(detail.switchChanges).toEqual([
+      { id: expect.any(Number), at: expect.any(String), what: "rule", on: true, bySally: false },
+      expect.objectContaining({ what: "condition", conditionId: condition!.id, checkType: "message", on: true }),
+      { id: expect.any(Number), at: expect.any(String), what: "rule", on: false, bySally: true },
+      {
+        id: expect.any(Number),
+        at: expect.any(String),
+        what: "condition",
+        conditionId: condition!.id,
+        conditionText: newRule.conditions[0],
+        checkType: "message",
+        on: false,
+      },
+    ]);
+  });
+
   it("deletes a rule", async () => {
     const rule = await create();
     await publish(rule.id);
@@ -348,33 +442,55 @@ describe("a rule's scope", () => {
     expect(projects).toMatchObject([{ name: project }]);
   });
 
-  it("edits the scope in the draft and puts it live on publish", async () => {
+  it("sets the scope at once, with no new version and the draft untouched", async () => {
     const project = await see("a-project");
+    const elsewhere = await see("elsewhere");
     const rule = await create();
-    expect(rule.draft).toMatchObject({ scope: { kind: "all" } });
+    expect(rule.scope).toEqual({ kind: "all" });
     await app.json("POST", `/api/rules/${rule.id}/publish`, {});
+    const before = await app.json<RuleDetail>("PUT", `/api/rules/${rule.id}/draft`, {
+      instruction: "Changed.",
+      conditions: messageConditions(...newRule.conditions),
+    });
 
-    const saved = await app.json<RuleDetail>("PUT", `/api/rules/${rule.id}/draft`, {
-      instruction: newRule.instruction,
-      conditions: newRule.conditions,
+    const after = await app.json<RuleDetail>("PUT", `/api/rules/${rule.id}/scope`, {
       scope: { kind: "projects", projects: [project] },
     });
-    expect(saved).toMatchObject({ live: { scope: { kind: "all" } }, draft: { scope: { kind: "projects", projects: [project] } } });
 
-    const published = await app.json<{ rule: RuleDetail }>("POST", `/api/rules/${rule.id}/publish`, {});
-    expect(published.rule.live).toMatchObject({ scope: { kind: "projects", projects: [project] } });
+    expect(after.scope).toEqual({ kind: "projects", projects: [project] });
+    expect(after.versions).toEqual(before.versions);
+    expect(after.draft).toEqual(before.draft);
+    // The next check uses it: a message elsewhere is no longer checked against the rule.
+    const matcher = standInMatcher();
+    await runMessageHook(hookInput("Make the header smaller", { cwd: elsewhere }), {
+      env: sandbox.env,
+      matcher,
+    });
+    expect(matcher.calls).toEqual([]);
   });
 
-  it("lists each rule with the scope in force, and narrows the list by it", async () => {
+  it("leaves the scope as it is when a draft is saved or published", async () => {
     const project = await see("a-project");
-    const onlyHere = { instruction: "X.", conditions: ["Y."], scope: { kind: "projects", projects: [project] } };
-    // Published for all projects, with a draft for one project: the published scope is in force.
-    const everywhere = await create({ name: "Everywhere" });
-    await app.json("POST", `/api/rules/${everywhere.id}/publish`, {});
-    await app.json("PUT", `/api/rules/${everywhere.id}/draft`, onlyHere);
-    // Never published: the draft's scope is in force.
-    const draftOnly = await create({ name: "Here only" });
-    await app.json("PUT", `/api/rules/${draftOnly.id}/draft`, onlyHere);
+    const rule = await app.json<RuleDetail>("POST", "/api/rules", {
+      ...ruleBody(),
+      scope: { kind: "projects", projects: [project] },
+    });
+    await app.json("PUT", `/api/rules/${rule.id}/draft`, {
+      instruction: "Changed.",
+      conditions: messageConditions(...newRule.conditions),
+      scope: { kind: "all" },
+    });
+    const published = await app.json<{ rule: RuleDetail }>("POST", `/api/rules/${rule.id}/publish`, {});
+    expect(published.rule.scope).toEqual({ kind: "projects", projects: [project] });
+    expect(published.rule.live).not.toHaveProperty("scope");
+  });
+
+  it("lists each rule with its scope, and narrows the list by it", async () => {
+    const project = await see("a-project");
+    const onlyHere = { scope: { kind: "projects", projects: [project] } };
+    await create({ name: "Everywhere" });
+    const here = await create({ name: "Here only" });
+    await app.json("PUT", `/api/rules/${here.id}/scope`, onlyHere);
 
     expect((await list()).map((r) => [r.name, r.scope])).toEqual([
       ["Everywhere", { kind: "all" }],
@@ -382,20 +498,23 @@ describe("a rule's scope", () => {
     ]);
     expect(await names("?allProjects=true")).toEqual(["Everywhere"]);
     expect(await names("?allProjects=false")).toEqual(["Here only"]);
-    expect((await app.json<RuleDetail>("GET", `/api/rules/${draftOnly.id}`)).scope).toEqual(onlyHere.scope);
     expect((await app.call("GET", "/api/rules?allProjects=some")).status).toBe(400);
   });
 
-  it("refuses a malformed scope and a project Sally has not seen", async () => {
+  it("refuses a malformed scope, an empty list and a project Sally has not seen", async () => {
     const rule = await create();
-    const save = (scope: unknown) =>
-      app.call("PUT", `/api/rules/${rule.id}/draft`, { instruction: "X.", conditions: ["Y."], scope });
+    const set = (body: unknown) => app.call("PUT", `/api/rules/${rule.id}/scope`, body);
 
-    expect((await save("all")).status).toBe(400);
-    expect((await save({ kind: "projects", projects: [1] })).status).toBe(400);
-    const unseen = await save({ kind: "projects", projects: ["never/seen"] });
+    expect((await set({})).status).toBe(400);
+    expect((await set({ scope: "all" })).status).toBe(400);
+    expect((await set({ scope: { kind: "projects", projects: [1] } })).status).toBe(400);
+    const empty = await set({ scope: { kind: "projects", projects: [] } });
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toEqual({ error: "Pick at least one project, or apply the rule to all projects." });
+    const unseen = await set({ scope: { kind: "projects", projects: ["never/seen"] } });
     expect(unseen.status).toBe(400);
     expect(await unseen.json()).toEqual({ error: 'Sally has not seen a project named "never/seen".' });
+    expect((await app.call("PUT", "/api/rules/999/scope", { scope: { kind: "all" } })).status).toBe(404);
   });
 });
 
@@ -410,12 +529,24 @@ describe("activity and analytics over HTTP", () => {
       "GET",
       "/api/activity?outcome=attached&checkType=message&limit=10",
     );
-    expect(checks).toMatchObject([{ text: "Make the header smaller", outcome: "attached" }]);
+    expect(checks).toMatchObject([
+      {
+        text: "Make the header smaller",
+        outcome: "attached",
+        checkType: "message",
+        matches: [{ name: "Local link first", condition: "The message asks for a visual change." }],
+      },
+    ]);
     expect((await app.call("GET", "/api/activity?outcome=maybe")).status).toBe(400);
     expect((await app.call("GET", "/api/activity?limit=lots")).status).toBe(400);
 
     const analytics = await app.json("GET", `/api/rules/${created.id}/analytics`);
-    expect(analytics).toMatchObject({ checks: 1, matches: 1, versions: [{ number: 1, matches: 1 }] });
+    expect(analytics).toMatchObject({
+      checks: 1,
+      matches: 1,
+      recentMatches: [{ checkType: "message", condition: "The message asks for a visual change." }],
+      versions: [{ number: 1, matches: 1 }],
+    });
     expect((await app.call("GET", "/api/rules/999/analytics")).status).toBe(404);
   });
 
@@ -524,7 +655,7 @@ describe("the import", () => {
     const proposed = becomes!.rules[0]!;
     await app.json("PUT", `/api/rules/${proposed.ruleId}/draft`, {
       instruction: "Give the localhost link.",
-      conditions: ["The message asks for a visual change."],
+      conditions: messageConditions("The message asks for a visual change."),
     });
     const kept = await app.json<ImportDetail>("POST", `/api/proposed-rules/${proposed.id}/keep`, {});
     expect(kept.passages[1]!.rules[0]).toMatchObject({
@@ -550,9 +681,8 @@ describe("the import", () => {
 
     const response = await app.call("POST", `/api/passages/${stays!.id}/rules`, {
       name: "Brief answers",
-      checkType: "reply",
       instruction: "Shorten the reply.",
-      conditions: ["The reply runs past three paragraphs."],
+      conditions: conditionsFor("reply", ["The reply runs past three paragraphs."]),
     });
     expect(response.status).toBe(201);
     const written = (await response.json()) as ImportDetail;

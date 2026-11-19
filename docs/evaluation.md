@@ -79,10 +79,28 @@ One JSON object with `rules` and `cases`, and optionally `padding`.
 
 A complete version is in [`evaluation-example.json`](evaluation-example.json).
 
-**Rules.** Each rule has a `name` (unique), a `check` (`"message"` or
-`"reply"`) and a non-empty list of `conditions`, written as they would be in
-Sally. `instruction` is optional: Jev never sees it, so it does not change the
-result. Every rule applies to all projects.
+**Rules.** Each rule has a `name` (unique) and a non-empty list of
+`conditions`, written as they would be in Sally. A condition is scored only in
+the checks it is on for, as the engine does it. A condition given as text is
+on for the rule's `check` (`"message"` or `"reply"`). To set a condition's
+switches yourself, give it as an object; a rule whose conditions are all
+objects needs no `check`:
+
+```json
+{
+  "name": "Local link for visual changes",
+  "conditions": [
+    { "text": "The user's message asks for a visual change.", "message": true },
+    { "text": "This reply reports a finished visual change and gives no local link to the page.", "reply": true },
+    { "text": "The text is about a page's layout.", "message": true, "reply": true }
+  ]
+}
+```
+
+A switch left out is off, and a condition with both off is never scored. A
+rule needs at least one condition that is on. `instruction` is optional: Jev
+never sees it, so it does not change the result. Every rule applies to all
+projects.
 
 **Cases.** Each case is one saved message or reply:
 
@@ -92,7 +110,7 @@ result. Every rule applies to all projects.
   a slash command is judged as the engine judges it: on the text after the
   command name, or skipped when little follows.
 - `expected`: the names of the rules that should match, `[]` when none should.
-  Each must be a rule of the same check type in the file.
+  Each must be a rule in the file with a condition on for the case's check.
 - `label`: optional, shown in the report. Cases without one are numbered.
 
 **Padding** (optional, for the scale run): `{ "message": [...], "reply": [...] }`,
@@ -122,8 +140,8 @@ unless `--cutoff` or `--time-limit` say otherwise.
 
 ## The scale run
 
-`--scale` pads the rules of each check type that has cases up to 400
-conditions (`--conditions N` sets another number) with one-condition padding
-rules, then runs every case. Any match of a padding rule is a wrong match.
+`--scale` pads each check type that has cases up to 400 conditions on for it
+(`--conditions N` sets another number) with one-condition padding rules, then
+runs every case. A condition on for both checks counts in both. Any match of a padding rule is a wrong match.
 Its headline number, printed first, is the wrong-match rate: how often a large
 rule set makes an unrelated rule match.

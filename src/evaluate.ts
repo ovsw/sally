@@ -13,7 +13,15 @@ import { PADDING_AVAILABLE, paddingConditions } from "./evaluation-padding.ts";
 import { createJevMatcher } from "./jev.ts";
 import type { Matcher } from "./matcher.ts";
 import { type Env, readApiKey } from "./paths.ts";
-import { type CheckType, createRulesService, DEFAULT_SETTINGS, RuleError, type Settings } from "./rules.ts";
+import {
+  type CheckType,
+  checkTypesOf,
+  createRulesService,
+  DEFAULT_SETTINGS,
+  type NewCondition,
+  RuleError,
+  type Settings,
+} from "./rules.ts";
 import { openStore } from "./store.ts";
 
 /** How many conditions the scale run pads each check type to, unless told otherwise. */
@@ -53,8 +61,8 @@ export interface EvaluateIo {
 
 interface EvalRule {
   name: string;
-  check: CheckType;
-  conditions: string[];
+  /** Each condition with its switches: a case is scored only against the conditions on for its check. */
+  conditions: NewCondition[];
   instruction?: string;
 }
 
@@ -135,6 +143,31 @@ function checkType(value: unknown, where: string): CheckType {
   return value as CheckType;
 }
 
+/**
+ * One condition of a rule: its wording, on for the rule's `check`; or an object
+ * with its wording and its own switches, `{ "text": ..., "message": true, "reply": false }`.
+ */
+function parseCondition(condition: unknown, check: CheckType | undefined, named: string): NewCondition {
+  const text = typeof condition === "string" ? condition : isObject(condition) ? condition.text : undefined;
+  if (typeof text === "string" && !text.trim()) {
+    // A blank condition is never saved, so counting it would misstate the conditions scored.
+    throw new UsageError(`${named} has a condition with no wording.`);
+  }
+  if (typeof condition === "string") {
+    if (!check) throw new UsageError(`${named} has a condition given as text, which needs the rule's "check".`);
+    return { text: condition, message: check === "message", reply: check === "reply" };
+  }
+  if (!isObject(condition) || typeof condition.text !== "string") {
+    throw new UsageError(`${named}: each condition is a string, or an object with a "text".`);
+  }
+  for (const type of CHECK_TYPES) {
+    if (condition[type] !== undefined && typeof condition[type] !== "boolean") {
+      throw new UsageError(`${named}: a condition's "${type}" is true or false.`);
+    }
+  }
+  return { text: condition.text, message: condition.message === true, reply: condition.reply === true };
+}
+
 /** Reads and checks the evaluation file, so that a mistake in it stops the run before Jev is called. */
 export function parseEvaluationFile(source: string): EvalFile {
   let data: unknown;
@@ -156,13 +189,18 @@ export function parseEvaluationFile(source: string): EvalFile {
     if (!isObject(rule)) throw new UsageError(`${where} is not an object.`);
     if (typeof rule.name !== "string" || !rule.name.trim()) throw new UsageError(`${where} needs a "name".`);
     const named = `Rule "${rule.name}"`;
-    if (!isStringArray(rule.conditions) || rule.conditions.length === 0) {
-      throw new UsageError(`${named} needs a non-empty "conditions" list of strings.`);
+    if (!Array.isArray(rule.conditions) || rule.conditions.length === 0) {
+      throw new UsageError(`${named} needs a non-empty "conditions" list.`);
     }
     if (rule.instruction !== undefined && typeof rule.instruction !== "string") {
       throw new UsageError(`${named}: "instruction" is a string.`);
     }
-    return { name: rule.name.trim(), check: checkType(rule.check, named), conditions: rule.conditions, instruction: rule.instruction };
+    const check = rule.check === undefined ? undefined : checkType(rule.check, named);
+    const conditions = rule.conditions.map((condition: unknown) => parseCondition(condition, check, named));
+    if (checkTypesOf(conditions).length === 0) {
+      throw new UsageError(`${named} needs a condition on for "message" or "reply".`);
+    }
+    return { name: rule.name.trim(), conditions, instruction: rule.instruction };
   });
   const byName = new Map<string, EvalRule>();
   for (const rule of rules) {
@@ -182,7 +220,9 @@ export function parseEvaluationFile(source: string): EvalFile {
     for (const name of item.expected) {
       const rule = byName.get(name);
       if (!rule) throw new UsageError(`${named} expects a rule the file does not have: "${name}".`);
-      if (rule.check !== check) throw new UsageError(`${named} is a ${check} check but expects the ${rule.check} rule "${name}".`);
+      if (!rule.conditions.some((condition) => condition[check])) {
+        throw new UsageError(`${named} is a ${check} check but expects "${name}", which has no condition on for ${check}.`);
+      }
     }
     return { label, check, text: item.text, expected: [...new Set(item.expected)] };
   });
@@ -255,12 +295,16 @@ function parseOptions(args: string[]): Options {
   };
 }
 
+/** How many of the file's conditions a check of this type scores: those on for it. */
+const conditionsOnFor = (file: EvalFile, type: CheckType) =>
+  file.rules.reduce((sum, r) => sum + r.conditions.filter((condition) => condition[type]).length, 0);
+
 /** The padding conditions that bring each check type with cases up to `target` conditions. */
 function padding(file: EvalFile, target: number): Record<CheckType, string[]> {
   const result: Record<CheckType, string[]> = { message: [], reply: [] };
   for (const type of CHECK_TYPES) {
     if (!file.cases.some((c) => c.check === type)) continue;
-    const have = file.rules.filter((r) => r.check === type).reduce((sum, r) => sum + r.conditions.length, 0);
+    const have = conditionsOnFor(file, type);
     const needed = Math.max(0, target - have);
     if (needed === 0) continue;
     const own = file.padding[type];
@@ -303,10 +347,10 @@ export async function evaluate(
     const settings = rules.updateSettings(options.settings);
 
     const names = new Map<number, { name: string; padding: boolean }>();
-    const add = (name: string, check: CheckType, conditions: string[], instruction: string, isPadding: boolean) => {
+    const add = (name: string, conditions: NewCondition[], instruction: string, isPadding: boolean) => {
       let ruleId: number;
       try {
-        ruleId = rules.createRule({ name, checkType: check, conditions, instruction }).ruleId;
+        ruleId = rules.createRule({ name, conditions, instruction }).ruleId;
       } catch (error) {
         if (error instanceof RuleError) throw new UsageError(`Rule "${name}": ${error.message}`);
         throw error;
@@ -315,11 +359,12 @@ export async function evaluate(
       names.set(ruleId, { name, padding: isPadding });
     };
     for (const rule of file.rules) {
-      add(rule.name, rule.check, rule.conditions, rule.instruction?.trim() || PLACEHOLDER_INSTRUCTION, false);
+      add(rule.name, rule.conditions, rule.instruction?.trim() || PLACEHOLDER_INSTRUCTION, false);
     }
     for (const type of CHECK_TYPES) {
       pads[type].forEach((condition, index) => {
-        add(`Padding ${type} ${String(index + 1).padStart(3, "0")}`, type, [condition], PLACEHOLDER_INSTRUCTION, true);
+        const padded = { text: condition, message: type === "message", reply: type === "reply" };
+        add(`Padding ${type} ${String(index + 1).padStart(3, "0")}`, [padded], PLACEHOLDER_INSTRUCTION, true);
       });
     }
 
@@ -327,7 +372,7 @@ export async function evaluate(
       CHECK_TYPES.map((type) => [
         type,
         {
-          total: file.rules.filter((r) => r.check === type).reduce((sum, r) => sum + r.conditions.length, 0) + pads[type].length,
+          total: conditionsOnFor(file, type) + pads[type].length,
           padding: pads[type].length,
         },
       ]),

@@ -13,20 +13,24 @@ interface LabelWithHelpProps {
   /** The label's own id, for a group of controls to be named by it. */
   id?: string;
   label: string;
+  /** What the information mark is about, when the label alone does not say; the label by default. */
+  about?: string;
+  /** Classes for the label, such as a lighter weight beside a switch. */
+  labelClassName?: string;
   children: React.ReactNode;
 }
 
-export function LabelWithHelp({ htmlFor, id, label, children }: LabelWithHelpProps) {
+export function LabelWithHelp({ htmlFor, id, label, about = label, labelClassName, children }: LabelWithHelpProps) {
   return (
     <div className="flex items-center gap-1.5">
-      <Label htmlFor={htmlFor} id={id}>
+      <Label htmlFor={htmlFor} id={id} className={labelClassName}>
         {label}
       </Label>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
             type="button"
-            aria-label={`About ${label.toLowerCase()}`}
+            aria-label={`About ${about.toLowerCase()}`}
             className="rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Info className="size-3.5" />
@@ -67,25 +71,36 @@ export function HeaderWithHelp({ title, children }: { title: string; children: R
 /** What each field of a rule is for, shared by every place a rule is written. */
 export const ruleHelp = {
   name: "A short label for the rule. Claude sees it with the instruction, and you use it to find the rule. No two rules share a name.",
-  check: (
+  condition:
+    "A short, concrete statement that is true or false of the text being checked. The rule matches when a condition holds. A rule can have several; any one is enough. Its Message and Reply switches say which checks use it.",
+  /** The Message switch of a condition. */
+  messageSwitch: (
     <>
-      <p>When Sally checks this rule.</p>
       <p>
-        <strong>User message:</strong> checked against your message, before Claude starts work. On a match, the instruction
-        goes to Claude with your message.
+        <strong>Message on:</strong> Sally checks this condition against your message, before Claude starts work. On a
+        match, the instruction goes to Claude with your message.
       </p>
-      <p>
-        <strong>Agent reply:</strong> checked against Claude's final reply. On a match, the reply is sent back to Claude once,
-        with the instruction.
-      </p>
+      <p>With Message and Reply both off, the condition is off and is not checked.</p>
     </>
   ),
-  condition: (checkType: "message" | "reply") =>
-    `A short, concrete statement that is true or false of the ${
-      checkType === "message" ? "user's message" : "final reply"
-    }. The rule matches when a condition holds. A rule can have several; any one is enough.`,
+  /** The Reply switch of a condition. */
+  replySwitch: (
+    <>
+      <p>
+        <strong>Reply on:</strong> Sally checks this condition against Claude's final reply. On a match, the reply is sent
+        back to Claude once, with the instruction.
+      </p>
+      <p>With Message and Reply both off, the condition is off and is not checked.</p>
+    </>
+  ),
+  /** Said beside the switches of a published condition in the draft: the same switches as in the published version. */
+  publishedSwitch:
+    "This condition is published, so this is the same switch as in the published version: it takes effect at once and is not part of the draft.",
+  /** Said beside the switches of a condition in the published version, which take effect at once. */
+  liveSwitch:
+    "A switch here takes effect at once, with no draft and no new version. Switching off the last condition that is on switches the rule off too.",
   scope:
-    "Where the rule applies: all projects, or only the ones you pick. A project is a git repository, named by its remote, so every worktree of it counts as one project. A rule is never checked outside its scope.",
+    "Where the rule applies: all projects, or only the ones you pick. A project is a git repository, named by its remote, so every worktree of it counts as one project. A rule is never checked outside its scope. A change takes effect at once and is not part of the draft.",
   instruction:
     "What Claude should do when the rule matches. Claude receives it word for word and has not seen it before. Leave out what the message or reply already makes obvious.",
 };

@@ -8,7 +8,16 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { RuleError, RuleNotFoundError } from "./errors.ts";
 import { claudeDir, type Env } from "./paths.ts";
 import { resolveProject } from "./project.ts";
-import { type CheckType, createRulesService, type RuleDetail, type RulesService, type Scope } from "./rules.ts";
+import {
+  CHECK_TYPES,
+  type CheckType,
+  createRulesService,
+  type NewCondition,
+  type NewRule,
+  type RuleDetail,
+  type RulesService,
+  type Scope,
+} from "./rules.ts";
 import { type Store, transaction } from "./store.ts";
 
 /**
@@ -28,14 +37,50 @@ export type PassageDecision = "becomes_rule" | "stays";
  */
 export type ProposedRuleDecision = "published" | "kept" | "skipped" | null;
 
+/**
+ * A condition the import proposes: its wording alone, or its wording with its
+ * Message and Reply switches. A switch left out comes from the rule's check type.
+ */
+export type ProposedCondition = string | { text: string; message?: boolean; reply?: boolean };
+
 /** A rule the import proposes for a passage. Its scope comes from the rules file. */
 export interface ProposedRule {
   name: string;
-  /** The message check when left out. */
+  /**
+   * The check type for every condition that does not set its own switches, as
+   * older import output gives it for the whole rule. The message check when
+   * left out.
+   */
   checkType?: CheckType;
   instruction: string;
-  conditions: string[];
+  conditions: ProposedCondition[];
 }
+
+/** The conditions a proposed rule becomes, each with both switches set. */
+function proposedConditions(rule: ProposedRule): NewCondition[] {
+  const type = rule.checkType ?? "message";
+  const defaults = { message: type === "message", reply: type === "reply" };
+  return rule.conditions.map((condition) =>
+    typeof condition === "string"
+      ? { ...defaults, text: condition }
+      : {
+          text: condition.text,
+          message: condition.message ?? defaults.message,
+          reply: condition.reply ?? defaults.reply,
+        },
+  );
+}
+
+const isProposedCondition = (condition: unknown): condition is ProposedCondition => {
+  if (typeof condition === "string") return true;
+  if (typeof condition !== "object" || condition === null) return false;
+  const c = condition as Record<string, unknown>;
+  return (
+    typeof c.text === "string" &&
+    (c.message === undefined || typeof c.message === "boolean") &&
+    (c.reply === undefined || typeof c.reply === "boolean")
+  );
+};
 
 export interface NewPassage {
   /** The passage's original text, as it stands in the rules file. */
@@ -122,7 +167,7 @@ export interface ImportDecisions {
    * its other rules. Overrules a verdict that the passage stays: it now
    * becomes a rule.
    */
-  writeRule(passageId: number, rule: ProposedRule): ImportDetail;
+  writeRule(passageId: number, rule: Omit<NewRule, "scope">): ImportDetail;
   /**
    * Overrules the verdict the other way: the passage stays in the rules file,
    * and its rules not yet published are skipped. Refuses a passage with a live
@@ -215,8 +260,13 @@ function requirePassage(passage: NewPassage, index: number): void {
     if (typeof rule !== "object" || rule === null) throw new RuleError(`${whichRule} is not a rule.`);
     if (typeof rule.name !== "string") throw new RuleError(`${whichRule} needs a name.`);
     if (typeof rule.instruction !== "string") throw new RuleError(`${whichRule} needs an instruction.`);
-    if (!Array.isArray(rule.conditions) || !rule.conditions.every((c) => typeof c === "string")) {
-      throw new RuleError(`${whichRule}'s conditions must be a list of text.`);
+    if (rule.checkType !== undefined && !CHECK_TYPES.includes(rule.checkType)) {
+      throw new RuleError(`${whichRule}'s check type is message or reply.`);
+    }
+    if (!Array.isArray(rule.conditions) || !rule.conditions.every(isProposedCondition)) {
+      throw new RuleError(
+        `${whichRule}'s conditions must be a list, each its text or its text with Message and Reply switches.`,
+      );
     }
   });
 }
@@ -398,9 +448,8 @@ export function createImportService(db: Store, options: ImportServiceOptions): I
             try {
               ({ ruleId } = rules.createRule({
                 name: proposed.name,
-                checkType: proposed.checkType ?? "message",
                 instruction: proposed.instruction,
-                conditions: proposed.conditions,
+                conditions: proposedConditions(proposed),
                 scope,
               }));
             } catch (error) {
@@ -536,7 +585,6 @@ function decisions(
         const passage = findPassage(passageId);
         const { ruleId } = rules.createRule({
           name: proposed.name,
-          checkType: proposed.checkType ?? "message",
           instruction: proposed.instruction,
           conditions: proposed.conditions,
           scope: scopeOf(requireImport(passage.import_id)),

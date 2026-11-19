@@ -351,3 +351,125 @@ describe("a failed reply check", () => {
     expect(output.systemMessage).toMatch(/^Sally is not working, so this reply was not checked against your rules: /);
   });
 });
+
+describe("a rule in both checks", () => {
+  const forMessage = "The message asks for a visual change.";
+  const forReply = "The reply reports a visual change with no local link.";
+  const instruction = "Give the localhost link before a pull request.";
+  const bothChecks = () =>
+    sandbox.liveRule({
+      name: "Local link",
+      instruction,
+      conditions: [
+        { text: forMessage, message: true, reply: false },
+        { text: forReply, message: false, reply: true },
+      ],
+    });
+  const scored = () =>
+    sandbox.query<{ check_type: string; text: string }>(
+      `SELECT c.check_type, vc.text FROM scores s
+         JOIN checks c ON c.id = s.check_id
+         JOIN version_conditions vc ON vc.version_id = s.version_id AND vc.condition_id = s.condition_id
+        ORDER BY s.check_id, vc.position`,
+    );
+
+  it("is attached on a matching message and sent back on a matching reply in the same turn", async () => {
+    bothChecks();
+    const matcher = standInMatcher({ [forMessage]: 0.9, [forReply]: 0.9 });
+
+    const attached = await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
+    const sentBack = await runReplyHook(stopInput({ last_assistant_message: "Done, the header is smaller." }), {
+      env: sandbox.env,
+      matcher,
+    });
+
+    expect(JSON.parse(attached).hookSpecificOutput.additionalContext).toContain(`Rule: Local link\n${instruction}`);
+    expect(JSON.parse(sentBack)).toMatchObject({ decision: "block", reason: expect.stringContaining(instruction) });
+    // Each check sends only the conditions on for it.
+    expect(matcher.calls.map((call) => call.conditions.map((c) => c.text))).toEqual([[forMessage], [forReply]]);
+    expect(checks()).toMatchObject([
+      { check_type: "message", outcome: "attached" },
+      { check_type: "reply", outcome: "sent_back" },
+    ]);
+    expect(turns()).toMatchObject([{ message_check_id: 1, reply_check_id: 2 }]);
+  });
+
+  it("never attaches a rule for a Reply condition, nor sends a reply back for a Message condition", async () => {
+    sandbox.liveRule({ name: "Reply only", checkType: "reply", instruction: "Reply instruction.", conditions: [forReply] });
+    sandbox.liveRule({ name: "Message only", instruction: "Message instruction.", conditions: [forMessage] });
+    const matcher = standInMatcher({ [forMessage]: 0.99, [forReply]: 0.99 });
+
+    const attached = await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
+    const sentBack = await runReplyHook(stopInput({ last_assistant_message: "Done." }), { env: sandbox.env, matcher });
+
+    const context: string = JSON.parse(attached).hookSpecificOutput.additionalContext;
+    expect(context).toContain("Message instruction.");
+    expect(context).not.toContain("Reply instruction.");
+    const reason: string = JSON.parse(sentBack).reason;
+    expect(reason).toContain("Reply instruction.");
+    expect(reason).not.toContain("Message instruction.");
+    expect(scored()).toEqual([
+      { check_type: "message", text: forMessage },
+      { check_type: "reply", text: forReply },
+    ]);
+  });
+
+  it("gives a condition with both switches off no score", async () => {
+    sandbox.liveRule({
+      name: "Local link",
+      conditions: [
+        { text: forMessage, message: true, reply: false },
+        { text: "A condition switched off.", message: false, reply: false },
+      ],
+    });
+    const matcher = standInMatcher({ [forMessage]: 0.1, "A condition switched off.": 0.99 });
+
+    expect(await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher })).toBe("");
+    expect(await runReplyHook(stopInput({ last_assistant_message: "Done." }), { env: sandbox.env, matcher })).toBe("");
+
+    expect(scored()).toEqual([{ check_type: "message", text: forMessage }]);
+    expect(checks()).toMatchObject([
+      { check_type: "message", outcome: "nothing" },
+      { check_type: "reply", outcome: "nothing" },
+    ]);
+  });
+
+  it("uses a condition's switches as they are at each check, once switched", async () => {
+    const ruleId = bothChecks();
+    const matcher = standInMatcher({ [forMessage]: 0.9, [forReply]: 0.9 });
+    const [messageCondition, replyCondition] = sandbox.withRules((rules) => rules.getRule(ruleId).live!.conditions);
+    sandbox.withRules((rules) => {
+      rules.setConditionSwitch(ruleId, messageCondition!.id, "message", false);
+      rules.setConditionSwitch(ruleId, replyCondition!.id, "message", true);
+    });
+
+    const attached = await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
+    sandbox.withRules((rules) => rules.setConditionSwitch(ruleId, replyCondition!.id, "reply", false));
+    const sentBack = await runReplyHook(stopInput({ last_assistant_message: "Done." }), { env: sandbox.env, matcher });
+
+    expect(attached).toContain(instruction);
+    expect(sentBack).toBe("");
+    // The switched-off condition got no score in either check.
+    expect(scored()).toEqual([{ check_type: "message", text: forReply }]);
+    expect(checks()).toMatchObject([
+      { check_type: "message", outcome: "attached" },
+      { check_type: "reply", outcome: "nothing" },
+    ]);
+  });
+
+  it("judges each check at its own cutoff", async () => {
+    bothChecks();
+    sandbox.withRules((rules) => rules.updateSettings({ cutoff: 0.5, replyCutoff: 0.8 }));
+    const matcher = standInMatcher({ [forMessage]: 0.7, [forReply]: 0.7 });
+
+    const attached = await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
+    const sentBack = await runReplyHook(stopInput({ last_assistant_message: "Done." }), { env: sandbox.env, matcher });
+
+    expect(attached).toContain(instruction);
+    expect(sentBack).toBe("");
+    expect(checks()).toMatchObject([
+      { check_type: "message", outcome: "attached" },
+      { check_type: "reply", outcome: "nothing" },
+    ]);
+  });
+});

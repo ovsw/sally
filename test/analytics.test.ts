@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runMessageHook } from "../src/message-hook.ts";
 import { runReplyHook } from "../src/reply-hook.ts";
-import { RuleNotFoundError } from "../src/rules.ts";
+import { conditionsFor, RuleNotFoundError } from "../src/rules.ts";
 import { gitRepo } from "./support/git.ts";
 import { createSandbox, hookInput, type Sandbox } from "./support/sandbox.ts";
 import { type StandIn, standInMatcher } from "./support/stand-in-matcher.ts";
@@ -33,6 +33,16 @@ const reply = (text: string, matcher: StandIn) =>
     }),
     { env: sandbox.env, matcher },
   );
+
+/** A rule in both checks: one condition on for Message, one on for Reply. */
+const ruleInBothChecks = () =>
+  sandbox.liveRule({
+    name: "Local link",
+    conditions: [
+      { text: "Asks for a visual change.", message: true, reply: false },
+      { text: "Reports a change with no link.", message: false, reply: true },
+    ],
+  });
 
 describe("activity", () => {
   it("lists recent checks newest first with time, project, check type, text, outcome and what was attached", async () => {
@@ -65,6 +75,19 @@ describe("activity", () => {
     ]);
     expect(new Date(checks[0]!.createdAt).getTime()).not.toBeNaN();
     expect(checks[0]!.id).toBeGreaterThan(checks[1]!.id);
+  });
+
+  it("names each match's highest-scoring condition, for a rule in both checks too", async () => {
+    ruleInBothChecks();
+    const matcher = standInMatcher({ "Asks for a visual change.": 0.8, "Reports a change with no link.": 0.9 });
+
+    await message("Make the header smaller", matcher);
+    await reply("Done, the header is smaller.", matcher);
+
+    expect(sandbox.withRules((rules) => rules.activity())).toMatchObject([
+      { checkType: "reply", matches: [{ name: "Local link", score: 0.9, condition: "Reports a change with no link." }] },
+      { checkType: "message", matches: [{ name: "Local link", score: 0.8, condition: "Asks for a visual change." }] },
+    ]);
   });
 
   it("shows every rule that matched in a check, strongest first", async () => {
@@ -176,6 +199,41 @@ describe("rule analytics", () => {
     expect(analytics.recentMatches).toMatchObject([{ text: "Done, see the page.", score: 0.75, condition: "No link." }]);
   });
 
+  it("says which check each match of a rule in both checks came from, and its highest condition", async () => {
+    const ruleId = ruleInBothChecks();
+    sandbox.withRules((rules) => rules.updateSettings({ cutoff: 0.6, replyCutoff: 0.8 }));
+    const matcher = standInMatcher({ "Asks for a visual change.": 0.7, "Reports a change with no link.": 0.85 });
+
+    await message("Make the header smaller", matcher);
+    await reply("Done, the header is smaller.", matcher);
+
+    const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(ruleId));
+    expect(analytics).toMatchObject({ checks: 2, matches: 2 });
+    expect(analytics.recentMatches).toMatchObject([
+      { checkType: "reply", text: "Done, the header is smaller.", condition: "Reports a change with no link.", score: 0.85, cutoff: 0.8 },
+      { checkType: "message", text: "Make the header smaller", condition: "Asks for a visual change.", score: 0.7, cutoff: 0.6 },
+    ]);
+  });
+
+  it("judges each near miss of a rule in both checks at the cutoff of its own check", async () => {
+    const ruleId = ruleInBothChecks();
+    sandbox.withRules((rules) => rules.updateSettings({ cutoff: 0.6, replyCutoff: 0.8 }));
+
+    // Under the message cutoff by 0.05: a near miss.
+    await message("message near miss", standInMatcher({ "Asks for a visual change.": 0.55 }));
+    // 0.25 under the reply cutoff, though it would be one under the message cutoff: not a near miss.
+    await reply("reply far under", standInMatcher({ "Reports a change with no link.": 0.55 }));
+    // Under the reply cutoff by 0.05, though it would match at the message cutoff: a near miss.
+    await reply("reply near miss", standInMatcher({ "Reports a change with no link.": 0.75 }));
+
+    const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(ruleId));
+    expect(analytics.matches).toBe(0);
+    expect(analytics.nearMisses).toMatchObject([
+      { checkType: "reply", text: "reply near miss", condition: "Reports a change with no link.", score: 0.75, cutoff: 0.8 },
+      { checkType: "message", text: "message near miss", condition: "Asks for a visual change.", score: 0.55, cutoff: 0.6 },
+    ]);
+  });
+
   it("lists near misses: checks where the rule's best score sat just under the cutoff", async () => {
     const ruleId = sandbox.liveRule({ name: "Rule", conditions: ["Condition A.", "Condition B."] });
     await message("well under", standInMatcher({ "Condition A.": 0.3 }));
@@ -215,14 +273,14 @@ describe("rule analytics", () => {
     await message("one", standInMatcher({ "Old wording.": 0.9 }));
     await message("two", standInMatcher({ "Old wording.": 0.2 }));
     sandbox.withRules((rules) => {
-      rules.saveDraft(ruleId, { instruction: "Do it.", conditions: ["New wording."] });
+      rules.saveDraft(ruleId, { instruction: "Do it.", conditions: conditionsFor("message", ["New wording."]) });
       rules.publish(ruleId);
     });
     await message("three", standInMatcher({ "New wording.": 0.9 }));
     await message("four", standInMatcher({ "New wording.": 0.95 }));
     await message("five", standInMatcher({ "New wording.": 0.8 }));
     // A draft is not a version and has no performance.
-    sandbox.withRules((rules) => rules.saveDraft(ruleId, { instruction: "Do it.", conditions: ["Newer."] }));
+    sandbox.withRules((rules) => rules.saveDraft(ruleId, { instruction: "Do it.", conditions: conditionsFor("message", ["Newer."]) }));
 
     const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(ruleId));
     expect(analytics.versions).toMatchObject([
@@ -235,7 +293,7 @@ describe("rule analytics", () => {
 
   it("is empty for a rule that has never been checked", () => {
     const ruleId = sandbox.withRules((rules) =>
-      rules.createRule({ name: "New", checkType: "message", instruction: "Do X.", conditions: ["Condition A."] }),
+      rules.createRule({ name: "New", instruction: "Do X.", conditions: conditionsFor("message", ["Condition A."]) }),
     ).ruleId;
 
     expect(sandbox.withRules((rules) => rules.ruleAnalytics(ruleId))).toEqual({

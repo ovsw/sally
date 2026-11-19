@@ -5,8 +5,22 @@ import { DatabaseSync } from "node:sqlite";
 import { createImportService, type ImportService } from "../../src/import.ts";
 import type { Env } from "../../src/paths.ts";
 import { databasePath } from "../../src/paths.ts";
-import { createRulesService, type NewRule, type RulesService } from "../../src/rules.ts";
+import {
+  type CheckType,
+  conditionsFor,
+  createRulesService,
+  type NewCondition,
+  type NewRule,
+  type RulesService,
+} from "../../src/rules.ts";
 import { openStore } from "../../src/store.ts";
+
+/** A rule for a test: plain-text conditions are on for its check type. */
+export type TestRule = Partial<Omit<NewRule, "conditions">> & {
+  name: string;
+  checkType?: CheckType;
+  conditions?: (string | NewCondition)[];
+};
 
 /**
  * A throwaway home, data folder and config folder, so that nothing touches the
@@ -26,8 +40,11 @@ export interface Sandbox {
   withRules<T>(fn: (rules: RulesService) => T): T;
   /** Runs `fn` with the import service on the sandbox database. */
   withImports<T>(fn: (imports: ImportService) => T): T;
-  /** Adds a rule and publishes it; returns its id. */
-  liveRule(rule: Partial<NewRule> & { name: string }): number;
+  /**
+   * Adds a rule and publishes it; returns its id. A condition given as plain
+   * text is on for `checkType` only (message when left out).
+   */
+  liveRule(rule: TestRule): number;
   /** Runs a read-only SQL query against the sandbox database. */
   query<T = Record<string, unknown>>(sql: string, ...params: (string | number)[]): T[];
   cleanup(): void;
@@ -68,11 +85,11 @@ export function createSandbox(): Sandbox {
     },
     liveRule(rule) {
       return withRules((rules) => {
+        const { checkType = "message", conditions = [`The message is about ${rule.name}.`], ...rest } = rule;
         const { ruleId } = rules.createRule({
-          checkType: "message",
           instruction: `Instruction for ${rule.name}.`,
-          conditions: [`The message is about ${rule.name}.`],
-          ...rule,
+          ...rest,
+          conditions: conditions.map((c) => (typeof c === "string" ? conditionsFor(checkType, [c])[0]! : c)),
         });
         rules.publish(ruleId);
         return ruleId;

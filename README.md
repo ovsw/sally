@@ -112,7 +112,8 @@ The words used here are defined in [GLOSSARY.md](GLOSSARY.md).
   its middle, since a request usually comes before or after a long passage.
   The cut is recorded.
 - **Project scope:** a rule applies to all projects or only to the ones you
-  pick. A project is the git repository the session runs in.
+  pick. A project is the git repository the session runs in. A change to the
+  scope takes effect at once; it is not part of a draft.
 
 ## When a check fails
 
@@ -158,10 +159,12 @@ screens:
   have no such button: they go when the rule is fixed.
 - **Rules:** a searchable, filterable list. Each rule has a switch to turn it
   on or off, a green light when it is published and a yellow one when it has
-  a draft, its type (user message or agent reply), and its scope (all
-  projects, or the projects it is for).
+  a draft, the checks it takes part in (user message, agent reply or both),
+  and its scope (all projects, or the projects it is for).
 - **Rule:** opens in a panel beside the list: the published version beside
-  its draft; conditions, instruction, scope and an on/off switch; version
+  its draft; conditions, each with a Message and a Reply switch for the checks
+  that use it, and instruction; the scope, set outside the draft; an on/off
+  switch; version
   history with how each version performed; its matches, near misses and saved
   cases.
 - **Activity:** recent checks, newest first, with the text checked, the
@@ -181,6 +184,11 @@ than its sources.
   from an old one.
 - **Switching off:** stops a rule matching without deleting it. It is separate
   from publishing: a rule switched off keeps its published version and draft.
+- **Condition switches:** a published condition's Message and Reply switches
+  take effect at once, with no draft and no new version. A condition with both
+  off is not checked. Switching off a rule's last condition that is on
+  switches the rule off; switching a condition back on leaves the rule off
+  until you switch it on, which needs at least one condition on.
 
 ### Settings
 
@@ -335,7 +343,8 @@ full path: `node "<Sally's folder>/src/cli.ts" <command>`.
 
 An agent can read your rules and prepare drafts; it cannot publish, switch off
 or delete a rule. Those stay with you in the web app, where the agent's drafts
-show up like your own. Output is JSON.
+show up like your own. Output is JSON: each rule with its conditions, and each
+condition with its Message and Reply switches.
 
 ```sh
 node src/cli.ts rules list [--search TEXT] [--check-type message|reply] \
@@ -343,8 +352,8 @@ node src/cli.ts rules list [--search TEXT] [--check-type message|reply] \
 node src/cli.ts rules show RULE   # id or exact name: published version beside draft
 node src/cli.ts rules create --name NAME --check-type message|reply \
   --instruction TEXT --condition TEXT [--condition TEXT ...]
-node src/cli.ts rules edit RULE [--name NAME] [--check-type message|reply] \
-  [--instruction TEXT] [--condition TEXT ...]
+node src/cli.ts rules edit RULE [--name NAME] [--instruction TEXT] \
+  [--condition TEXT ... [--check-type message|reply]]
 ```
 
 `node src/cli.ts rules help` lists every option.
