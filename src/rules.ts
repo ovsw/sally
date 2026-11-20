@@ -364,6 +364,13 @@ export interface RulesService extends AnalyticsQueries, FalsePositives {
    */
   switchOn(ruleId: number): void;
   /**
+   * Switches each of the rules on or off, as switchOn and switchOff do one
+   * rule. A rule that cannot be switched (on while none of its conditions is
+   * on, or deleted) stays as it is and is named in the answer with the reason;
+   * the others still switch.
+   */
+  switchRules(ruleIds: number[], on: boolean): { refused: { ruleId: number; reason: string }[] };
+  /**
    * Sets where the rule applies. It takes effect at once, for the next check:
    * it makes no new version and leaves the draft as it is. Refuses a project
    * Sally has not seen, and a list of no projects.
@@ -800,6 +807,20 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
   }
 
   /** Sets the rule's switch, recording the change when there is one. */
+  /** Switches the rule back on; refused while none of its live conditions is on. */
+  function switchOn(ruleId: number): void {
+    transaction(db, () => {
+      requireRule(ruleId);
+      // Conditions switched off on purpose are not switched back on with the rule.
+      if (liveConditionsOn(ruleId) === 0) {
+        throw new RuleError(
+          "None of this rule's conditions is on. Switch a condition's Message or Reply on first, then the rule.",
+        );
+      }
+      setSwitchedOff(ruleId, false);
+    });
+  }
+
   function setSwitchedOff(ruleId: number, off: boolean, bySally = false): void {
     transaction(db, () => {
       const rule = requireRule(ruleId);
@@ -919,16 +940,23 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     },
 
     switchOn(ruleId) {
+      switchOn(ruleId);
+    },
+
+    switchRules(ruleIds, on) {
+      const refused: { ruleId: number; reason: string }[] = [];
       transaction(db, () => {
-        requireRule(ruleId);
-        // Conditions switched off on purpose are not switched back on with the rule.
-        if (liveConditionsOn(ruleId) === 0) {
-          throw new RuleError(
-            "None of this rule's conditions is on. Switch a condition's Message or Reply on first, then the rule.",
-          );
+        for (const ruleId of new Set(ruleIds)) {
+          try {
+            if (on) switchOn(ruleId);
+            else setSwitchedOff(ruleId, true);
+          } catch (error) {
+            if (!(error instanceof RuleError)) throw error;
+            refused.push({ ruleId, reason: error.message });
+          }
         }
-        setSwitchedOff(ruleId, false);
       });
+      return { refused };
     },
 
     setConditionSwitch(ruleId, conditionId, checkType, on) {

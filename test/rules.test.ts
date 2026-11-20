@@ -440,6 +440,29 @@ describe("rules service", () => {
     });
   });
 
+  it("switches several rules at once, leaving one that cannot come on as it is", () => {
+    sandbox.withRules((rules) => {
+      const ids = ["First", "Second", "Third"].map((name) => rules.createRule({ ...rule, name }).ruleId);
+      for (const id of ids) rules.publish(id);
+      const [first, second, third] = ids as [number, number, number];
+
+      expect(rules.switchRules([first, second, first], false)).toEqual({ refused: [] });
+      expect(rules.listRules({ on: false }).map((r) => r.id).sort()).toEqual([first, second].sort());
+      expect(rules.getRule(first).switchChanges).toHaveLength(1);
+
+      // The second rule's only condition goes off, so the rule cannot come back on.
+      const [condition] = rules.getRule(second).live!.conditions;
+      rules.setConditionSwitch(second, condition!.id, "message", false);
+      const { refused } = rules.switchRules([first, second, third, 999], true);
+      expect(refused).toMatchObject([
+        { ruleId: second, reason: expect.stringContaining("None of this rule's conditions is on") },
+        { ruleId: 999, reason: expect.stringContaining("No rule") },
+      ]);
+      expect(rules.listRules({ on: true }).map((r) => r.id).sort()).toEqual([first, third].sort());
+      expect(rules.listRules({ on: false }).map((r) => r.id)).toEqual([second]);
+    });
+  });
+
   it("keeps a rule switched off before its first publish off once published", () => {
     sandbox.withRules((rules) => {
       const { ruleId } = rules.createRule(rule);

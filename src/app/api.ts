@@ -209,6 +209,9 @@ async function handleDecision(
  * - POST /api/rules/:id/versions/:number/draft           start a draft from a published version
  * - POST /api/rules/:id/off, POST /api/rules/:id/on      switch the rule off or on (on is refused while
  *                                                        none of its conditions is on)
+ * - POST /api/rules/off, POST /api/rules/on              switch several rules off or on { ids }; answers
+ *                                                        { rules, refused: [{ ruleId, reason }] }: the
+ *                                                        rules switched, and those that could not be
  * - PUT  /api/rules/:id/conditions/:conditionId/message|reply
  *                                                        set a published condition's switch at once { on }
  * - DELETE /api/rules/:id                                delete the rule
@@ -295,6 +298,16 @@ export async function handleApi(
       return send(res, 200, await rules.trial({ text: text(body, "text"), conditions, checkType: checkType as CheckType }));
     }
     if (parts[0] !== "rules") throw new HttpError(404, "Not found.");
+    if (parts.length === 2 && (parts[1] === "on" || parts[1] === "off") && method === "POST") {
+      const ids = (await readJson(req))["ids"];
+      if (!Array.isArray(ids) || !ids.every((id) => Number.isSafeInteger(id))) {
+        throw new HttpError(400, '"ids" must be a list of rule ids.');
+      }
+      const { refused } = rules.switchRules(ids as number[], parts[1] === "on");
+      const skipped = new Set(refused.map((r) => r.ruleId));
+      const switched = [...new Set(ids as number[])].filter((id) => !skipped.has(id));
+      return send(res, 200, { rules: switched.map((id) => rules.getRule(id)), refused });
+    }
     const id = parts[1] === undefined ? undefined : Number(parts[1]);
     if (id !== undefined && !Number.isSafeInteger(id)) throw new HttpError(404, "Not found.");
 

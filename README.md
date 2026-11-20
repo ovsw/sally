@@ -184,6 +184,8 @@ than its sources.
   from an old one.
 - **Switching off:** stops a rule matching without deleting it. It is separate
   from publishing: a rule switched off keeps its published version and draft.
+  Tick rules in the list, or tick the header box for every rule shown, to
+  switch them all on or off at once.
 - **Condition switches:** a published condition's Message and Reply switches
   take effect at once, with no draft and no new version. A condition with both
   off is not checked. Switching off a rule's last condition that is on

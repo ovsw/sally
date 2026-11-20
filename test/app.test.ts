@@ -351,6 +351,33 @@ describe("history and the rest of a rule's life", () => {
     expect(JSON.parse(output).hookSpecificOutput.additionalContext).toContain("Second wording.");
   });
 
+  it("switches several rules off or on in one request, naming those it could not switch", async () => {
+    const first = await create({ name: "First" });
+    const second = await create({ name: "Second" });
+    await publish(first.id);
+    await publish(second.id);
+
+    const off = await app.json<{ rules: RuleDetail[]; refused: unknown[] }>("POST", "/api/rules/off", {
+      ids: [first.id, second.id],
+    });
+    expect(off.refused).toEqual([]);
+    expect(off.rules).toMatchObject([{ id: first.id, on: false }, { id: second.id, on: false }]);
+    expect((await names("?on=false")).sort()).toEqual(["First", "Second"]);
+
+    const [condition] = (await app.json<RuleDetail>("GET", `/api/rules/${second.id}`)).live!.conditions;
+    await app.json("PUT", `/api/rules/${second.id}/conditions/${condition!.id}/message`, { on: false });
+    const on = await app.json<{ rules: RuleDetail[]; refused: { ruleId: number; reason: string }[] }>(
+      "POST",
+      "/api/rules/on",
+      { ids: [first.id, second.id] },
+    );
+    expect(on.rules).toMatchObject([{ id: first.id, on: true }]);
+    expect(on.refused).toMatchObject([{ ruleId: second.id }]);
+    expect(await names("?on=true")).toEqual(["First"]);
+
+    expect((await app.call("POST", "/api/rules/on", { ids: "all" })).status).toBe(400);
+  });
+
   it("switches a condition at once, the rule going off with its last one and refusing to come on without one", async () => {
     const rule = await create();
     await publish(rule.id);

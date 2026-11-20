@@ -182,6 +182,14 @@ export function switchRule(id: number, on: boolean): Promise<RuleDetail> {
   return call("POST", `/api/rules/${id}/${on ? "on" : "off"}`, {});
 }
 
+/** A rule a bulk switch left as it was, and why. */
+export type RefusedSwitch = { ruleId: number; reason: string };
+
+/** Switches several rules on or off; those that cannot be switched stay as they are and come back in `refused`. */
+export function switchRules(ids: number[], on: boolean): Promise<{ rules: RuleDetail[]; refused: RefusedSwitch[] }> {
+  return call("POST", `/api/rules/${on ? "on" : "off"}`, { ids });
+}
+
 /** Sets where the rule applies, at once: no new version, and the draft stays as it is. */
 export function setScope(id: number, scope: Scope): Promise<RuleDetail> {
   return call("PUT", `/api/rules/${id}/scope`, { scope });
