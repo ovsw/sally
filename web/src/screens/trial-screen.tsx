@@ -3,7 +3,7 @@
 // them never changes the rule. Nothing about a trial is recorded. Laid out as
 // the Settings screen is (shadcnblocks form-layouts-7), with the results beside
 // the form on a wide screen.
-import { Check, FlaskConical, Loader2, Plus, TriangleAlert, X } from "lucide-react";
+import { Check, FlaskConical, Loader2, Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
 import * as React from "react";
 import { cn } from "cn";
 
@@ -66,19 +66,25 @@ export function TrialScreen() {
       .catch((error: unknown) => setRulesError(error instanceof Error ? error.message : String(error)));
   }, []);
 
+  // Counts rule loads, so a slow load for an earlier choice cannot overwrite a later one.
+  const lastLoad = React.useRef(0);
+
   const chooseRule = async (id: string) => {
+    const load = ++lastLoad.current;
     setRuleId(id);
     setFillNote(null);
     const rule = rules?.find((r) => String(r.id) === id);
     setInstruction(null);
     try {
       const { conditions: filled, instruction } = await ruleText(Number(id), checkType);
+      if (load !== lastLoad.current) return;
       setConditions(filled.length > 0 ? filled : [""]);
       setInstruction(instruction);
       if (filled.length === 0) {
         setFillNote(`${rule?.name ?? "This rule"} has no conditions on for ${CHECK_NAMES[checkType]}.`);
       }
     } catch (error) {
+      if (load !== lastLoad.current) return;
       setFillNote(`Could not load the rule: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
@@ -113,18 +119,33 @@ export function TrialScreen() {
               <LabelWithHelp htmlFor="trial-rule" label="Rule">
                 {help.rule}
               </LabelWithHelp>
-              <Select value={ruleId} onValueChange={(id) => void chooseRule(id)} disabled={!rules || rules.length === 0}>
-                <SelectTrigger id="trial-rule" className="w-full bg-background">
-                  <SelectValue placeholder={rules && rules.length > 0 ? `e.g. ${rules[0]!.name}` : "No rules yet"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {rules?.map((rule) => (
-                    <SelectItem key={rule.id} value={String(rule.id)}>
-                      {rule.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <Select value={ruleId} onValueChange={(id) => void chooseRule(id)} disabled={!rules || rules.length === 0}>
+                  <SelectTrigger id="trial-rule" className="w-full bg-background">
+                    <SelectValue placeholder={rules && rules.length > 0 ? `e.g. ${rules[0]!.name}` : "No rules yet"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {rules?.map((rule) => (
+                      <SelectItem key={rule.id} value={String(rule.id)}>
+                        {rule.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {/* Choosing the chosen rule again fires no change, so refilling from it needs its own button. */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0"
+                  aria-label="Fill again from this rule"
+                  title="Fill again from this rule"
+                  disabled={!ruleId}
+                  onClick={() => void chooseRule(ruleId)}
+                >
+                  <RotateCcw />
+                </Button>
+              </div>
               {rulesError && <p className="text-sm text-destructive">Could not load the rules: {rulesError}</p>}
               {fillNote && <p className="text-sm text-muted-foreground">{fillNote}</p>}
               {instruction !== null && (

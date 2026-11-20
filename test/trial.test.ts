@@ -141,4 +141,16 @@ describe("a trial: typed text scored against typed conditions", () => {
     expect(await status({ text: "some text", checkType: "both", conditions: ["Condition"] })).toBe(400);
     expect(await status({ text: "some text", checkType: "message", conditions: "Condition" })).toBe(400);
   });
+
+  it("refuses a condition that fits as written but not once its email addresses are masked", async () => {
+    const running = await appWith(standInMatcher());
+
+    const response = await running.call("POST", "/api/trial", {
+      text: "some text",
+      checkType: "message",
+      conditions: ["a@b.co ".repeat(13_265)],
+    });
+
+    expect(response.status).toBe(400);
+  });
 });

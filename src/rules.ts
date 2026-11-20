@@ -7,6 +7,7 @@ import type { Matcher } from "./matcher.ts";
 import { rescoreCases, type RescoreResult } from "./rescore.ts";
 import { type Store, transaction } from "./store.ts";
 import { runTrial, type TrialResult } from "./trial.ts";
+import { maskEmails } from "./text.ts";
 
 export type CheckType = "message" | "reply";
 
@@ -1012,7 +1013,7 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       if (!text.trim()) throw new RuleError("Type a text to try.");
       const written = conditions.map((c) => c.trim()).filter((c) => c.length > 0);
       if (written.length === 0) throw new RuleError("A trial needs at least one condition.");
-      if (!written.every((c) => conditionFits(c))) throw new RuleError("A condition is too long for one Jev request.");
+      if (!written.every((c) => conditionFits(maskEmails(c)))) throw new RuleError("A condition is too long for one Jev request.");
       return runTrial({ matcher: options.matcher, text, conditions: written, cutoff: cutoffFor(checkType, readSettings()) });
     },
 
