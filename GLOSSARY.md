@@ -123,10 +123,6 @@ _Avoid_: Reminder, bundle, attachment, injection
 
 ### Judging matches
 
-**Flag**:
-A verdict on one match, wrong or right, given by the user or by Claude. A match with no flag counts as right.
-_Avoid_: Report, vote, rating
-
 **Attention reason**:
 Why a rule is on the Needs attention list, drawn from its pattern over many checks rather than from one match.
 _Avoid_: Automatic flag, warning, alert
@@ -135,9 +131,9 @@ _Avoid_: Automatic flag, warning, alert
 A match of a rule that did apply.
 _Avoid_: Correct match, true positive
 
-**Wrong match**:
-A match of a rule that did not apply.
-_Avoid_: False positive, misfire
+**False positive**:
+A match of a rule that did not apply, marked as such by the user or by Claude. Publishing a new version in the web app first checks it against the rule's false positives.
+_Avoid_: Wrong match, misfire, flag, saved case
 
 **Miss**:
 A rule that applied and did not match.
@@ -145,7 +141,3 @@ _Avoid_: False negative
 
 **Near miss**:
 A score just under the cutoff.
-
-**Saved case**:
-A real message or reply kept with a rule, marked "should match" or "should not match".
-_Avoid_: Test case, example, fixture

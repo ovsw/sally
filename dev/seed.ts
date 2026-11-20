@@ -35,7 +35,7 @@ Ask before you push.
 
 /**
  * Fills `root` with sample data: two made-up projects, rules in every state,
- * message and reply checks, flags and saved cases. Everything goes through
+ * message and reply checks, and false positives. Everything goes through
  * the hooks and the rules service, as real use would. Replaces what is there.
  */
 /** A message with a long pasted log: the check behind the large request on the Settings screen. */
@@ -201,19 +201,18 @@ export async function seed(root: string): Promise<void> {
   await message("make the header smaller");
   await reply("Done, the header is smaller.");
 
-  // Flags: one raised by Claude, two by the user.
+  // False positives: one marked by Claude, three by the user.
   const store = openStore(databasePath(env));
   const matchesOf = (ruleId: number) =>
     store.prepare("SELECT id FROM matches WHERE rule_id = ? ORDER BY id").all(ruleId) as { id: number }[];
   const matches = matchesOf(commits);
-  // A saved message and a saved reply for the rule in both checks.
+  // A message and a reply for the rule in both checks.
   const localLinkMatches = matchesOf(localLink);
   store.close();
   withRules((rules) => {
-    rules.reportWrongMatch("session-a", "Answer briefly");
-    if (matches[0]) rules.flagMatch(matches[0].id, "right", "user");
-    if (matches[1]) rules.flagMatch(matches[1].id, "wrong", "user");
-    for (const match of localLinkMatches) rules.flagMatch(match.id, "right", "user");
+    rules.reportFalsePositive("session-a", "Answer briefly");
+    if (matches[1]) rules.markFalsePositive(matches[1].id, "user");
+    for (const match of localLinkMatches) rules.markFalsePositive(match.id, "user");
   });
 
   // An import of alpha's rules file, with a passage of each verdict, waiting for review.

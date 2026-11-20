@@ -152,11 +152,11 @@ It prints its address (`http://127.0.0.1:4517` by default; `--port` or
 screens:
 
 - **Needs attention:** rules that deserve a look, worst first. A rule lands
-  here for matches flagged as wrong, for matching often, for weak matches
+  here for false positives, for matching often, for weak matches
   (scores just over the cutoff), or for never matching. When you have looked
   at a reason and the rule is doing what you want, **Looks fine** clears that
-  one reason for that rule until its next version is published. Wrong matches
-  have no such button: they go when the rule is fixed.
+  one reason for that rule until its next version is published. False
+  positives have no such button: they go when the rule is fixed.
 - **Rules:** a searchable, filterable list. Each rule has a switch to turn it
   on or off, a green light when it is published and a yellow one when it has
   a draft, the checks it takes part in (user message, agent reply or both),
@@ -165,8 +165,8 @@ screens:
   its draft; conditions, each with a Message and a Reply switch for the checks
   that use it, and instruction; the scope, set outside the draft; an on/off
   switch; version
-  history with how each version performed; its matches, near misses and saved
-  cases.
+  history with how each version performed; its matches, near misses and
+  false positives.
 - **Activity:** recent checks, newest first, with the text checked, the
   outcome, and which rules matched with what scores.
 - **Settings:** see below.
@@ -207,35 +207,32 @@ The screen also shows how much of Jev's request size limit your rules use.
 When the conditions no longer fit one request, they are split across parallel
 requests.
 
-## Wrong matches
+## False positives
 
-A **wrong match** is a rule that matched when it did not apply. It is the
+A **false positive** is a rule that matched when it did not apply. It is the
 most damaging failure, because it teaches Claude to discount everything Sally
 hands it. A **miss**, a rule that applied and did not match, is easier to live
 with.
 
-- **Flagging:** on a rule's page, one click marks a match wrong and one marks
-  it right. A match with no flag counts as right, so you never have to mark
-  them all.
+- **Marking one:** on a rule's page, one click marks a match as a false
+  positive, and another click takes the mark away.
 - **Claude can report one too.** Sally's output ends with a line telling
   Claude how. The command names Sally's command line by its full path, so it
   runs from the folder Claude is working in:
 
   ```sh
-  node "<Sally's folder>/src/cli.ts" wrong-match "<rule name>"
+  node "<Sally's folder>/src/cli.ts" false-positive "<rule name>"
   ```
 
-  It flags the session's most recent match of that rule as a wrong match
-  raised by Claude. The session is the one Claude Code runs the command in
-  (`CLAUDE_CODE_SESSION_ID`); `--session <id>` names another.
-- **Saved cases:** every flag keeps that message or reply with the rule,
-  marked "should match" or "should not match". A match holds one flag; a new
-  one replaces it, but never your own.
-- **Re-score before publish:** when you publish a rule that has saved cases,
-  the app first asks Jev to score the draft against each case and shows which
-  pass, so a fix does not break what worked. You can then publish anyway or
-  go back to the draft. If Jev cannot be reached, the app says so and you can
-  still publish.
+  It marks the session's most recent match of that rule as a false positive.
+  The session is the one Claude Code runs the command in
+  (`CLAUDE_CODE_SESSION_ID`); `--session <id>` names another. A match holds
+  one mark; Claude's never replaces yours.
+- **Checked before publish:** when you publish a rule that has false
+  positives, the app first asks Jev to score the draft against each one's
+  text and shows which the new version still matches. You can then publish
+  anyway or go back to the draft. If Jev cannot be reached, the app says so
+  and you can still publish.
 
 ## Install
 
@@ -333,7 +330,7 @@ full path: `node "<Sally's folder>/src/cli.ts" <command>`.
 - **`app`:** starts the web app.
 - **`settings stop-on-failure [on|off]`:** see
   [When a check fails](#when-a-check-fails).
-- **`wrong-match "<rule name>"`:** see [Wrong matches](#wrong-matches).
+- **`false-positive "<rule name>"`:** see [False positives](#false-positives).
 - **`rules ...`:** lets an agent read your rules and prepare drafts.
 - **`import ...`:** what the `sally-import` skill runs to record an
   import, back up a rules file and note that it was cleaned up.
@@ -365,9 +362,9 @@ node src/cli.ts evaluate FILE [--scale]
 ```
 
 Runs a file of saved messages and replies, each with the rules expected to
-match, through the engine with the real Jev, and reports right matches, wrong
-matches and misses, with timing and tokens. `--scale` pads the rule set to
-several hundred conditions and leads with the wrong-match rate. It needs an
+match, through the engine with the real Jev, and reports right matches, false
+positives and misses, with timing and tokens. `--scale` pads the rule set to
+several hundred conditions and leads with the false-positive rate. It needs an
 API key and costs a little, so it runs only on request, never in CI. The file
 format is in [docs/evaluation.md](docs/evaluation.md); a file built from real
 messages stays outside the repository.

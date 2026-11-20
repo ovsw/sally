@@ -16,7 +16,7 @@ export const ATTACHED_HEADER =
  * does not fit, quietly. Claude works in some other project's folder, so the
  * command names this checkout's command line by its absolute path.
  */
-export const REPORT_LINE = `If one of these rules does not fit, run this and leave it out of your reply: ${cliCommand()} wrong-match "<rule name>"`;
+export const REPORT_LINE = `If one of these rules does not fit, run this and leave it out of your reply: ${cliCommand()} false-positive "<rule name>"`;
 
 export interface MessageHookOptions {
   env: Env;

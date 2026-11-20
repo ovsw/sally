@@ -11,15 +11,15 @@ export interface CommandResult {
 
 // The absolute command, as the hook hands it to Claude: Claude runs it from its
 // own project folder, where "src/cli.ts" names nothing.
-const USAGE = `Usage: ${cliCommand()} wrong-match "<rule name>" [--session <id>]\n`;
+const USAGE = `Usage: ${cliCommand()} false-positive "<rule name>" [--session <id>]\n`;
 
 /**
- * `node src/cli.ts wrong-match "<rule name>"`: Claude's report that a rule it was handed
- * did not apply. Flags the session's most recent match of the rule as a
- * wrong match raised by Claude. The session is the one Claude Code runs the
- * command in (CLAUDE_CODE_SESSION_ID), unless --session names another.
+ * `node src/cli.ts false-positive "<rule name>"`: Claude's report that a rule it
+ * was handed did not apply. Marks the session's most recent match of the rule
+ * as a false positive. The session is the one Claude Code runs the command in
+ * (CLAUDE_CODE_SESSION_ID), unless --session names another.
  */
-export function runWrongMatch(args: string[], env: Env): CommandResult {
+export function runFalsePositive(args: string[], env: Env): CommandResult {
   const rest = [...args];
   let sessionId = env.CLAUDE_CODE_SESSION_ID;
   const flag = rest.indexOf("--session");
@@ -35,10 +35,10 @@ export function runWrongMatch(args: string[], env: Env): CommandResult {
 
   const store = openStore(databasePath(env));
   try {
-    const result = createRulesService(store).reportWrongMatch(sessionId, name);
+    const result = createRulesService(store).reportFalsePositive(sessionId, name);
     const stdout = result.recorded
-      ? `Recorded a wrong match for "${name}".\n`
-      : `The user has already marked that match of "${name}" as ${result.flag.verdict}; it is kept as it is.\n`;
+      ? `Recorded a false positive for "${name}".\n`
+      : `That match of "${name}" is already marked as a false positive.\n`;
     return { code: 0, stdout, stderr: "" };
   } catch (error) {
     if (error instanceof RuleError) return { code: 1, stdout: "", stderr: error.message + "\n" };

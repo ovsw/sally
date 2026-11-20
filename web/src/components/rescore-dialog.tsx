@@ -1,5 +1,5 @@
-// Before a draft goes live: how its conditions fare against the rule's saved
-// cases. Built on the shadcn alert dialog the Rule screen already uses.
+// Before a draft goes live: whether it still matches the rule's past false
+// positives. Built on the shadcn alert dialog the Rule screen already uses.
 import { Check, TriangleAlert, X } from "lucide-react";
 
 import {
@@ -13,15 +13,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
-import type { CaseResult, RescoreResult } from "@/lib/api";
+import type { FalsePositiveResult, RescoreResult } from "@/lib/api";
 import { CHECK_LABELS, formatScore } from "@/lib/format";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
-function CaseRow({ result }: { result: CaseResult }) {
-  const shouldMatch = result.case.expected === "should_match";
-  const check = CHECK_LABELS[result.case.checkType];
-  const highest = result.scores.reduce<CaseResult["scores"][number] | null>(
+function ResultRow({ result }: { result: FalsePositiveResult }) {
+  const check = CHECK_LABELS[result.falsePositive.checkType];
+  const closest = result.scores.reduce<FalsePositiveResult["scores"][number] | null>(
     (top, score) => (top === null || score.score > top.score ? score : top),
     null,
   );
@@ -31,27 +30,27 @@ function CaseRow({ result }: { result: CaseResult }) {
         {result.passed ? (
           <Badge variant="secondary">
             <Check />
-            Pass
+            Fixed
           </Badge>
         ) : (
           <Badge variant="destructive">
             <X />
-            Fail
+            Still matches
           </Badge>
         )}
         <span className="text-xs text-muted-foreground">
-          {check} · {shouldMatch ? "Should match" : "Should not match"} ·{" "}
+          {check} ·{" "}
           {result.best === null
-            ? `does not match: no condition is on for ${check.toLowerCase()}`
-            : `${result.matched ? "matches" : "does not match"} at ${formatScore(result.best)} (cutoff ${formatScore(result.cutoff)})`}
+            ? `no condition is on for ${result.falsePositive.checkType === "message" ? "user messages" : "agent replies"}`
+            : `scores ${formatScore(result.best)}, matches at ${formatScore(result.cutoff)}`}
         </span>
       </div>
-      <p className="line-clamp-3 text-sm whitespace-pre-wrap" title={result.case.text}>
-        {result.case.text}
+      <p className="line-clamp-3 text-sm whitespace-pre-wrap" title={result.falsePositive.text}>
+        {result.falsePositive.text}
       </p>
-      {highest && (
+      {closest && (
         <p className="text-xs text-muted-foreground">
-          Highest condition: <span className="text-foreground">{highest.condition}</span>
+          Closest condition: <span className="text-foreground">{closest.condition}</span>
         </p>
       )}
     </li>
@@ -67,7 +66,7 @@ export function RescoreDialog({
   onPublish,
   onBack,
 }: {
-  result: Exclude<RescoreResult, { status: "no_cases" }> | null;
+  result: Exclude<RescoreResult, { status: "no_false_positives" }> | null;
   onPublish: () => void;
   onBack: () => void;
 }) {
@@ -79,13 +78,14 @@ export function RescoreDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>
               {allPass
-                ? `All ${plural(result.cases.length, "saved case")} pass`
-                : `${result.failed} of ${plural(result.cases.length, "saved case")} fail`}
+                ? result.results.length === 1
+                  ? "The new version no longer matches its false positive"
+                  : `The new version matches none of its ${result.results.length} false positives`
+                : `The new version still matches ${result.failed} of ${plural(result.results.length, "false positive")}`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Jev scored each case this rule has kept against the draft's conditions for that
-              case's check, at that check's cutoff. A case passes when the draft matches it as
-              expected.
+              {result.results.length === 1 ? "This text once matched" : "These texts once matched"}{" "}
+              the rule where it did not apply. Each one was scored against the new version.
             </AlertDialogDescription>
           </AlertDialogHeader>
         )}
@@ -93,21 +93,21 @@ export function RescoreDialog({
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <TriangleAlert className="size-4 text-destructive" />
-              Could not check the saved cases
+              Could not check the false positives
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Jev could not score the draft against this rule's{" "}
-              {plural(result.caseCount, "saved case")} ({result.error}). You can still publish.
+              Jev could not score the new version against this rule's{" "}
+              {plural(result.count, "false positive")} ({result.error}). You can still publish.
             </AlertDialogDescription>
           </AlertDialogHeader>
         )}
         {result?.status === "scored" && (
           <ul className="max-h-[50vh] divide-y overflow-y-auto">
             {/* Failures first: they are what the user needs to look at. */}
-            {[...result.cases]
+            {[...result.results]
               .sort((a, b) => Number(a.passed) - Number(b.passed))
-              .map((caseResult) => (
-                <CaseRow key={caseResult.case.id} result={caseResult} />
+              .map((result) => (
+                <ResultRow key={result.falsePositive.matchId} result={result} />
               ))}
           </ul>
         )}

@@ -569,7 +569,7 @@ describe("activity and analytics over HTTP", () => {
     await runMessageHook(hookInput("Make the header smaller"), { env: sandbox.env, matcher });
     const looksFine = (id: number, body: unknown) => app.call("POST", `/api/rules/${id}/looks-fine`, body);
 
-    expect((await looksFine(created.id, { reason: "wrong_matches" })).status).toBe(400);
+    expect((await looksFine(created.id, { reason: "false_positives" })).status).toBe(400);
     expect((await looksFine(created.id, { reason: "looks_odd" })).status).toBe(400);
     expect((await looksFine(created.id, {})).status).toBe(400);
     expect((await looksFine(created.id, { reason: "never_matches" })).status).toBe(400);

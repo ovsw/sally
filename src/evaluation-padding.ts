@@ -1,7 +1,7 @@
 // Made-up conditions that pad the rule set for the evaluation's scale run.
 // They are about everyday subjects far from software work, so none of them
 // should hold of a message or reply from a coding session: any match of one
-// is a wrong match. They are built from templates rather than listed, so the
+// is a false positive. They are built from templates rather than listed, so the
 // set is large and varied without being hand-written.
 import type { CheckType } from "./rules.ts";
 

@@ -299,7 +299,7 @@ describe("rule analytics", () => {
     expect(sandbox.withRules((rules) => rules.ruleAnalytics(ruleId))).toEqual({
       checks: 0,
       matches: 0,
-      wrongMatches: 0,
+      falsePositives: 0,
       recentMatches: [],
       nearMisses: [],
       nearMissMargin: 0.1,

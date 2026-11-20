@@ -1,30 +1,30 @@
-import type { SavedCaseView } from "./flags.ts";
+import type { FalsePositive } from "./false-positives.ts";
 import { MalformedAnswerError, type Matcher } from "./matcher.ts";
 import type { CheckType, Switches } from "./rules.ts";
 import { maskEmails } from "./text.ts";
 
-/** How long a re-score may wait for Jev, for all of a rule's saved cases together. */
+/** How long a re-score may wait for Jev, for all of a rule's false positives together. */
 export const RESCORE_TIME_LIMIT_MS = 20_000;
 
-/** How many saved cases are sent to Jev at once. */
+/** How many false positives are sent to Jev at once. */
 const PARALLEL_REQUESTS = 4;
 
-/** How one saved case fares against the draft's conditions for its check type. */
-export interface CaseResult {
-  case: SavedCaseView;
+/** How one false positive fares against the draft's conditions for its check type. */
+export interface FalsePositiveResult {
+  falsePositive: FalsePositive;
   /**
-   * Each of the draft's conditions on for the case's check type, with its score
-   * on the case's text, in the draft's order. Empty when the draft has no
-   * condition on for that check type.
+   * Each of the draft's conditions on for the false positive's check type,
+   * with its score on its text, in the draft's order. Empty when the draft has
+   * no condition on for that check type.
    */
   scores: { condition: string; score: number }[];
   /** The best of those scores; null when there are none. */
   best: number | null;
-  /** The cutoff of the case's check type. */
+  /** The cutoff of the false positive's check type. */
   cutoff: number;
-  /** Whether the rule would match the case: a condition reaches the cutoff. */
+  /** Whether the draft would still match it: a condition reaches the cutoff. */
   matched: boolean;
-  /** Whether that is what the case expects. */
+  /** Whether the draft no longer matches it. */
   passed: boolean;
 }
 
@@ -32,14 +32,15 @@ export interface CaseResult {
 export type Cutoffs = Record<CheckType, number>;
 
 /**
- * A draft's conditions scored against its rule's saved cases. "no_cases" when
- * the rule has none (nothing is sent to Jev); "failed" when Jev could not
- * score them, with the reason in `error`. A failure never blocks publishing.
+ * A draft's conditions scored against its rule's false positives.
+ * "no_false_positives" when the rule has none (nothing is sent to Jev);
+ * "failed" when Jev could not score them, with the reason in `error`. A
+ * failure never blocks publishing.
  */
 export type RescoreResult =
-  | { status: "scored"; cutoffs: Cutoffs; cases: CaseResult[]; passed: number; failed: number }
-  | { status: "no_cases"; cutoffs: Cutoffs }
-  | { status: "failed"; cutoffs: Cutoffs; error: string; caseCount: number };
+  | { status: "scored"; cutoffs: Cutoffs; results: FalsePositiveResult[]; passed: number; failed: number }
+  | { status: "no_false_positives"; cutoffs: Cutoffs }
+  | { status: "failed"; cutoffs: Cutoffs; error: string; count: number };
 
 class TimeoutError extends Error {
   constructor(ms: number) {
@@ -48,22 +49,22 @@ class TimeoutError extends Error {
 }
 
 /**
- * Scores each saved case's text against the conditions on for the case's
- * check type, one request per case, and says which cases pass at that check
- * type's cutoff. A case whose check type no condition is on for is not sent:
- * the rule would not match it. Email addresses are masked in everything sent.
- * `matcher` is undefined when there is no API key.
+ * Scores each false positive's text against the conditions on for its check
+ * type, one request each, and says which the draft no longer matches at that
+ * check type's cutoff. One whose check type no condition is on for is not
+ * sent: the rule would not match it. Email addresses are masked in everything
+ * sent. `matcher` is undefined when there is no API key.
  */
-export async function rescoreCases(options: {
+export async function rescoreFalsePositives(options: {
   matcher: Matcher | undefined;
   conditions: (Switches & { text: string })[];
-  cases: SavedCaseView[];
+  falsePositives: FalsePositive[];
   cutoffs: Cutoffs;
   timeLimitMs?: number;
 }): Promise<RescoreResult> {
-  const { matcher, conditions, cases, cutoffs, timeLimitMs = RESCORE_TIME_LIMIT_MS } = options;
-  if (cases.length === 0) return { status: "no_cases", cutoffs };
-  const failed = (error: string): RescoreResult => ({ status: "failed", cutoffs, error, caseCount: cases.length });
+  const { matcher, conditions, falsePositives, cutoffs, timeLimitMs = RESCORE_TIME_LIMIT_MS } = options;
+  if (falsePositives.length === 0) return { status: "no_false_positives", cutoffs };
+  const failed = (error: string): RescoreResult => ({ status: "failed", cutoffs, error, count: falsePositives.length });
   if (!matcher) return failed("missing API key");
 
   const sent = conditions.map((condition, index) => ({
@@ -82,23 +83,23 @@ export async function rescoreCases(options: {
     }, timeLimitMs);
   });
 
-  async function scoreCase(savedCase: SavedCaseView): Promise<CaseResult> {
-    const cutoff = cutoffs[savedCase.checkType];
-    const forCase = sent.filter((condition) => condition[savedCase.checkType]);
-    const outcome = (scores: CaseResult["scores"]): CaseResult => {
+  async function scoreOne(falsePositive: FalsePositive): Promise<FalsePositiveResult> {
+    const cutoff = cutoffs[falsePositive.checkType];
+    const forCheck = sent.filter((condition) => condition[falsePositive.checkType]);
+    const outcome = (scores: FalsePositiveResult["scores"]): FalsePositiveResult => {
       const best = scores.length > 0 ? Math.max(...scores.map((s) => s.score)) : null;
       const matched = best !== null && best >= cutoff;
-      return { case: savedCase, scores, best, cutoff, matched, passed: matched === (savedCase.expected === "should_match") };
+      return { falsePositive, scores, best, cutoff, matched, passed: !matched };
     };
-    if (forCase.length === 0) return outcome([]);
+    if (forCheck.length === 0) return outcome([]);
     const result = await matcher!.match(
-      maskEmails(savedCase.text),
-      forCase.map(({ id, text }) => ({ id, text })),
+      maskEmails(falsePositive.text),
+      forCheck.map(({ id, text }) => ({ id, text })),
       controller.signal,
     );
     // Read answers only for the IDs that were sent; every one must be a score from 0 to 1.
     return outcome(
-      forCase.map(({ id, written }) => {
+      forCheck.map(({ id, written }) => {
         const value = result.scores[id];
         if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
           throw new MalformedAnswerError(`no valid score for ${id}`);
@@ -108,23 +109,23 @@ export async function rescoreCases(options: {
     );
   }
 
-  async function scoreAll(): Promise<CaseResult[]> {
-    const results: CaseResult[] = new Array(cases.length);
+  async function scoreAll(): Promise<FalsePositiveResult[]> {
+    const results: FalsePositiveResult[] = new Array(falsePositives.length);
     let next = 0;
     const worker = async () => {
-      while (next < cases.length && !controller.signal.aborted) {
+      while (next < falsePositives.length && !controller.signal.aborted) {
         const index = next++;
-        results[index] = await scoreCase(cases[index]!);
+        results[index] = await scoreOne(falsePositives[index]!);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(PARALLEL_REQUESTS, cases.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(PARALLEL_REQUESTS, falsePositives.length) }, worker));
     return results;
   }
 
   try {
     const results = await Promise.race([scoreAll(), timeout]);
     const passed = results.filter((r) => r.passed).length;
-    return { status: "scored", cutoffs, cases: results, passed, failed: results.length - passed };
+    return { status: "scored", cutoffs, results, passed, failed: results.length - passed };
   } catch (error) {
     // The other requests have no use once one has failed.
     controller.abort();

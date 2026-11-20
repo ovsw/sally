@@ -1,7 +1,7 @@
 import { databasePath, type Env } from "./paths.ts";
 import { createRulesService } from "./rules.ts";
 import { openStore } from "./store.ts";
-import type { CommandResult } from "./wrong-match.ts";
+import type { CommandResult } from "./false-positive-command.ts";
 
 const USAGE = "Usage: node src/cli.ts settings stop-on-failure [on|off]\n";
 

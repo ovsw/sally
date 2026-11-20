@@ -2,7 +2,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { type ActivityFilter, OUTCOMES } from "../analytics.ts";
 import type { AttentionKind } from "../attention.ts";
 import type { Outcome } from "../engine.ts";
-import { type Verdict, VERDICTS } from "../flags.ts";
 import type { ImportService } from "../import.ts";
 import {
   CHECK_TYPES,
@@ -202,7 +201,7 @@ async function handleDecision(
  *                                                        conditions: [{ id?, text, message?, reply? }] }
  * - PUT  /api/rules/:id/scope                            set where the rule applies { scope }: at once,
  *                                                        with no new version and the draft untouched
- * - POST /api/rules/:id/rescore                          score the draft's conditions against the saved cases
+ * - POST /api/rules/:id/rescore                          score the draft's conditions against the false positives
  * - POST /api/trial                                      score a typed text against typed conditions
  *                                                        { text, checkType, conditions: [text] }
  * - POST /api/rules/:id/publish                          publish the draft
@@ -214,8 +213,9 @@ async function handleDecision(
  *                                                        set a published condition's switch at once { on }
  * - DELETE /api/rules/:id                                delete the rule
  * - GET  /api/rules/:id/analytics                        how the rule has behaved
- * - GET  /api/rules/:id/cases                            the rule's saved cases
- * - POST /api/matches/:id/flag                           the user marks a match { verdict: wrong|right }
+ * - GET  /api/rules/:id/false-positives                  the rule's false positives
+ * - POST /api/matches/:id/false-positive                 the user marks a match as a false positive
+ * - DELETE /api/matches/:id/false-positive               the user takes the mark away
  * - GET  /api/projects                                   the projects Sally has seen
  * - GET  /api/settings                                   { settings, limitUse }: the settings, and how
  *                                                        much of Jev's request limit recent checks used
@@ -233,9 +233,10 @@ async function handleDecision(
  *   Each import decision answers with the import as it now is.
  *
  * Every change answers with the rule as it now is, except a delete, which
- * answers { deleted: true }, a flag, which answers with the match's flag,
- * a re-score, which changes nothing and answers with which saved cases
- * pass, and a trial, which changes nothing and answers with the scores (for
+ * answers { deleted: true }, a false-positive mark, which answers with the
+ * match's mark, taking it away, which answers { unmarked: true }, a
+ * re-score, which changes nothing and answers with which false positives the
+ * draft no longer matches, and a trial, which changes nothing and answers with the scores (for
  * both, a Jev failure is part of the answer, not a refusal). Refusals answer
  * with { error } and a 4xx status.
  */
@@ -274,12 +275,14 @@ export async function handleApi(
     if (parts.length === 1 && parts[0] === "attention" && method === "GET") {
       return send(res, 200, { rules: rules.attention() });
     }
-    if (parts.length === 3 && parts[0] === "matches" && parts[2] === "flag" && method === "POST") {
+    if (parts.length === 3 && parts[0] === "matches" && parts[2] === "false-positive") {
       const matchId = Number(parts[1]);
       if (!Number.isSafeInteger(matchId)) throw new HttpError(404, "Not found.");
-      const verdict = (await readJson(req)).verdict;
-      if (!VERDICTS.includes(verdict as Verdict)) throw new HttpError(400, '"verdict" is wrong or right.');
-      return send(res, 200, rules.flagMatch(matchId, verdict as Verdict, "user"));
+      if (method === "POST") return send(res, 200, rules.markFalsePositive(matchId, "user"));
+      if (method === "DELETE") {
+        rules.unmarkFalsePositive(matchId);
+        return send(res, 200, { unmarked: true });
+      }
     }
     if (parts.length === 1 && parts[0] === "trial" && method === "POST") {
       const body = await readJson(req);
@@ -314,8 +317,8 @@ export async function handleApi(
     if (id !== undefined && parts.length === 3 && parts[2] === "analytics" && method === "GET") {
       return send(res, 200, rules.ruleAnalytics(id));
     }
-    if (id !== undefined && parts.length === 3 && parts[2] === "cases" && method === "GET") {
-      return send(res, 200, { cases: rules.savedCases(id) });
+    if (id !== undefined && parts.length === 3 && parts[2] === "false-positives" && method === "GET") {
+      return send(res, 200, { falsePositives: rules.falsePositives(id) });
     }
     if (id !== undefined && parts.length === 3 && parts[2] === "draft" && method === "PUT") {
       const body = await readJson(req);

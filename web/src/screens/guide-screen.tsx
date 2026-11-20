@@ -19,7 +19,7 @@ const allSections = [
   { id: "what-sally-does", label: "What Sally does on each turn" },
   ...sections(guidance),
   { id: "importing", label: "Importing your rules files" },
-  { id: "wrong-matches-and-misses", label: "Wrong matches and misses" },
+  { id: "false-positives-and-misses", label: "False positives and misses" },
 ];
 
 const prose = cn(
@@ -124,24 +124,24 @@ function Importing() {
   );
 }
 
-function WrongMatchesAndMisses() {
+function FalsePositivesAndMisses() {
   return (
     <section>
-      <h2 id="wrong-matches-and-misses">Wrong matches and misses</h2>
-      <h3>Wrong matches</h3>
+      <h2 id="false-positives-and-misses">False positives and misses</h2>
+      <h3>False positives</h3>
       <p>
-        A wrong match is a rule that matched when it did not apply. It is the failure that
+        A false positive is a rule that matched when it did not apply. It is the failure that
         matters most: each one teaches Claude to take Sally's output less seriously.
       </p>
       <ul>
         <li>
           Claude can report one itself. Sally's output tells it how, naming Sally's command
           line by its full path so it runs from any folder:{" "}
-          <code>node "&lt;Sally's folder&gt;/src/cli.ts" wrong-match "&lt;rule name&gt;"</code>.
+          <code>node "&lt;Sally's folder&gt;/src/cli.ts" false-positive "&lt;rule name&gt;"</code>.
         </li>
         <li>
-          You can flag a match as wrong or right on the rule's page, under Matches. Each
-          flag keeps that message or reply as a saved case for the rule.
+          You can mark a match as a false positive on the rule's page, under Matches, and
+          take a mark away there too.
         </li>
         <li>
           To fix the rule, make the condition narrower: name the request or the failure,
@@ -151,8 +151,8 @@ function WrongMatchesAndMisses() {
           check, "The reply mentions tests" matches any reply that brings them up; "The
           reply says the work is done and does not say the tests were run" names the
           failure. Edits go into a draft. When you publish, Sally first scores the
-          draft against the rule's saved cases, so you can see whether the new wording
-          stops the wrong match and keeps the right ones.
+          draft against the rule's false positives, so you can see whether the new
+          wording no longer matches them.
         </li>
       </ul>
       <h3>Misses</h3>
@@ -162,7 +162,7 @@ function WrongMatchesAndMisses() {
         a way no condition describes. Add a condition for that way, or reword one.
       </p>
       <p>
-        The Needs attention screen lists rules worth a look: rules with wrong matches,
+        The Needs attention screen lists rules worth a look: rules with false positives,
         rules that match very often, rules with weak matches, and rules that never match.
       </p>
       <h3>When a check fails</h3>
@@ -279,7 +279,7 @@ export function GuideScreen() {
           <WhatSallyDoes />
           <div dangerouslySetInnerHTML={{ __html: guidanceHtml }} />
           <Importing />
-          <WrongMatchesAndMisses />
+          <FalsePositivesAndMisses />
         </article>
         <StartHere />
       </div>

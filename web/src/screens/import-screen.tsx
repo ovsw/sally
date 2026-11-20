@@ -323,7 +323,7 @@ function PublishedRuleCard({ rule, importId, decide }: { rule: RuleDetail; impor
 
 /**
  * A published rule opened for editing on the Import screen. Edits go into the
- * rule's draft as on the Rule screen, and publishing it checks the saved cases
+ * rule's draft as on the Rule screen, and publishing it checks the false positives
  * first, the same way; the live version stays as it is until then.
  */
 function EditPublishedCard({
@@ -340,7 +340,7 @@ function EditPublishedCard({
   const [content, setContent] = React.useState(() => contentOf(rule));
   const [hasDraft, setHasDraft] = React.useState(rule.hasDraft);
   const [busy, setBusy] = React.useState<"publish" | "discard" | "open" | null>(null);
-  const [rescore, setRescore] = React.useState<Exclude<RescoreResult, { status: "no_cases" }> | null>(null);
+  const [rescore, setRescore] = React.useState<Exclude<RescoreResult, { status: "no_false_positives" }> | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   // Read when discarding, after the saves already sent have been answered.
   const draftSaved = React.useRef(rule.hasDraft);
@@ -384,7 +384,7 @@ function EditPublishedCard({
     if (await saver.flush()) {
       try {
         const result = await rescoreDraft(rule.id);
-        if (result.status !== "no_cases") setRescore(result);
+        if (result.status !== "no_false_positives") setRescore(result);
         else await publishNow();
       } catch (e) {
         setError(errorText(e));

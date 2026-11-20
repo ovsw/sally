@@ -72,7 +72,7 @@ export async function runApp(args: string[], env: Env): Promise<void> {
   const log = (line: string) => process.stdout.write(line + "\n");
   const webDir = env.SALLY_WEB_DIR || (await ensureBuilt(log, env));
   const store = openStore(databasePath(env));
-  // Jev re-scores a draft against its saved cases before publishing.
+  // Jev re-scores a draft against its false positives before publishing.
   const apiKey = readApiKey(env);
   const matcher = apiKey ? createJevMatcher({ apiKey }) : undefined;
   const rules = createRulesService(store, { matcher });

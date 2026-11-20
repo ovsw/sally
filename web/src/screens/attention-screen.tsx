@@ -35,7 +35,7 @@ const kinds: {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }[] = [
-  { value: "wrong_matches", label: "Wrong matches", icon: Flag },
+  { value: "false_positives", label: "False positives", icon: Flag },
   { value: "matches_often", label: "Matches often", icon: Activity },
   { value: "weak_matches", label: "Weak matches", icon: Gauge },
   { value: "never_matches", label: "Never matches", icon: CircleSlash },
@@ -46,7 +46,7 @@ function ReasonBadge({ kind }: { kind: AttentionKind }) {
   const Icon = meta?.icon;
   return (
     <Badge
-      variant={kind === "wrong_matches" ? "destructive" : "secondary"}
+      variant={kind === "false_positives" ? "destructive" : "secondary"}
       className="gap-1 whitespace-nowrap"
     >
       {Icon && <Icon className="size-3" />}
@@ -80,7 +80,7 @@ const withoutReason = (
 
 /**
  * Clears one reason for one rule's live version: the user looked and judged
- * it fine. Wrong matches get no such button; they go when the rule is fixed.
+ * it fine. False positives get no such button; they go when the rule is fixed.
  */
 function LooksFine({
   ruleId,
@@ -185,7 +185,7 @@ const columns: ColumnDef<AttentionEntry>[] = [
             <span className="min-w-[200px] flex-1 whitespace-normal">
               {reason.summary}
             </span>
-            {reason.kind !== "wrong_matches" && (
+            {reason.kind !== "false_positives" && (
               <LooksFine
                 ruleId={row.original.ruleId}
                 versionNumber={row.original.versionNumber}
@@ -243,7 +243,7 @@ export function AttentionScreen() {
       <div className="mb-4 text-left">
         <h1 className="text-2xl font-bold tracking-tight">Needs attention</h1>
         <p className="mt-2 text-muted-foreground">
-          Rules worth a look, worst first: wrong matches, rules that match much
+          Rules worth a look, worst first: false positives, rules that match much
           of what they see, rules that only just clear the cutoff, and rules
           that never match. When you have looked at a reason and the rule is
           doing what you want, "Looks fine" clears it until the rule's next
@@ -289,7 +289,7 @@ export function AttentionScreen() {
                 ? "Could not load the list."
                 : filtered
                   ? "No rules match."
-                  : "Nothing needs attention. Rules appear here when they match wrongly, match often, only just clear the cutoff or never match."
+                  : "Nothing needs attention. Rules appear here when they have false positives, match often, only just clear the cutoff or never match."
           }
         />
       </ClearedContext.Provider>
