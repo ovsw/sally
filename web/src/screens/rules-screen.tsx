@@ -1,8 +1,8 @@
 // The Rules screen, built on the shadcnblocks block data-table12 (faceted
 // filter data table). An open rule shows in a panel beside the list, as in
 // Sanity, built on the shadcnblocks block resizable-with-scroll-area.
-import type { ColumnDef, ColumnFiltersState } from "@tanstack/react-table";
-import { BookOpen, FolderGit2, Globe, ListChecks, MessageSquare, PenLine, Power, PowerOff, Reply } from "lucide-react";
+import type { ColumnDef, ColumnFiltersState, Table } from "@tanstack/react-table";
+import { BookOpen, FolderGit2, Globe, ListChecks, MessageSquare, PenLine, Power, PowerOff, Reply, X } from "lucide-react";
 import * as React from "react";
 
 import {
@@ -16,6 +16,7 @@ import {
 import { NewRuleDialog } from "@/components/new-rule-dialog";
 import { RuleLights } from "@/components/rule-status";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Empty,
   EmptyContent,
@@ -35,6 +36,7 @@ import {
   type RuleSummary,
   type Scope,
   switchRule,
+  switchRules,
 } from "@/lib/api";
 import { errorText } from "@/lib/draft-saver";
 import { followLink, navigate } from "@/lib/router";
@@ -146,6 +148,34 @@ function OnSwitch({ rule, onError }: { rule: RuleSummary; onError: (message: str
 function makeColumns(onError: (message: string) => void, compact: boolean): ColumnDef<RuleSummary>[] {
   return [
     {
+      // Picks rules for the bar above the list, which switches them all at once.
+      id: "select",
+      header: ({ table }) => (
+        <span className="flex">
+          <Checkbox
+            checked={table.getIsAllRowsSelected() || (table.getIsSomeRowsSelected() && "indeterminate")}
+            onCheckedChange={(checked) => table.toggleAllRowsSelected(checked === true)}
+            disabled={table.getRowCount() === 0 || !table.options.enableRowSelection}
+            aria-label="Select all rules"
+          />
+        </span>
+      ),
+      cell: ({ row }) => (
+        // The row opens the rule on a click; the box only picks it.
+        <span className="flex" onClick={(event) => event.stopPropagation()}>
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(checked) => row.toggleSelected(checked === true)}
+            disabled={!row.getCanSelect()}
+            aria-label={`Select ${row.original.name}`}
+          />
+        </span>
+      ),
+      enableHiding: false,
+      enableSorting: false,
+      meta: { className: "w-px" },
+    },
+    {
       id: "on",
       accessorFn: (row) => String(row.on),
       header: () => <span className="sr-only">On</span>,
@@ -207,6 +237,81 @@ function makeColumns(onError: (message: string) => void, compact: boolean): Colu
   ];
 }
 
+/**
+ * Shown while rules are picked: switches them all on or all off in one click.
+ * A rule that cannot come on (none of its conditions is on) stays off and is
+ * named in the error; the others still switch.
+ */
+function BulkSwitchBar({
+  table,
+  onError,
+}: {
+  table: Table<RuleSummary>;
+  onError: (message: string | null) => void;
+}) {
+  const [busy, setBusy] = React.useState(false);
+  const picked = table.getSelectedRowModel().rows.map((row) => row.original);
+  if (picked.length === 0) return null;
+  const switchAll = (on: boolean) => {
+    const ids = picked.map((rule) => rule.id);
+    setBusy(true);
+    onError(null);
+    switchRules(ids, on)
+      .then(({ rules, refused }) => {
+        for (const rule of rules) announceRuleChange({ rule });
+        // Only the rules sent are unpicked: any picked while the request ran stay picked.
+        table.setRowSelection((selection) => {
+          const rest = { ...selection };
+          for (const id of ids) delete rest[String(id)];
+          return rest;
+        });
+        if (refused.length > 0) onError(refusedText(refused, picked, on));
+      })
+      .catch((e: unknown) => onError(errorText(e)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="sticky bottom-4 z-10 mt-3 flex flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2 shadow-md">
+      <span className="text-sm font-medium">
+        {picked.length} {picked.length === 1 ? "rule" : "rules"} selected
+      </span>
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy || picked.every((rule) => rule.on)}
+          onClick={() => switchAll(true)}
+        >
+          <Power />
+          Switch on
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy || picked.every((rule) => !rule.on)}
+          onClick={() => switchAll(false)}
+        >
+          <PowerOff />
+          Switch off
+        </Button>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => table.resetRowSelection()}>
+          <X />
+          Clear
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Which picked rules a bulk switch left as they were, grouped by why. */
+function refusedText(refused: { ruleId: number; reason: string }[], picked: RuleSummary[], on: boolean): string {
+  const nameOf = (id: number) => picked.find((rule) => rule.id === id)?.name ?? `Rule ${id}`;
+  const byReason = new Map<string, string[]>();
+  for (const { ruleId, reason } of refused) byReason.set(reason, [...(byReason.get(reason) ?? []), nameOf(ruleId)]);
+  const stayed = on ? "Stayed off" : "Stayed on";
+  return [...byReason].map(([reason, names]) => `${stayed}: ${names.join(", ")}. ${reason}`).join(" ");
+}
+
 // Built on the shadcnblocks block empty-actions-2 (empty state with two
 // actions): a new user is pointed to the import and to writing a first rule.
 function NoRulesYet() {
@@ -249,6 +354,9 @@ function NoRulesYet() {
   );
 }
 
+/** One search and set of filters, as a key to tell lists apart. */
+const queryKey = (search: string, filters: ColumnFiltersState) => JSON.stringify([search, filters]);
+
 const values = (filters: ColumnFiltersState, id: string) =>
   filters.find((f) => f.id === id)?.value as string[] | undefined;
 
@@ -258,7 +366,12 @@ export function RulesScreen({ openId }: { openId?: number }) {
   const [loaded, setLoaded] = React.useState(false);
   // Whether the rules shown came from a request with no search or filter.
   const [shownUnfiltered, setShownUnfiltered] = React.useState(false);
+  // The search and filters the rules shown answer; until the list for a new one
+  // is in, the rows on screen belong to the old one and cannot be picked.
+  const [shownQuery, setShownQuery] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // Kept apart from `error`, which the reload after the switch clears.
+  const [switchError, setSwitchError] = React.useState<string | null>(null);
   // Counts rule changes made here or in the panel, so the list reloads.
   const [changes, setChanges] = React.useState(0);
   useRuleChanges((change) => {
@@ -273,19 +386,27 @@ export function RulesScreen({ openId }: { openId?: number }) {
   });
   const compact = openId !== undefined;
   const columns = React.useMemo(() => makeColumns(setError, compact), [compact]);
+  const [query, setQuery] = React.useState(() => queryKey("", []));
   const { table, globalFilter, columnFilters } = useDataTable({
     data: rules,
     columns: columns as ColumnDef<RuleSummary, unknown>[],
     getRowId: (row) => String(row.id),
-    enableRowSelection: false,
+    enableRowSelection: shownQuery === query,
     manualFiltering: true,
     initialVisibility: { published: false, hasDraft: false },
   });
   const isMobile = useIsMobile();
+  // A new search or filter starts the picking over, so no rule out of sight stays picked.
+  React.useEffect(() => {
+    table.resetRowSelection();
+    setSwitchError(null);
+    setQuery(queryKey(globalFilter, columnFilters));
+  }, [table, globalFilter, columnFilters]);
 
   React.useEffect(() => {
     let stale = false;
     const unfiltered = globalFilter === "" && columnFilters.length === 0;
+    const asked = queryKey(globalFilter, columnFilters);
     const timer = window.setTimeout(() => {
       listRules({
         search: globalFilter,
@@ -299,6 +420,7 @@ export function RulesScreen({ openId }: { openId?: number }) {
           if (stale) return;
           setRules(next);
           setShownUnfiltered(unfiltered);
+          setShownQuery(asked);
           setError(null);
         })
         .catch((e: unknown) => !stale && setError(String(e instanceof Error ? e.message : e)))
@@ -378,6 +500,13 @@ export function RulesScreen({ openId }: { openId?: number }) {
         activeRowId={openId === undefined ? undefined : String(openId)}
         emptyMessage={!loaded ? "Loading..." : "No rules match."}
       />
+      {/* Below the list, so picking a rule never moves the rows under the pointer. */}
+      <BulkSwitchBar table={table} onError={setSwitchError} />
+      {switchError && (
+        <p role="alert" className="mt-3 text-sm text-destructive">
+          {switchError}
+        </p>
+      )}
       <DataTablePagination table={table} />
     </>
   );
