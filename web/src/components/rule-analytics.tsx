@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import {
   type FalsePositive,
+  type FalsePositiveMark,
   getRuleAnalytics,
   listFalsePositives,
   type MarkedBy,
@@ -167,13 +168,38 @@ function ChecksTable<Row extends RuleCheckView>({
   );
 }
 
-function FalsePositivesTable({ falsePositives }: { falsePositives: FalsePositive[] }) {
+/** Takes a false-positive mark away; kept apart from the row so its pending state is its own. */
+function UnmarkButton({ onUnmark }: { onUnmark: () => Promise<void> }) {
+  const [pending, setPending] = React.useState(false);
+  return (
+    <Button
+      size="xs"
+      variant="outline"
+      disabled={pending}
+      onClick={() => {
+        setPending(true);
+        onUnmark().finally(() => setPending(false));
+      }}
+    >
+      Not a false positive
+    </Button>
+  );
+}
+
+function FalsePositivesTable({
+  falsePositives,
+  onUnmark,
+}: {
+  falsePositives: FalsePositive[];
+  onUnmark: (matchId: number) => Promise<void>;
+}) {
   return (
     <Table>
       <TableHeader>
         <TableRow>
           <TableHead className="pl-4">Text</TableHead>
-          <TableHead className="pr-4">Marked</TableHead>
+          <TableHead>Marked</TableHead>
+          <TableHead className="pr-4" />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -190,12 +216,15 @@ function FalsePositivesTable({ falsePositives }: { falsePositives: FalsePositive
                 {falsePositive.text}
               </p>
             </TableCell>
-            <TableCell className="pr-4 align-top whitespace-nowrap text-muted-foreground">
+            <TableCell className="align-top whitespace-nowrap text-muted-foreground">
               By {MARKED_BY[falsePositive.markedBy]}
               <span className="block text-xs">
                 {formatTime(falsePositive.markedAt)}
                 {falsePositive.versionNumber !== null && ` · version ${falsePositive.versionNumber}`}
               </span>
+            </TableCell>
+            <TableCell className="pr-4 align-top">
+              <UnmarkButton onUnmark={() => onUnmark(falsePositive.matchId)} />
             </TableCell>
           </TableRow>
         ))}
@@ -231,23 +260,45 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
 
   // Marks can overlap; only the latest reload may replace the panel.
   const latestReload = React.useRef(0);
-  const onToggle = React.useCallback(
-    async (match: RuleMatch) => {
+  /** Marks a match as a false positive or takes the mark away, then reloads the panel. */
+  const setMark = React.useCallback(
+    async (matchId: number, mark: boolean) => {
       setMarkError(null);
+      let markedAs: FalsePositiveMark | null;
       try {
-        if (match.falsePositive) await unmarkFalsePositive(match.matchId);
-        else await markFalsePositive(match.matchId);
+        markedAs = mark ? (await markFalsePositive(matchId)).mark : null;
+        if (!mark) await unmarkFalsePositive(matchId);
+      } catch (e) {
+        setMarkError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      // The change is made: show it at once, so a failed reload cannot leave the button stale.
+      setAnalytics((current) =>
+        current && {
+          ...current,
+          recentMatches: current.recentMatches.map((m) =>
+            m.matchId === matchId ? { ...m, falsePositive: markedAs } : m,
+          ),
+        },
+      );
+      if (!mark) setFalsePositives((current) => current.filter((f) => f.matchId !== matchId));
+      try {
         const reload = ++latestReload.current;
         const [loaded, marked] = await load();
         if (reload !== latestReload.current) return;
         setAnalytics(loaded);
         setFalsePositives(marked);
       } catch (e) {
-        setMarkError(e instanceof Error ? e.message : String(e));
+        setMarkError(`Saved, but the panel could not refresh: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
     [load],
   );
+  const onToggle = React.useCallback(
+    (match: RuleMatch) => setMark(match.matchId, match.falsePositive === null),
+    [setMark],
+  );
+  const onUnmark = React.useCallback((matchId: number) => setMark(matchId, false), [setMark]);
 
   if (error) {
     return (
@@ -265,6 +316,11 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
 
   return (
     <div className="space-y-6">
+      {markError && (
+        <p role="alert" className="text-sm text-destructive">
+          {markError}
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-4 @xl:grid-cols-3">
         <Stat
           label="Matched"
@@ -328,11 +384,6 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
             : undefined
         }
       >
-        {markError && (
-          <p role="alert" className="border-b px-4 py-2 text-sm text-destructive">
-            {markError}
-          </p>
-        )}
         {analytics.recentMatches.length === 0 ? (
           <Empty>This rule has not matched yet.</Empty>
         ) : (
@@ -375,7 +426,7 @@ export function RuleAnalyticsPanel({ id }: { id: number }) {
         {falsePositives.length === 0 ? (
           <Empty>No false positives.</Empty>
         ) : (
-          <FalsePositivesTable falsePositives={falsePositives} />
+          <FalsePositivesTable falsePositives={falsePositives} onUnmark={onUnmark} />
         )}
       </Section>
     </div>

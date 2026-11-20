@@ -132,7 +132,7 @@ A match of a rule that did apply.
 _Avoid_: Correct match, true positive
 
 **False positive**:
-A match of a rule that did not apply, marked as such by the user or by Claude. A new version of the rule is checked against its false positives before it is published.
+A match of a rule that did not apply, marked as such by the user or by Claude. Publishing a new version in the web app first checks it against the rule's false positives.
 _Avoid_: Wrong match, misfire, flag, saved case
 
 **Miss**:
