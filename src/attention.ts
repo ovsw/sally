@@ -7,20 +7,20 @@ const EPSILON = 1e-9;
 /**
  * Why a rule needs attention, worst first:
  *
- * - wrong_matches: matches of its live version were flagged as wrong matches.
+ * - false_positives: matches of its live version were marked as false positives.
  * - matches_often: it matched on a large share of its recent checks.
  * - weak_matches: some of its recent matches scored only just above the cutoff.
  * - never_matches: it has not matched over a long stretch of checks.
  */
-export type AttentionKind = "wrong_matches" | "matches_often" | "weak_matches" | "never_matches";
+export type AttentionKind = "false_positives" | "matches_often" | "weak_matches" | "never_matches";
 
-/** The reasons the user can clear with "Looks fine". Wrong matches are cleared by fixing the rule. */
+/** The reasons the user can clear with "Looks fine". False positives are cleared by fixing the rule. */
 export const CLEARABLE_KINDS: readonly AttentionKind[] = ["matches_often", "weak_matches", "never_matches"];
 
-const KIND_ORDER: readonly AttentionKind[] = ["wrong_matches", "matches_often", "weak_matches", "never_matches"];
+const KIND_ORDER: readonly AttentionKind[] = ["false_positives", "matches_often", "weak_matches", "never_matches"];
 
 export type AttentionReason = { summary: string } & (
-  | { kind: "wrong_matches"; flags: number }
+  | { kind: "false_positives"; falsePositives: number }
   | { kind: "matches_often"; matches: number; checks: number; share: number; threshold: number }
   | { kind: "weak_matches"; weakMatches: number; matches: number; margin: number }
   | { kind: "never_matches"; checks: number }
@@ -88,14 +88,9 @@ function readAttention(db: Store, t: Thresholds): AttentionEntry[] {
       WHERE f.version_id = :version AND f.check_id IN (SELECT check_id FROM latest)`,
   );
 
-  // Wrong-match flags come with the flags table; a database without one has none.
-  const hasFlags = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'flags'").get() !== undefined;
-  const wrongFlags = hasFlags
-    ? db.prepare(
-        `SELECT COUNT(*) AS flags FROM flags fl JOIN matches f ON f.id = fl.match_id
-          WHERE f.version_id = ? AND fl.verdict = 'wrong'`,
-      )
-    : undefined;
+  const falsePositiveCount = db.prepare(
+    `SELECT COUNT(*) AS count FROM false_positives fp JOIN matches f ON f.id = fp.match_id WHERE f.version_id = ?`,
+  );
 
   const clearedKinds = db.prepare("SELECT kind FROM cleared_reasons WHERE version_id = ?");
 
@@ -103,12 +98,12 @@ function readAttention(db: Store, t: Thresholds): AttentionEntry[] {
   for (const rule of rules) {
     const found: AttentionReason[] = [];
 
-    const flags = wrongFlags ? (wrongFlags.get(rule.version_id) as { flags: number }).flags : 0;
-    if (flags > 0) {
+    const falsePositives = (falsePositiveCount.get(rule.version_id) as { count: number }).count;
+    if (falsePositives > 0) {
       found.push({
-        kind: "wrong_matches",
-        flags,
-        summary: `${flags} ${flags === 1 ? "match" : "matches"} of version ${rule.number} flagged as a wrong match.`,
+        kind: "false_positives",
+        falsePositives,
+        summary: `${falsePositives} ${falsePositives === 1 ? "false positive" : "false positives"} on version ${rule.number}.`,
       });
     }
 

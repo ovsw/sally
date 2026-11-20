@@ -3,7 +3,7 @@
 The `evaluate` command measures how well the engine matches on real text. It
 takes a file of saved messages and replies, each with the rules expected to
 match, runs every one through the engine with the real Jev matcher, and reports
-right matches, wrong matches and misses, with timing and tokens.
+right matches, false positives and misses, with timing and tokens.
 
 It calls Jev, so it needs an API key (`TYPESAFE_API_KEY` or
 `~/.config/sally/api_key`) and costs a little. It runs only when you ask for
@@ -122,12 +122,12 @@ type.
 ## What the report says
 
 - **Right match**: an expected rule matched.
-- **Wrong match**: a rule matched that the case did not expect. This is the
+- **False positive**: a rule matched that the case did not expect. This is the
   failure that matters most, since it teaches Claude to discount the rules Sally attaches.
 - **Miss**: an expected rule did not match. The report gives its best score, so
   a near miss is easy to spot.
-- **Wrong-match rate**: the share of checks that ran (neither failed nor
-  skipped) with at least one wrong match.
+- **False-positive rate**: the share of checks that ran (neither failed nor
+  skipped) with at least one false positive.
 - **Failed checks** (timeout, Jev error) are listed with their error and left
   out of the counts above, so a slow Jev does not look like a miss. A check
   counts as failed only after its second try also failed.
@@ -142,6 +142,6 @@ unless `--cutoff` or `--time-limit` say otherwise.
 
 `--scale` pads each check type that has cases up to 400 conditions on for it
 (`--conditions N` sets another number) with one-condition padding rules, then
-runs every case. A condition on for both checks counts in both. Any match of a padding rule is a wrong match.
-Its headline number, printed first, is the wrong-match rate: how often a large
+runs every case. A condition on for both checks counts in both. Any match of a padding rule is a false positive.
+Its headline number, printed first, is the false-positive rate: how often a large
 rule set makes an unrelated rule match.

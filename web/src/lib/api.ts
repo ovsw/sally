@@ -312,29 +312,27 @@ export interface RuleCheckView {
   condition: string | null;
 }
 
-export type Verdict = "wrong" | "right";
-export type RaisedBy = "claude" | "user";
+export type MarkedBy = "claude" | "user";
 
-/** A verdict on one match and who raised it. */
-export interface Flag {
-  verdict: Verdict;
-  raisedBy: RaisedBy;
-  createdAt: string;
+/** Who marked a match as a false positive, and when. */
+export interface FalsePositiveMark {
+  markedBy: MarkedBy;
+  markedAt: string;
 }
 
 export interface RuleMatch extends RuleCheckView {
   matchId: number;
-  flag: Flag | null;
+  falsePositive: FalsePositiveMark | null;
 }
 
 export interface RuleAnalytics {
   checks: number;
   matches: number;
-  wrongMatches: number;
+  falsePositives: number;
   recentMatches: RuleMatch[];
   nearMisses: RuleCheckView[];
   nearMissMargin: number;
-  versions: { number: number; publishedAt: string; checks: number; matches: number; wrongMatches: number }[];
+  versions: { number: number; publishedAt: string; checks: number; matches: number; falsePositives: number }[];
 }
 
 export function getRuleAnalytics(id: number): Promise<RuleAnalytics> {
@@ -342,7 +340,7 @@ export function getRuleAnalytics(id: number): Promise<RuleAnalytics> {
 }
 
 /** Why a rule needs attention, worst first. */
-export type AttentionKind = "wrong_matches" | "matches_often" | "weak_matches" | "never_matches";
+export type AttentionKind = "false_positives" | "matches_often" | "weak_matches" | "never_matches";
 
 export interface AttentionReason {
   kind: AttentionKind;
@@ -367,7 +365,7 @@ export function listAttention(): Promise<AttentionEntry[]> {
 
 /**
  * The user judged one of a rule's attention reasons fine, for the version
- * they were shown. Answers with the list as it now is. Wrong matches are refused: they go when the rule is fixed.
+ * they were shown. Answers with the list as it now is. False positives are refused: they go when the rule is fixed.
  */
 export function clearAttentionReason(
   ruleId: number,
@@ -380,48 +378,54 @@ export function clearAttentionReason(
   }).then((r) => r.rules);
 }
 
-/** The user marks a match wrong or right; it becomes a saved case for its rule. */
-export function flagMatch(matchId: number, verdict: Verdict): Promise<{ flag: Flag; recorded: boolean }> {
-  return call("POST", `/api/matches/${matchId}/flag`, { verdict });
+/** The user marks a match as a false positive: the rule fired where it did not apply. */
+export function markFalsePositive(matchId: number): Promise<{ mark: FalsePositiveMark; recorded: boolean }> {
+  return call("POST", `/api/matches/${matchId}/false-positive`, {});
 }
 
-/** A real message or reply kept with a rule, with the outcome it should have. */
-export interface SavedCase {
-  id: number;
+/** The user takes a match's false-positive mark away. */
+export function unmarkFalsePositive(matchId: number): Promise<{ unmarked: true }> {
+  return call("DELETE", `/api/matches/${matchId}/false-positive`);
+}
+
+/** A match of the rule marked as a false positive, with the text it fired on. */
+export interface FalsePositive extends FalsePositiveMark {
+  matchId: number;
   ruleId: number;
+  checkId: number;
   checkType: CheckType;
   text: string;
-  expected: "should_match" | "should_not_match";
-  createdAt: string;
-  source: { verdict: Verdict; raisedBy: RaisedBy; checkId: number; versionNumber: number | null } | null;
+  versionNumber: number | null;
 }
 
-export function listSavedCases(ruleId: number): Promise<SavedCase[]> {
-  return call<{ cases: SavedCase[] }>("GET", `/api/rules/${ruleId}/cases`).then((r) => r.cases);
+export function listFalsePositives(ruleId: number): Promise<FalsePositive[]> {
+  return call<{ falsePositives: FalsePositive[] }>("GET", `/api/rules/${ruleId}/false-positives`).then(
+    (r) => r.falsePositives,
+  );
 }
 
-/** How one saved case fares against the draft's conditions for its check type. */
-export interface CaseResult {
-  case: SavedCase;
-  /** The draft's conditions on for the case's check type, with their scores; empty when there are none. */
+/** How one false positive fares against the draft's conditions for its check type. */
+export interface FalsePositiveResult {
+  falsePositive: FalsePositive;
+  /** The draft's conditions on for its check type, with their scores; empty when there are none. */
   scores: { condition: string; score: number }[];
   /** The best of those scores; null when there are none. */
   best: number | null;
-  /** The cutoff of the case's check type. */
+  /** The cutoff of its check type. */
   cutoff: number;
-  /** The rule would match the case: a condition reaches the cutoff. */
+  /** The draft would still match it: a condition reaches the cutoff. */
   matched: boolean;
-  /** That is what the case expects. */
+  /** The draft no longer matches it. */
   passed: boolean;
 }
 
-/** The draft scored against the rule's saved cases. A failure never blocks publishing. */
+/** The draft scored against the rule's false positives. A failure never blocks publishing. */
 export type RescoreResult =
-  | { status: "scored"; cutoffs: Record<CheckType, number>; cases: CaseResult[]; passed: number; failed: number }
-  | { status: "no_cases"; cutoffs: Record<CheckType, number> }
-  | { status: "failed"; cutoffs: Record<CheckType, number>; error: string; caseCount: number };
+  | { status: "scored"; cutoffs: Record<CheckType, number>; results: FalsePositiveResult[]; passed: number; failed: number }
+  | { status: "no_false_positives"; cutoffs: Record<CheckType, number> }
+  | { status: "failed"; cutoffs: Record<CheckType, number>; error: string; count: number };
 
-/** Scores the draft's conditions against the rule's saved cases with Jev. Changes nothing. */
+/** Scores the draft's conditions against the rule's false positives with Jev. Changes nothing. */
 export function rescoreDraft(id: number): Promise<RescoreResult> {
   return call("POST", `/api/rules/${id}/rescore`, {});
 }

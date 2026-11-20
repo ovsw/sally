@@ -1,10 +1,10 @@
 import { type AnalyticsQueries, createAnalyticsQueries } from "./analytics.ts";
 import { type AttentionEntry, type AttentionKind, attentionList, CLEARABLE_KINDS } from "./attention.ts";
 import { RuleError, RuleNotFoundError } from "./errors.ts";
-import { createFlags, type Flags } from "./flags.ts";
+import { createFalsePositives, type FalsePositives } from "./false-positives.ts";
 import { conditionFits, estimateTokens, REQUEST_TOKEN_LIMIT, REQUEST_WARNING_SHARE } from "./limits.ts";
 import type { Matcher } from "./matcher.ts";
-import { rescoreCases, type RescoreResult } from "./rescore.ts";
+import { rescoreFalsePositives, type RescoreResult } from "./rescore.ts";
 import { type Store, transaction } from "./store.ts";
 import { runTrial, type TrialResult } from "./trial.ts";
 import { maskEmails } from "./text.ts";
@@ -318,8 +318,8 @@ export interface LargestCheck {
 /** How much of the text checked the largest check shows. */
 const EXCERPT_LENGTH = 280;
 
-/** The rules service also answers the analytics queries (see analytics.ts) and keeps flags and saved cases (see flags.ts). */
-export interface RulesService extends AnalyticsQueries, Flags {
+/** The rules service also answers the analytics queries (see analytics.ts) and keeps false positives (see false-positives.ts). */
+export interface RulesService extends AnalyticsQueries, FalsePositives {
   /** Creates a rule whose only version is a draft. It is not live until published. */
   createRule(rule: NewRule): { ruleId: number };
   /**
@@ -336,11 +336,10 @@ export interface RulesService extends AnalyticsQueries, Flags {
    */
   publish(ruleId: number): { versionNumber: number };
   /**
-   * Scores each of the rule's saved cases with the matcher against the draft's
-   * conditions on for the case's check type, and says which cases pass at that
-   * check type's cutoff, so the user can see
-   * before publishing whether the draft fixes the wrong matches without
-   * losing the right ones. Changes nothing and records nothing. A matcher
+   * Scores each of the rule's false positives with the matcher against the
+   * draft's conditions on for its check type, and says which the draft no
+   * longer matches at that check type's cutoff, so the user can see before
+   * publishing whether the draft fixes them. Changes nothing and records nothing. A matcher
    * failure is answered as a failed result, never thrown. Refuses a rule with
    * no draft, or a draft that could not be published.
    */
@@ -401,7 +400,7 @@ export interface RulesService extends AnalyticsQueries, Flags {
   /**
    * The user looked at one attention reason of a rule and judged it fine: the
    * reason leaves the list for the rule's live version, and can come back once
-   * a new version is published. Refuses wrong matches (those are cleared by
+   * a new version is published. Refuses false positives (those are cleared by
    * fixing the rule), an unknown reason, and a reason the rule is not listed for.
    */
   clearAttentionReason(ruleId: number, kind: AttentionKind, versionNumber?: number): void;
@@ -480,7 +479,7 @@ interface VersionRow {
 }
 
 export interface RulesServiceOptions {
-  /** Scores drafts against saved cases. Undefined without an API key; the hooks never need it. */
+  /** Scores drafts against false positives. Undefined without an API key; the hooks never need it. */
   matcher?: Matcher;
 }
 
@@ -848,11 +847,11 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
     return result;
   }
 
-  const flags = createFlags(db, requireRule);
+  const falsePositives = createFalsePositives(db, requireRule);
 
   return {
     ...createAnalyticsQueries(db, requireRule),
-    ...flags,
+    ...falsePositives,
 
     createRule(rule) {
       const name = cleanName(rule.name);
@@ -999,12 +998,12 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
       // The same refusals as publish, so a draft that scores can be published.
       requireComplete({ instruction: row.instruction, conditions });
       requireFreeName(row.name, ruleId);
-      // Each case is scored against the draft's conditions for its own check type.
+      // Each false positive is scored against the draft's conditions for its own check type.
       const settings = readSettings();
-      return rescoreCases({
+      return rescoreFalsePositives({
         matcher: options.matcher,
         conditions,
-        cases: flags.savedCases(ruleId),
+        falsePositives: falsePositives.falsePositives(ruleId),
         cutoffs: { message: cutoffFor("message", settings), reply: cutoffFor("reply", settings) },
       });
     },
@@ -1193,8 +1192,8 @@ export function createRulesService(db: Store, options: RulesServiceOptions = {})
 
     clearAttentionReason(ruleId, kind, versionNumber) {
       requireRule(ruleId);
-      if (kind === "wrong_matches") {
-        throw new RuleError("Wrong matches cannot be cleared this way: fix the rule and publish a new version.");
+      if (kind === "false_positives") {
+        throw new RuleError("False positives cannot be cleared this way: fix the rule and publish a new version.");
       }
       if (!CLEARABLE_KINDS.includes(kind)) throw new RuleError("No such attention reason.");
       const version = live(ruleId);

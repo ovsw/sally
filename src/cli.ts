@@ -34,10 +34,11 @@ async function main(args: string[]): Promise<number> {
     if (group === "sally-uninstall") return runUninstall(args.slice(1), io);
     return runInstall(args.slice(1), { ...io, isTerminal: process.stdin.isTTY === true });
   }
-  if (group === "wrong-match") {
+  // "wrong-match" is the command's old name, still printed in sessions started before the rename.
+  if (group === "false-positive" || group === "wrong-match") {
     // Loaded only here, so the hooks never pay for it.
-    const { runWrongMatch } = await import("./wrong-match.ts");
-    const result = runWrongMatch(args.slice(1), process.env);
+    const { runFalsePositive } = await import("./false-positive-command.ts");
+    const result = runFalsePositive(args.slice(1), process.env);
     process.stdout.write(result.stdout);
     process.stderr.write(result.stderr);
     return result.code;
@@ -90,7 +91,7 @@ async function main(args: string[]): Promise<number> {
       "       node src/cli.ts sally-uninstall",
       "       node src/cli.ts app [--port N]",
       "       node src/cli.ts settings stop-on-failure [on|off]",
-      '       node src/cli.ts wrong-match "<rule name>"',
+      '       node src/cli.ts false-positive "<rule name>"',
       "       node src/cli.ts rules list|show|create|edit",
       "       node src/cli.ts import start|add|show|list|backup|removed",
       "       node src/cli.ts evaluate FILE [--scale]",

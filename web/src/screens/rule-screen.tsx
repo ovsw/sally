@@ -564,8 +564,8 @@ export function RuleScreen({ id }: { id: number }) {
   const [projectsError, setProjectsError] = React.useState<string | null>(null);
   const [projectsAttempt, setProjectsAttempt] = React.useState(0);
   const [action, setAction] = React.useState<string | null>(null);
-  /** The draft's re-score against the saved cases, shown before publishing. */
-  const [rescore, setRescore] = React.useState<Exclude<RescoreResult, { status: "no_cases" }> | null>(
+  /** The draft's re-score against the false positives, shown before publishing. */
+  const [rescore, setRescore] = React.useState<Exclude<RescoreResult, { status: "no_false_positives" }> | null>(
     null,
   );
   const [actionError, setActionError] = React.useState<string | null>(null);
@@ -766,7 +766,7 @@ export function RuleScreen({ id }: { id: number }) {
   };
 
   /**
-   * Publishing first scores the draft against the rule's saved cases and
+   * Publishing first scores the draft against the rule's false positives and
    * shows the result; a rule with none publishes straight away.
    */
   const doPublish = () =>
@@ -775,7 +775,7 @@ export function RuleScreen({ id }: { id: number }) {
       if (!(await flush())) return;
       const at = edits.current;
       const result = await rescoreDraft(id);
-      if (result.status === "no_cases") return publishNow();
+      if (result.status === "no_false_positives") return publishNow();
       scoredAt.current = at;
       setRescore(result);
     });

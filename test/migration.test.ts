@@ -73,26 +73,25 @@ const schema = (box: Sandbox) =>
     .map((row) => [row.name, row.sql]);
 
 describe("an old database", () => {
-  it("keeps its matches, flags and saved cases under the new words", async () => {
+  it("keeps its matches, and its wrong-match flags as false positives", async () => {
     writeOldDatabase();
 
     const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(1));
     expect(analytics.matches).toBe(3);
-    expect(analytics.recentMatches.map((m) => [m.text, m.flag?.verdict, m.flag?.raisedBy]).reverse()).toEqual([
-      ["first message", "wrong", "claude"],
-      ["second message", "right", "user"],
-      ["third message", "wrong", "claude"],
+    expect(analytics.recentMatches.map((m) => [m.text, m.falsePositive?.markedBy ?? null]).reverse()).toEqual([
+      ["first message", "claude"],
+      ["second message", null],
+      ["third message", "claude"],
     ]);
 
-    const cases = sandbox.withRules((rules) => rules.savedCases(1));
-    expect(cases.map((c) => [c.text, c.expected, c.source?.verdict]).reverse()).toEqual([
-      ["first message", "should_not_match", "wrong"],
-      ["second message", "should_match", "right"],
-      ["third message", "should_not_match", "wrong"],
+    const falsePositives = sandbox.withRules((rules) => rules.falsePositives(1));
+    expect(falsePositives.map((f) => [f.text, f.markedBy]).reverse()).toEqual([
+      ["first message", "claude"],
+      ["third message", "claude"],
     ]);
   });
 
-  it("goes on working: a new match is recorded and can be flagged right", async () => {
+  it("goes on working: a new match is recorded and can be marked as a false positive", async () => {
     writeOldDatabase();
 
     await runMessageHook(hookInput("fourth message"), {
@@ -100,22 +99,20 @@ describe("an old database", () => {
       matcher: standInMatcher({ "Condition A.": 0.9 }),
     });
     const [latest] = sandbox.withRules((rules) => rules.ruleAnalytics(1)).recentMatches;
-    expect(latest).toMatchObject({ text: "fourth message", flag: null });
+    expect(latest).toMatchObject({ text: "fourth message", falsePositive: null });
 
-    sandbox.withRules((rules) => rules.flagMatch(latest!.matchId, "right", "user"));
-    const cases = sandbox.withRules((rules) => rules.savedCases(1));
-    expect(cases).toHaveLength(4);
-    expect(cases[0]).toMatchObject({ text: "fourth message", expected: "should_match" });
+    sandbox.withRules((rules) => rules.markFalsePositive(latest!.matchId, "user"));
+    const falsePositives = sandbox.withRules((rules) => rules.falsePositives(1));
+    expect(falsePositives).toHaveLength(3);
+    expect(falsePositives[0]).toMatchObject({ text: "fourth message", markedBy: "user" });
 
-    // The user's flag replaces Claude's, and takes the old saved case with it.
+    // The user can take away a mark Claude made before the upgrade.
     const [, , , first] = sandbox.withRules((rules) => rules.ruleAnalytics(1)).recentMatches;
-    sandbox.withRules((rules) => rules.flagMatch(first!.matchId, "right", "user"));
-    expect(
-      sandbox
-        .withRules((rules) => rules.savedCases(1))
-        .filter((c) => c.text === "first message")
-        .map((c) => c.expected),
-    ).toEqual(["should_match"]);
+    sandbox.withRules((rules) => rules.unmarkFalsePositive(first!.matchId));
+    expect(sandbox.withRules((rules) => rules.falsePositives(1)).map((f) => f.text)).toEqual([
+      "fourth message",
+      "third message",
+    ]);
   });
 
   it("stops the turn on a failed check from then on, and keeps the settings it had", async () => {
@@ -136,7 +133,7 @@ describe("an old database", () => {
       { key: "stop_on_failure", value: 1 },
       { key: "time_limit_ms", value: 4000 },
     ]);
-    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 17 }]);
+    expect(sandbox.query("PRAGMA user_version")).toEqual([{ user_version: 18 }]);
   });
 
   it("can have an attention reason cleared", () => {
@@ -146,7 +143,7 @@ describe("an old database", () => {
     sandbox.withRules((rules) => rules.clearAttentionReason(1, "matches_often"));
 
     expect(sandbox.withRules((rules) => rules.attention()).flatMap((e) => e.reasons.map((r) => r.kind))).toEqual([
-      "wrong_matches",
+      "false_positives",
     ]);
     expect(sandbox.query("SELECT version_id, kind FROM cleared_reasons")).toEqual([
       { version_id: 1, kind: "matches_often" },
@@ -392,23 +389,23 @@ describe("a database from before conditions had switches", () => {
     ]);
   });
 
-  it("keeps its scores, matches, flags and saved cases pointing at the right rule and condition", () => {
+  it("keeps its scores, matches and false positives pointing at the right rule and condition", () => {
     writeBeforeSwitchesDatabase();
 
     const analytics = sandbox.withRules((rules) => rules.ruleAnalytics(1));
-    expect(analytics.recentMatches.map((m) => [m.text, m.versionNumber, m.condition, m.flag?.verdict ?? null])).toEqual([
+    expect(analytics.recentMatches.map((m) => [m.text, m.versionNumber, m.condition, m.falsePositive?.markedBy ?? null])).toEqual([
       ["second message", 2, "Asks for X.", null],
-      ["first message", 1, "Asks for X.", "wrong"],
+      ["first message", 1, "Asks for X.", "user"],
     ]);
     expect(analytics.versions).toMatchObject([
-      { number: 2, checks: 1, matches: 1, wrongMatches: 0 },
-      { number: 1, checks: 1, matches: 1, wrongMatches: 1 },
+      { number: 2, checks: 1, matches: 1, falsePositives: 0 },
+      { number: 1, checks: 1, matches: 1, falsePositives: 1 },
     ]);
     expect(sandbox.withRules((rules) => rules.ruleAnalytics(2)).recentMatches).toMatchObject([
       { text: "a long reply", condition: "The reply is long." },
     ]);
-    expect(sandbox.withRules((rules) => rules.savedCases(1))).toMatchObject([
-      { text: "first message", expected: "should_not_match", source: { verdict: "wrong", checkId: 1 } },
+    expect(sandbox.withRules((rules) => rules.falsePositives(1))).toMatchObject([
+      { text: "first message", markedBy: "user", checkId: 1 },
     ]);
 
     const asks = sandbox.withRules((rules) => rules.getRule(1).versions[1]!.conditions[0]!.id);

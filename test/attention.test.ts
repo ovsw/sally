@@ -1,8 +1,6 @@
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runMessageHook } from "../src/message-hook.ts";
-import { databasePath } from "../src/paths.ts";
 import { runReplyHook } from "../src/reply-hook.ts";
 import type { AttentionKind } from "../src/attention.ts";
 import { conditionsFor, RuleError, RuleNotFoundError, type Settings } from "../src/rules.ts";
@@ -38,29 +36,8 @@ const reply = (scores: Record<string, number>) =>
 const thresholds = (changes: Partial<Settings>) => sandbox.withRules((rules) => rules.updateSettings(changes));
 const attention = () => sandbox.withRules((rules) => rules.attention());
 
-/**
- * Flags a match as the flags feature records it. Until that feature has
- * landed the table may not exist yet, so it is created here when missing.
- */
-function flag(matchId: number, verdict: "wrong" | "right"): void {
-  const db = new DatabaseSync(databasePath(sandbox.env));
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS flags (
-      id          INTEGER PRIMARY KEY,
-      match_id    INTEGER NOT NULL UNIQUE REFERENCES matches (id) ON DELETE CASCADE,
-      verdict     TEXT NOT NULL CHECK (verdict IN ('wrong', 'right')),
-      raised_by   TEXT NOT NULL CHECK (raised_by IN ('claude', 'user')),
-      created_at  TEXT NOT NULL
-    )`);
-    db.prepare("INSERT INTO flags (match_id, verdict, raised_by, created_at) VALUES (?, ?, 'user', ?)").run(
-      matchId,
-      verdict,
-      new Date().toISOString(),
-    );
-  } finally {
-    db.close();
-  }
-}
+/** Marks a match as a false positive, as the user does in the app. */
+const markFalsePositive = (matchId: number) => sandbox.withRules((rules) => rules.markFalsePositive(matchId, "user"));
 
 const matchesOf = (ruleId: number) =>
   sandbox.query<{ id: number }>("SELECT id FROM matches WHERE rule_id = ? ORDER BY id", ruleId).map((row) => row.id);
@@ -259,48 +236,48 @@ describe("needs attention", () => {
     expect(attention()).toEqual([]);
   });
 
-  it("lists a rule whose live version has matches flagged as wrong matches", async () => {
+  it("lists a rule whose live version has matches marked as false positives", async () => {
     thresholds({ busyShare: 1 });
-    const wrong = sandbox.liveRule({ name: "Wrong matches", conditions: ["Condition A."] });
-    const right = sandbox.liveRule({ name: "Fine", conditions: ["Condition B."] });
+    const marked = sandbox.liveRule({ name: "False positives", conditions: ["Condition A."] });
+    // A rule that matched with no false positive is not listed.
+    sandbox.liveRule({ name: "Fine", conditions: ["Condition B."] });
     await message({ "Condition A.": 0.9, "Condition B.": 0.9 });
     await message({ "Condition A.": 0.9 });
     await message({});
-    const [first, second] = matchesOf(wrong);
-    flag(first!, "wrong");
-    flag(second!, "wrong");
-    flag(matchesOf(right)[0]!, "right");
+    const [first, second] = matchesOf(marked);
+    markFalsePositive(first!);
+    markFalsePositive(second!);
 
     expect(attention()).toEqual([
       {
-        ruleId: wrong,
-        name: "Wrong matches",
+        ruleId: marked,
+        name: "False positives",
         checkTypes: ["message"],
         versionNumber: 1,
-        reasons: [{ kind: "wrong_matches", flags: 2, summary: "2 matches of version 1 flagged as a wrong match." }],
+        reasons: [{ kind: "false_positives", falsePositives: 2, summary: "2 false positives on version 1." }],
       },
     ]);
 
-    // A new version has no wrong matches yet.
+    // A new version has no false positives yet.
     sandbox.withRules((rules) => {
-      rules.saveDraft(wrong, { instruction: "Do it.", conditions: conditionsFor("message", ["Sharper condition."]) });
-      rules.publish(wrong);
+      rules.saveDraft(marked, { instruction: "Do it.", conditions: conditionsFor("message", ["Sharper condition."]) });
+      rules.publish(marked);
     });
     expect(attention()).toEqual([]);
   });
 
   it("lists every reason for a rule, and the worst cases first", async () => {
     thresholds({ recentChecks: 2, busyShare: 0.5, quietChecks: 2 });
-    const flaggedWrong = sandbox.liveRule({ name: "Wrong matches", conditions: ["Condition A."] });
+    const withFalsePositive = sandbox.liveRule({ name: "False positives", conditions: ["Condition A."] });
     const quiet = sandbox.liveRule({ name: "A quiet rule", conditions: ["Condition B."] });
     const weak = sandbox.liveRule({ name: "B weak and eager", conditions: ["Condition C."] });
     await message({ "Condition A.": 0.9, "Condition C.": 0.61 });
     await message({ "Condition C.": 0.9 });
-    flag(matchesOf(flaggedWrong)[0]!, "wrong");
+    markFalsePositive(matchesOf(withFalsePositive)[0]!);
 
     const entries = attention();
     expect(entries.map((entry) => [entry.ruleId, entry.reasons.map((reason) => reason.kind)])).toEqual([
-      [flaggedWrong, ["wrong_matches", "matches_often"]],
+      [withFalsePositive, ["false_positives", "matches_often"]],
       [weak, ["matches_often", "weak_matches"]],
       [quiet, ["never_matches"]],
     ]);
@@ -383,15 +360,15 @@ describe("needs attention", () => {
       expect(attention()).toMatchObject([{ ruleId: quiet, versionNumber: 2, reasons: [{ kind: "never_matches" }] }]);
     });
 
-    it("refuses wrong matches, which stay listed", async () => {
+    it("refuses false positives, which stay listed", async () => {
       thresholds({ busyShare: 1 });
-      const wrong = sandbox.liveRule({ name: "Wrong matches", conditions: ["Condition A."] });
+      const marked = sandbox.liveRule({ name: "False positives", conditions: ["Condition A."] });
       await message({ "Condition A.": 0.9 });
       await message({});
-      flag(matchesOf(wrong)[0]!, "wrong");
+      markFalsePositive(matchesOf(marked)[0]!);
 
-      expect(() => clear(wrong, "wrong_matches")).toThrow(RuleError);
-      expect(kindsOf(wrong)).toEqual(["wrong_matches"]);
+      expect(() => clear(marked, "false_positives")).toThrow(RuleError);
+      expect(kindsOf(marked)).toEqual(["false_positives"]);
     });
 
     it("refuses an unknown rule, an unknown reason and a reason the rule is not listed for", async () => {

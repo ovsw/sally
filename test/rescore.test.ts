@@ -56,18 +56,18 @@ const byText = (scores: Record<string, Record<string, number>>) =>
   });
 
 /**
- * A live message rule whose old condition matched on two messages, one flagged
- * a wrong match and one a right match, and a draft with new conditions.
+ * A live message rule whose old condition matched on two messages, both
+ * marked as false positives, and a draft with new conditions.
  */
-async function ruleWithCases(running: RunningApp, draftConditions: string[]): Promise<number> {
+async function ruleWithFalsePositives(running: RunningApp, draftConditions: string[]): Promise<number> {
   const ruleId = sandbox.liveRule({ name: "Local link", conditions: ["Old condition."] });
   const old = standInMatcher({ "Old condition.": 0.8 });
   await message("talks about links in general", old);
   await message("please fix the button colour", old);
   const { recentMatches } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
   const matchOn = (text: string) => recentMatches.find((f) => f.text === text)!.matchId;
-  await running.json("POST", `/api/matches/${matchOn("talks about links in general")}/flag`, { verdict: "wrong" });
-  await running.json("POST", `/api/matches/${matchOn("please fix the button colour")}/flag`, { verdict: "right" });
+  await running.json("POST", `/api/matches/${matchOn("talks about links in general")}/false-positive`, {});
+  await running.json("POST", `/api/matches/${matchOn("please fix the button colour")}/false-positive`, {});
   await running.json("PUT", `/api/rules/${ruleId}/draft`, {
     instruction: "Give a local link.",
     conditions: conditionsFor("message", draftConditions),
@@ -80,14 +80,14 @@ const rescore = (running: RunningApp, ruleId: number) =>
 
 const checkCount = () => sandbox.query<{ n: number }>("SELECT COUNT(*) AS n FROM checks")[0]!.n;
 
-describe("re-scoring a draft against its saved cases before publishing", () => {
-  it("scores the draft's conditions against each case and shows which pass", async () => {
+describe("re-scoring a draft against its false positives before publishing", () => {
+  it("scores the draft's conditions against each false positive and shows which it no longer matches", async () => {
     const jev = byText({
       "talks about links in general": { "Asks for a visual change.": 0.2, "Mentions a page.": 0.3 },
-      "please fix the button colour": { "Asks for a visual change.": 0.9, "Mentions a page.": 0.1 },
+      "please fix the button colour": { "Asks for a visual change.": 0.5, "Mentions a page.": 0.1 },
     });
     const running = await appWith(jev);
-    const ruleId = await ruleWithCases(running, ["Asks for a visual change.", "Mentions a page."]);
+    const ruleId = await ruleWithFalsePositives(running, ["Asks for a visual change.", "Mentions a page."]);
 
     const result = await rescore(running, ruleId);
 
@@ -96,9 +96,9 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
       cutoffs: { message: 0.6, reply: 0.6 },
       passed: 2,
       failed: 0,
-      cases: expect.arrayContaining([
+      results: expect.arrayContaining([
         {
-          case: expect.objectContaining({ text: "talks about links in general", expected: "should_not_match" }),
+          falsePositive: expect.objectContaining({ text: "talks about links in general", markedBy: "user" }),
           scores: [
             { condition: "Asks for a visual change.", score: 0.2 },
             { condition: "Mentions a page.", score: 0.3 },
@@ -109,58 +109,58 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
           passed: true,
         },
         {
-          case: expect.objectContaining({ text: "please fix the button colour", expected: "should_match" }),
+          falsePositive: expect.objectContaining({ text: "please fix the button colour", markedBy: "user" }),
           scores: [
-            { condition: "Asks for a visual change.", score: 0.9 },
+            { condition: "Asks for a visual change.", score: 0.5 },
             { condition: "Mentions a page.", score: 0.1 },
           ],
-          best: 0.9,
+          best: 0.5,
           cutoff: 0.6,
-          matched: true,
+          matched: false,
           passed: true,
         },
       ]),
     });
-    // One request per case, carrying only the draft's conditions, never the instruction or the old condition.
+    // One request per false positive, carrying only the draft's conditions, never the instruction or the old condition.
     expect(jev.calls.map((c) => c.text).sort()).toEqual(["please fix the button colour", "talks about links in general"]);
     for (const call of jev.calls) {
       expect(call.conditions.map((c) => c.text)).toEqual(["Asks for a visual change.", "Mentions a page."]);
     }
   });
 
-  it("fails a case the draft would still match wrongly, and one it no longer matches", async () => {
+  it("fails a false positive the draft would still match, and passes one it no longer matches", async () => {
     const running = await appWith(
       byText({
         "talks about links in general": { "Mentions links.": 0.7 },
         "please fix the button colour": { "Mentions links.": 0.59 },
       }),
     );
-    const ruleId = await ruleWithCases(running, ["Mentions links."]);
+    const ruleId = await ruleWithFalsePositives(running, ["Mentions links."]);
 
     const result = await rescore(running, ruleId);
 
     expect(result.status).toBe("scored");
     if (result.status !== "scored") return;
-    expect(result).toMatchObject({ passed: 0, failed: 2 });
-    expect(result.cases.map((c) => [c.case.text, c.matched, c.passed]).sort()).toEqual([
-      ["please fix the button colour", false, false],
+    expect(result).toMatchObject({ passed: 1, failed: 1 });
+    expect(result.results.map((r) => [r.falsePositive.text, r.matched, r.passed]).sort()).toEqual([
+      ["please fix the button colour", false, true],
       ["talks about links in general", true, false],
     ]);
   });
 
   it("judges at the cutoff in force", async () => {
     const running = await appWith(byText({ "please fix the button colour": { "Mentions links.": 0.5 } }));
-    const ruleId = await ruleWithCases(running, ["Mentions links."]);
+    const ruleId = await ruleWithFalsePositives(running, ["Mentions links."]);
     sandbox.withRules((rules) => rules.updateSettings({ cutoff: 0.5 }));
 
     const result = await rescore(running, ruleId);
 
-    expect(result).toMatchObject({ status: "scored", cutoffs: { message: 0.5 }, passed: 2, failed: 0 });
+    expect(result).toMatchObject({ status: "scored", cutoffs: { message: 0.5 }, passed: 1, failed: 1 });
   });
 
   it("changes nothing and records no check, and the user can still publish or go back to the draft", async () => {
     const running = await appWith(byText({}));
-    const ruleId = await ruleWithCases(running, ["Mentions links."]);
+    const ruleId = await ruleWithFalsePositives(running, ["Mentions links."]);
     const before = checkCount();
 
     await rescore(running, ruleId);
@@ -180,7 +180,7 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
     const ruleId = sandbox.liveRule({ name: "Link on handover", checkType: "reply", conditions: ["Old condition."] });
     await reply("Done, the page is updated.", standInMatcher({ "Old condition.": 0.8 }));
     const { recentMatches } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
-    await running.json("POST", `/api/matches/${recentMatches[0]!.matchId}/flag`, { verdict: "right" });
+    await running.json("POST", `/api/matches/${recentMatches[0]!.matchId}/false-positive`, {});
     await running.json("PUT", `/api/rules/${ruleId}/draft`, {
       instruction: "Give a local link.",
       conditions: conditionsFor("reply", ["Reports a visual change with no link."]),
@@ -190,17 +190,17 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
 
     expect(result).toMatchObject({
       status: "scored",
-      passed: 1,
-      cases: [{ case: { checkType: "reply", expected: "should_match" }, matched: true, passed: true }],
+      failed: 1,
+      results: [{ falsePositive: { checkType: "reply", text: "Done, the page is updated." }, matched: true, passed: false }],
     });
   });
 
-  it("judges a reply case at the reply cutoff", async () => {
+  it("judges a reply at the reply cutoff", async () => {
     const running = await appWith(byText({ "Done, the page is updated.": { "Reports a visual change with no link.": 0.7 } }));
     const ruleId = sandbox.liveRule({ name: "Link on handover", checkType: "reply", conditions: ["Old condition."] });
     await reply("Done, the page is updated.", standInMatcher({ "Old condition.": 0.8 }));
     const { recentMatches } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
-    await running.json("POST", `/api/matches/${recentMatches[0]!.matchId}/flag`, { verdict: "right" });
+    await running.json("POST", `/api/matches/${recentMatches[0]!.matchId}/false-positive`, {});
     await running.json("PUT", `/api/rules/${ruleId}/draft`, {
       instruction: "Give a local link.",
       conditions: conditionsFor("reply", ["Reports a visual change with no link."]),
@@ -212,8 +212,8 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
     expect(result).toMatchObject({
       status: "scored",
       cutoffs: { message: 0.5, reply: 0.8 },
-      passed: 0,
-      cases: [{ best: 0.7, cutoff: 0.8, matched: false, passed: false }],
+      passed: 1,
+      results: [{ best: 0.7, cutoff: 0.8, matched: false, passed: true }],
     });
   });
 
@@ -223,7 +223,7 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
     const ruleId = sandbox.liveRule({ name: "Rule", conditions: ["Old condition."] });
     await message("write to someone@example.com about it", standInMatcher({ "Old condition.": 0.8 }));
     const { recentMatches } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
-    await running.json("POST", `/api/matches/${recentMatches[0]!.matchId}/flag`, { verdict: "wrong" });
+    await running.json("POST", `/api/matches/${recentMatches[0]!.matchId}/false-positive`, {});
     await running.json("PUT", `/api/rules/${ruleId}/draft`, {
       instruction: "Do it.",
       conditions: conditionsFor("message", ["Mentions other@example.com."]),
@@ -240,8 +240,7 @@ describe("re-scoring a draft against its saved cases before publishing", () => {
 describe("re-scoring a rule that is in both checks", () => {
   /**
    * A live rule with one Message and one Reply condition, which matched on a
-   * message and on a reply, both flagged right, so it keeps one saved message
-   * and one saved reply.
+   * message and on a reply, both marked as false positives.
    */
   async function ruleInBothChecks(running: RunningApp): Promise<number> {
     const ruleId = sandbox.liveRule({
@@ -257,12 +256,12 @@ describe("re-scoring a rule that is in both checks", () => {
     const { recentMatches } = await running.json<RuleAnalytics>("GET", `/api/rules/${ruleId}/analytics`);
     expect(recentMatches).toHaveLength(2);
     for (const match of recentMatches) {
-      await running.json("POST", `/api/matches/${match.matchId}/flag`, { verdict: "right" });
+      await running.json("POST", `/api/matches/${match.matchId}/false-positive`, {});
     }
     return ruleId;
   }
 
-  it("scores each saved case only against the draft's conditions for its check type, at that check's cutoff", async () => {
+  it("scores each false positive only against the draft's conditions for its check type, at that check's cutoff", async () => {
     const jev = byText({
       "please fix the button colour": { "Asks for a visual change.": 0.7, "Reports a visual change.": 0.99 },
       "Done, the page is updated.": { "Asks for a visual change.": 0.99, "Reports a visual change.": 0.7 },
@@ -282,22 +281,22 @@ describe("re-scoring a rule that is in both checks", () => {
 
     expect(result).toMatchObject({ status: "scored", cutoffs: { message: 0.6, reply: 0.8 }, passed: 1, failed: 1 });
     if (result.status !== "scored") return;
-    const byCheck = Object.fromEntries(result.cases.map((c) => [c.case.checkType, c]));
+    const byCheck = Object.fromEntries(result.results.map((r) => [r.falsePositive.checkType, r]));
     expect(byCheck.message).toMatchObject({
       scores: [{ condition: "Asks for a visual change.", score: 0.7 }],
       best: 0.7,
       cutoff: 0.6,
       matched: true,
-      passed: true,
+      passed: false,
     });
     expect(byCheck.reply).toMatchObject({
       scores: [{ condition: "Reports a visual change.", score: 0.7 }],
       best: 0.7,
       cutoff: 0.8,
       matched: false,
-      passed: false,
+      passed: true,
     });
-    // Each request carries only the conditions for that case's check type.
+    // Each request carries only the conditions for that false positive's check type.
     expect(Object.fromEntries(jev.calls.map((c) => [c.text, c.conditions.map((x) => x.text)]))).toEqual({
       "please fix the button colour": ["Asks for a visual change."],
       "Done, the page is updated.": ["Reports a visual change."],
@@ -325,10 +324,10 @@ describe("re-scoring a rule that is in both checks", () => {
       "please fix the button colour": ["Old message condition.", "Talks about a page."],
       "Done, the page is updated.": ["Talks about a page."],
     });
-    expect(result).toMatchObject({ status: "scored", passed: 2, failed: 0 });
+    expect(result).toMatchObject({ status: "scored", passed: 0, failed: 2 });
   });
 
-  it("does not match a case whose check type no draft condition is on for, and asks Jev nothing for it", async () => {
+  it("does not match a false positive whose check type no draft condition is on for, and asks Jev nothing for it", async () => {
     const jev = byText({ "please fix the button colour": { "Asks for a visual change.": 0.9 } });
     const running = await appWith(jev);
     const ruleId = await ruleInBothChecks(running);
@@ -342,24 +341,24 @@ describe("re-scoring a rule that is in both checks", () => {
     expect(jev.calls.map((c) => c.text)).toEqual(["please fix the button colour"]);
     if (result.status !== "scored") throw new Error(`expected scored, got ${result.status}`);
     expect(result).toMatchObject({ passed: 1, failed: 1 });
-    expect(result.cases.find((c) => c.case.checkType === "reply")).toMatchObject({
+    expect(result.results.find((r) => r.falsePositive.checkType === "reply")).toMatchObject({
       scores: [],
       best: null,
       cutoff: 0.6,
       matched: false,
-      passed: false,
+      passed: true,
     });
   });
 });
 
-describe("a rule with no saved cases", () => {
+describe("a rule with no false positives", () => {
   it("asks Jev nothing and publishes as before", async () => {
     const jev = byText({});
     const running = await appWith(jev);
     const ruleId = sandbox.liveRule({ name: "Rule" });
     await running.json("PUT", `/api/rules/${ruleId}/draft`, { instruction: "Do it.", conditions: conditionsFor("message", ["New."]) });
 
-    expect(await rescore(running, ruleId)).toEqual({ status: "no_cases", cutoffs: { message: 0.6, reply: 0.6 } });
+    expect(await rescore(running, ruleId)).toEqual({ status: "no_false_positives", cutoffs: { message: 0.6, reply: 0.6 } });
     expect(jev.calls).toEqual([]);
     expect(await running.json("POST", `/api/rules/${ruleId}/publish`, {})).toMatchObject({ versionNumber: 2 });
   });
@@ -374,20 +373,20 @@ describe("a Jev failure during re-scoring", () => {
         },
       }),
     );
-    const ruleId = await ruleWithCases(running, ["Mentions links."]);
+    const ruleId = await ruleWithFalsePositives(running, ["Mentions links."]);
 
     expect(await rescore(running, ruleId)).toEqual({
       status: "failed",
       cutoffs: { message: 0.6, reply: 0.6 },
       error: "Jev returned HTTP 503",
-      caseCount: 2,
+      count: 2,
     });
     expect(await running.json("POST", `/api/rules/${ruleId}/publish`, {})).toMatchObject({ versionNumber: 2 });
   });
 
   it("covers a missing API key and a malformed answer", async () => {
     const noKey = await appWith(undefined);
-    const ruleId = await ruleWithCases(noKey, ["Mentions links."]);
+    const ruleId = await ruleWithFalsePositives(noKey, ["Mentions links."]);
     expect(await rescore(noKey, ruleId)).toMatchObject({ status: "failed", error: "missing API key" });
     await noKey.close();
 

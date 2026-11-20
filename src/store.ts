@@ -406,6 +406,20 @@ const migrations: string[] = [
   );
   CREATE INDEX switch_changes_by_rule ON switch_changes (rule_id);
   `,
+  `
+  -- Only false positives are kept: matches of a rule that did not apply,
+  -- marked by Claude or the user. Right matches go, and so do the saved copies
+  -- of flagged texts: a false positive's text is its check's.
+  CREATE TABLE false_positives (
+    match_id    INTEGER PRIMARY KEY REFERENCES matches (id) ON DELETE CASCADE,
+    marked_by   TEXT NOT NULL CHECK (marked_by IN ('claude', 'user')),
+    created_at  TEXT NOT NULL
+  );
+  INSERT INTO false_positives (match_id, marked_by, created_at)
+    SELECT match_id, raised_by, created_at FROM flags WHERE verdict = 'wrong';
+  DROP TABLE saved_cases;
+  DROP TABLE flags;
+  `,
 ];
 
 /**

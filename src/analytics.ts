@@ -1,5 +1,5 @@
 import type { Outcome } from "./engine.ts";
-import type { FlagView } from "./flags.ts";
+import type { FalsePositiveMark } from "./false-positives.ts";
 import type { CheckType } from "./rules.ts";
 import type { Store } from "./store.ts";
 
@@ -74,8 +74,8 @@ export interface RuleCheckView {
 
 export interface RuleMatchView extends RuleCheckView {
   matchId: number;
-  /** The match's flag, wrong or right, and who raised it; null when unflagged. */
-  flag: FlagView | null;
+  /** Who marked the match as a false positive, and when; null when it is not marked. */
+  falsePositive: FalsePositiveMark | null;
 }
 
 /** One published version's own performance. */
@@ -86,8 +86,8 @@ export interface VersionPerformance {
   checks: number;
   /** Times this version matched and was attached or sent back. */
   matches: number;
-  /** This version's matches flagged as wrong matches. */
-  wrongMatches: number;
+  /** This version's matches marked as false positives. */
+  falsePositives: number;
 }
 
 /** How a rule has behaved, across all its versions. */
@@ -96,8 +96,8 @@ export interface RuleAnalytics {
   checks: number;
   /** Times the rule matched and was attached or sent back. */
   matches: number;
-  /** Matches flagged as wrong matches. */
-  wrongMatches: number;
+  /** Matches marked as false positives. */
+  falsePositives: number;
   /** The most recent matches, newest first. */
   recentMatches: RuleMatchView[];
   /** The most recent checks where the rule's best score sat just under the cutoff, newest first. */
@@ -111,7 +111,7 @@ export interface RuleAnalytics {
 export interface AnalyticsQueries {
   /** The most recent checks, newest first, with what each attached or sent back. */
   activity(filter?: ActivityFilter): ActivityCheck[];
-  /** How often the rule matched, on what and with what flags, its near misses, and each version's match and wrong-match counts. */
+  /** How often the rule matched, on what and which were false positives, its near misses, and each version's match and false-positive counts. */
   ruleAnalytics(ruleId: number, options?: { limit?: number }): RuleAnalytics;
 }
 
@@ -235,41 +235,37 @@ function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalyt
     matches: number;
   };
 
-  const { wrongMatches } = db
+  const { falsePositives } = db
     .prepare(
-      `SELECT COUNT(*) AS wrongMatches FROM flags fl JOIN matches f ON f.id = fl.match_id
-        WHERE f.rule_id = ? AND fl.verdict = 'wrong'`,
+      `SELECT COUNT(*) AS falsePositives FROM false_positives fp JOIN matches f ON f.id = fp.match_id
+        WHERE f.rule_id = ?`,
     )
-    .get(ruleId) as { wrongMatches: number };
+    .get(ruleId) as { falsePositives: number };
 
   const recentMatches = (
     db
       .prepare(
         `SELECT f.id AS match_id, f.check_id, c.created_at, p.name AS project, c.check_type, c.text, f.score, c.cutoff,
                 v.number AS version_number, cond.text AS condition,
-                fl.verdict, fl.raised_by, fl.created_at AS flagged_at
+                fp.marked_by, fp.created_at AS marked_at
            FROM matches f
            JOIN checks c ON c.id = f.check_id
            LEFT JOIN projects p ON p.id = c.project_id
            LEFT JOIN versions v ON v.id = f.version_id
            LEFT JOIN version_conditions cond ON cond.version_id = f.version_id AND cond.condition_id = f.condition_id
-           LEFT JOIN flags fl ON fl.match_id = f.id
+           LEFT JOIN false_positives fp ON fp.match_id = f.id
           WHERE f.rule_id = ?
           ORDER BY f.check_id DESC LIMIT ?`,
       )
       .all(ruleId, limit) as (CheckViewRow & {
       match_id: number;
-      verdict: FlagView["verdict"] | null;
-      raised_by: FlagView["raisedBy"] | null;
-      flagged_at: string | null;
+      marked_by: FalsePositiveMark["markedBy"] | null;
+      marked_at: string | null;
     })[]
   ).map((row) => ({
     ...checkView(row),
     matchId: row.match_id,
-    flag:
-      row.verdict && row.raised_by && row.flagged_at
-        ? { verdict: row.verdict, raisedBy: row.raised_by, createdAt: row.flagged_at }
-        : null,
+    falsePositive: row.marked_by && row.marked_at ? { markedBy: row.marked_by, markedAt: row.marked_at } : null,
   }));
 
   // The rule's best condition in each check it was scored in; a near miss
@@ -300,25 +296,25 @@ function readRuleAnalytics(db: Store, ruleId: number, limit: number): RuleAnalyt
                 (SELECT COUNT(DISTINCT s.check_id) FROM scores s WHERE s.version_id = v.id) AS checks,
                 (SELECT COUNT(*) FROM matches f
                   WHERE f.rule_id = v.rule_id AND f.version_id = v.id) AS matches,
-                (SELECT COUNT(*) FROM flags fl JOIN matches f ON f.id = fl.match_id
-                  WHERE f.rule_id = v.rule_id AND f.version_id = v.id AND fl.verdict = 'wrong') AS wrong_matches
+                (SELECT COUNT(*) FROM false_positives fp JOIN matches f ON f.id = fp.match_id
+                  WHERE f.rule_id = v.rule_id AND f.version_id = v.id) AS false_positives
            FROM versions v
           WHERE v.rule_id = ? AND v.number IS NOT NULL
           ORDER BY v.number DESC`,
       )
-      .all(ruleId) as { number: number; published_at: string; checks: number; matches: number; wrong_matches: number }[]
+      .all(ruleId) as { number: number; published_at: string; checks: number; matches: number; false_positives: number }[]
   ).map((row) => ({
     number: row.number,
     publishedAt: row.published_at,
     checks: row.checks,
     matches: row.matches,
-    wrongMatches: row.wrong_matches,
+    falsePositives: row.false_positives,
   }));
 
   return {
     checks,
     matches,
-    wrongMatches,
+    falsePositives,
     recentMatches,
     nearMisses,
     nearMissMargin: NEAR_MISS_MARGIN,

@@ -82,7 +82,7 @@ describe("reply check", () => {
     expect(parsed.reason).toContain("If it breaks one, write the corrected reply, to the user and about their request.");
     expect(parsed.reason).toContain("If it already follows them, give the user its short version again.");
     expect(parsed.reason).toContain("do not mention Sally, these rules or this check.");
-    expect(parsed.reason).toMatch(/If one of these rules does not fit, run this and leave it out of your reply: .+ wrong-match "<rule name>"$/);
+    expect(parsed.reason).toMatch(/If one of these rules does not fit, run this and leave it out of your reply: .+ false-positive "<rule name>"$/);
     expect(matcher.calls).toHaveLength(1);
     expect(matcher.calls[0]!.text).toBe("Done, the header is smaller.");
     expect(checks()).toMatchObject([{ check_type: "reply", text: "Done, the header is smaller.", outcome: "sent_back" }]);

@@ -32,12 +32,12 @@ export const EVALUATE_USAGE = `Usage:
                                 [--time-limit MS] [--json]
 
 Runs every case in the evaluation file through the engine with the real Jev
-matcher and reports right matches, wrong matches and misses, with timing and
+matcher and reports right matches, false positives and misses, with timing and
 tokens. It needs an API key and costs a little.
 
 --scale          pads the rules of each check type to several hundred
                  conditions with made-up ones that should never match, and
-                 reports the wrong-match rate as the headline number
+                 reports the false-positive rate as the headline number
 --conditions N   how many conditions the scale run pads to (default ${DEFAULT_SCALE_CONDITIONS});
                  implies --scale
 --cutoff, --time-limit
@@ -95,7 +95,7 @@ export interface CaseResult {
   /** Rules attached or sent back, strongest first. */
   matched: ScoredRule[];
   right: ScoredRule[];
-  wrong: ScoredRule[];
+  falsePositives: ScoredRule[];
   missed: ScoredRule[];
   durationMs: number;
   inputTokens: number | null;
@@ -108,19 +108,19 @@ export interface EvaluationReport {
   conditions: Record<CheckType, { total: number; padding: number }>;
   summary: {
     cases: number;
-    /** Cases whose check did not fail. Right, wrong and missed count only these. */
+    /** Cases whose check did not fail. Right, false positives and missed count only these. */
     completed: number;
     failed: number;
     skipped: number;
     right: number;
-    wrong: number;
+    falsePositives: number;
     missed: number;
     /** Completed checks that asked Jev, that is neither failed nor skipped. */
     ran: number;
-    /** Checks that ran with at least one wrong match. */
-    checksWithWrongMatch: number;
-    /** checksWithWrongMatch as a share of the checks that ran; null when none ran. */
-    wrongMatchRate: number | null;
+    /** Checks that ran with at least one false positive. */
+    checksWithFalsePositive: number;
+    /** checksWithFalsePositive as a share of the checks that ran; null when none ran. */
+    falsePositiveRate: number | null;
     /** Timing and tokens cover only the checks that ran. */
     durationMs: { median: number | null; mean: number | null; max: number | null };
     inputTokens: { total: number | null; largestCheck: number | null };
@@ -401,7 +401,7 @@ export async function evaluate(
         error: row.error,
         matched,
         right: failed ? [] : matched.filter((f) => expected.has(f.name)),
-        wrong: failed ? [] : matched.filter((f) => !expected.has(f.name)),
+        falsePositives: failed ? [] : matched.filter((f) => !expected.has(f.name)),
         missed: failed ? [] : item.expected.filter((name) => !matchedNames.has(name)).map((name) => scored(name, false)),
         durationMs: row.duration_ms,
         inputTokens: row.input_tokens,
@@ -410,13 +410,13 @@ export async function evaluate(
 
     const completed = cases.filter((c) => c.outcome !== "failed");
     // A skipped check never asks Jev, so it would drag down the timing, empty the
-    // token total and dilute the wrong-match rate. Those use only the checks that ran.
+    // token total and dilute the false-positive rate. Those use only the checks that ran.
     const ran = completed.filter((c) => c.outcome !== "skipped");
     const sum = (pick: (c: CaseResult) => number) => completed.reduce((total, c) => total + pick(c), 0);
     const durations = ran.map((c) => c.durationMs);
     const tokens = ran.map((c) => c.inputTokens);
     const knownTokens = tokens.every((t) => t !== null) && tokens.length > 0 ? (tokens as number[]) : null;
-    const checksWithWrongMatch = ran.filter((c) => c.wrong.length > 0).length;
+    const checksWithFalsePositive = ran.filter((c) => c.falsePositives.length > 0).length;
     return {
       scale: options.scaleConditions !== null,
       settings: { cutoff: settings.cutoff, timeLimitMs: settings.timeLimitMs },
@@ -427,11 +427,11 @@ export async function evaluate(
         failed: cases.length - completed.length,
         skipped: cases.filter((c) => c.outcome === "skipped").length,
         right: sum((c) => c.right.length),
-        wrong: sum((c) => c.wrong.length),
+        falsePositives: sum((c) => c.falsePositives.length),
         missed: sum((c) => c.missed.length),
         ran: ran.length,
-        checksWithWrongMatch,
-        wrongMatchRate: ran.length > 0 ? checksWithWrongMatch / ran.length : null,
+        checksWithFalsePositive,
+        falsePositiveRate: ran.length > 0 ? checksWithFalsePositive / ran.length : null,
         durationMs: {
           median: median(durations),
           mean: durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null,
@@ -459,10 +459,10 @@ export function formatReport(report: EvaluationReport): string {
   const { summary, settings, conditions } = report;
   const lines: string[] = [];
   const rate =
-    summary.wrongMatchRate === null
-      ? "Wrong-match rate: no checks ran"
-      : `Wrong-match rate: ${percent(summary.wrongMatchRate)} (${summary.checksWithWrongMatch} of ${summary.ran} checks that ran had a wrong match)`;
-  const counts = `Right matches: ${summary.right}   Wrong matches: ${summary.wrong}   Misses: ${summary.missed}`;
+    summary.falsePositiveRate === null
+      ? "False-positive rate: no checks ran"
+      : `False-positive rate: ${percent(summary.falsePositiveRate)} (${summary.checksWithFalsePositive} of ${summary.ran} checks that ran had a false positive)`;
+  const counts = `Right matches: ${summary.right}   False positives: ${summary.falsePositives}   Misses: ${summary.missed}`;
 
   const messages = report.cases.filter((c) => c.check === "message").length;
   lines.push(
@@ -473,7 +473,7 @@ export function formatReport(report: EvaluationReport): string {
       (report.scale ? ` (padding: ${conditions.message.padding} message, ${conditions.reply.padding} reply)` : ""),
   );
   lines.push(`Cutoff ${settings.cutoff}, time limit ${settings.timeLimitMs} ms`, "");
-  // The scale run exists to measure wrong matches, so its headline comes first.
+  // The scale run exists to measure false positives, so its headline comes first.
   if (report.scale) lines.push(rate, counts);
   else lines.push(counts, rate);
   lines.push(`Failed: ${summary.failed}   Skipped: ${summary.skipped}`);
@@ -490,8 +490,8 @@ export function formatReport(report: EvaluationReport): string {
   };
   const at = (c: CaseResult) => `${c.label} (${c.check})`;
   section(
-    "Wrong matches",
-    report.cases.flatMap((c) => c.wrong.map((r) => `${at(c)}: "${r.name}"${r.padding ? " [padding]" : ""} scored ${score(r.score)}`)),
+    "False positives",
+    report.cases.flatMap((c) => c.falsePositives.map((r) => `${at(c)}: "${r.name}"${r.padding ? " [padding]" : ""} scored ${score(r.score)}`)),
   );
   section("Misses", report.cases.flatMap((c) => c.missed.map((r) => `${at(c)}: "${r.name}" best score ${score(r.score)}`)));
   section("Failed checks", report.cases.filter((c) => c.outcome === "failed").map((c) => `${at(c)}: ${c.error ?? "unknown error"}`));

@@ -202,7 +202,7 @@ the reply is about:
 | Good | "This reply reports a finished visual change and gives no local link to the page." |
 
 The broad version also matches replies that already give the link, so Claude
-is sent back for nothing. That is a wrong match.
+is sent back for nothing. That is a false positive.
 
 A reply-check condition also has to be visible in the reply's words. Jev cannot
 see whether Claude ran the tests, only what the reply says:
