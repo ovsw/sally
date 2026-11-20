@@ -9,6 +9,7 @@ import { ImportScreen } from "@/screens/import-screen";
 import { GuideScreen } from "@/screens/guide-screen";
 import { RulesScreen } from "@/screens/rules-screen";
 import { SettingsScreen } from "@/screens/settings-screen";
+import { TrialScreen } from "@/screens/trial-screen";
 
 function Screen({ path }: { path: string }) {
   // An open rule shows beside the list, so the list stays as it was.
@@ -22,6 +23,7 @@ function Screen({ path }: { path: string }) {
   if (path === "/settings") return <SettingsScreen />;
   if (path === "/activity") return <ActivityScreen />;
   if (path === "/guide") return <GuideScreen />;
+  if (path === "/trial") return <TrialScreen />;
   if (path === "/attention" || path === "/" || path === "/index.html") return <AttentionScreen />;
   return <RulesScreen />;
 }
