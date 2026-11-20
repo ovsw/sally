@@ -155,7 +155,7 @@ function makeColumns(onError: (message: string) => void, compact: boolean): Colu
           <Checkbox
             checked={table.getIsAllRowsSelected() || (table.getIsSomeRowsSelected() && "indeterminate")}
             onCheckedChange={(checked) => table.toggleAllRowsSelected(checked === true)}
-            disabled={table.getRowCount() === 0}
+            disabled={table.getRowCount() === 0 || !table.options.enableRowSelection}
             aria-label="Select all rules"
           />
         </span>
@@ -166,6 +166,7 @@ function makeColumns(onError: (message: string) => void, compact: boolean): Colu
           <Checkbox
             checked={row.getIsSelected()}
             onCheckedChange={(checked) => row.toggleSelected(checked === true)}
+            disabled={!row.getCanSelect()}
             aria-label={`Select ${row.original.name}`}
           />
         </span>
@@ -252,15 +253,18 @@ function BulkSwitchBar({
   const picked = table.getSelectedRowModel().rows.map((row) => row.original);
   if (picked.length === 0) return null;
   const switchAll = (on: boolean) => {
+    const ids = picked.map((rule) => rule.id);
     setBusy(true);
     onError(null);
-    switchRules(
-      picked.map((rule) => rule.id),
-      on,
-    )
+    switchRules(ids, on)
       .then(({ rules, refused }) => {
         for (const rule of rules) announceRuleChange({ rule });
-        table.resetRowSelection();
+        // Only the rules sent are unpicked: any picked while the request ran stay picked.
+        table.setRowSelection((selection) => {
+          const rest = { ...selection };
+          for (const id of ids) delete rest[String(id)];
+          return rest;
+        });
         if (refused.length > 0) onError(refusedText(refused, picked, on));
       })
       .catch((e: unknown) => onError(errorText(e)))
@@ -350,6 +354,9 @@ function NoRulesYet() {
   );
 }
 
+/** One search and set of filters, as a key to tell lists apart. */
+const queryKey = (search: string, filters: ColumnFiltersState) => JSON.stringify([search, filters]);
+
 const values = (filters: ColumnFiltersState, id: string) =>
   filters.find((f) => f.id === id)?.value as string[] | undefined;
 
@@ -359,6 +366,9 @@ export function RulesScreen({ openId }: { openId?: number }) {
   const [loaded, setLoaded] = React.useState(false);
   // Whether the rules shown came from a request with no search or filter.
   const [shownUnfiltered, setShownUnfiltered] = React.useState(false);
+  // The search and filters the rules shown answer; until the list for a new one
+  // is in, the rows on screen belong to the old one and cannot be picked.
+  const [shownQuery, setShownQuery] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   // Kept apart from `error`, which the reload after the switch clears.
   const [switchError, setSwitchError] = React.useState<string | null>(null);
@@ -376,10 +386,12 @@ export function RulesScreen({ openId }: { openId?: number }) {
   });
   const compact = openId !== undefined;
   const columns = React.useMemo(() => makeColumns(setError, compact), [compact]);
+  const [query, setQuery] = React.useState(() => queryKey("", []));
   const { table, globalFilter, columnFilters } = useDataTable({
     data: rules,
     columns: columns as ColumnDef<RuleSummary, unknown>[],
     getRowId: (row) => String(row.id),
+    enableRowSelection: shownQuery === query,
     manualFiltering: true,
     initialVisibility: { published: false, hasDraft: false },
   });
@@ -388,11 +400,13 @@ export function RulesScreen({ openId }: { openId?: number }) {
   React.useEffect(() => {
     table.resetRowSelection();
     setSwitchError(null);
+    setQuery(queryKey(globalFilter, columnFilters));
   }, [table, globalFilter, columnFilters]);
 
   React.useEffect(() => {
     let stale = false;
     const unfiltered = globalFilter === "" && columnFilters.length === 0;
+    const asked = queryKey(globalFilter, columnFilters);
     const timer = window.setTimeout(() => {
       listRules({
         search: globalFilter,
@@ -406,6 +420,7 @@ export function RulesScreen({ openId }: { openId?: number }) {
           if (stale) return;
           setRules(next);
           setShownUnfiltered(unfiltered);
+          setShownQuery(asked);
           setError(null);
         })
         .catch((e: unknown) => !stale && setError(String(e instanceof Error ? e.message : e)))
